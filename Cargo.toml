@@ -4,3 +4,7 @@ name = "automaton"
 version = "0.0.1"
 authors = ["Joe Neeman <joeneeman@gmail.com>"]
 
+[dependencies]
+regex = "*"
+regex-syntax = "*"
+

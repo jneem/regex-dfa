@@ -1,36 +1,30 @@
 use std::mem;
-use std::num::Int;
-use std::collections::BitvSet;
-use regex::native::{Program, Save, Jump, Split, Match, OneChar, Any, CharClass,
-    FLAG_DOTNL};
-use automaton::{TransList, SymbRange};
+use std::collections::BitSet;
+use automaton::{Automaton, TransList, SymbRange};
 
-pub trait NFA {
+pub trait Nfa {
     /// Returns the epsilon-closure of the given set of states.
     ///
     /// That is, the set of all states that can be reached from a state in the given
     /// set without consuming any input.
-    fn eps_closure(&self, states: &BitvSet) -> BitvSet;
+    fn eps_closure(&self, states: &BitSet) -> BitSet;
 
     /// Checks whether the given set of states contains an accepting state.
-    fn accepting(&self, states: &BitvSet) -> bool;
+    fn accepting(&self, states: &BitSet) -> bool;
 
     /// Returns the set of all transitions leaving one of the given states.
-    fn transitions(&self, states: &BitvSet) -> Vec<(SymbRange<u32>, BitvSet)>;
+    fn transitions(&self, states: &BitSet) -> Vec<(SymbRange, BitSet)>;
 }
 
-impl NFA for Program {
-    fn eps_closure(&self, states: &BitvSet) -> BitvSet {
+impl Nfa for Automaton {
+    fn eps_closure(&self, states: &BitSet) -> BitSet {
         let mut ret = states.clone();
         let mut new_states = states.clone();
-        let mut next_states = BitvSet::with_capacity(self.insts.len());
+        let mut next_states = BitSet::with_capacity(self.states.len());
         loop {
-            for s in new_states.iter() {
-                match self.insts[s] {
-                    Jump(t) => { next_states.insert(t); },
-                    Split(t, u) => { next_states.insert(t); next_states.insert(u); },
-                    Save(_) => { next_states.insert(s+1); },
-                    _ => {},
+            for s in &new_states {
+                for &t in &self.states[s].transitions.eps {
+                    next_states.insert(t);
                 }
             }
 
@@ -45,61 +39,34 @@ impl NFA for Program {
         }
     }
 
-    fn accepting(&self, states: &BitvSet) -> bool {
-        for s in states.iter() {
-            match self.insts[s] {
-                Match => { return true; },
-                _ => {},
-            }
-        }
-        return false;
+    fn accepting(&self, states: &BitSet) -> bool {
+        states.iter().any(|s| { self.states[s].accepting })
     }
 
     /// Finds all the transitions out of the given set of states.
     ///
     /// Only transitions that consume output are returned. In particular, you
     /// probably want `states` to already be eps-closed.
-    fn transitions(&self, states: &BitvSet) -> Vec<(SymbRange<u32>, BitvSet)> {
-        let mut ret = TransList::new();
+    fn transitions(&self, states: &BitSet) -> Vec<(SymbRange, BitSet)> {
+        let trans = states.iter()
+                          .flat_map(|s| self.states[s].transitions.ranges.iter().map(|&i| i))
+                          .collect();
+        let trans = TransList::from_vec(trans).collect_transition_pairs();
 
-        for s in states.iter() {
-            match self.insts[s] {
-                Any(flags) => {
-                    if flags & FLAG_DOTNL > 0 {
-                        ret.ranges.push((SymbRange::new(0, Int::max_value()), s+1));
-                    } else {
-                        let nl = '\n' as u32;
-                        ret.ranges.push((SymbRange::new(0, nl - 1), s+1));
-                        ret.ranges.push((SymbRange::new(nl + 1, Int::max_value()), s+1));
-                    }
-                },
-                // TODO: support case insensitivity
-                OneChar(ch, flags) => {
-                    ret.ranges.push((SymbRange::single(ch as u32), s+1));
-                },
-                CharClass(ref ranges, flags) => {
-                    let transitions = TransList::from_char_class(ranges, flags, s+1);
-                    ret.ranges.push_all(transitions.ranges.as_slice());
-                },
-                _ => {},
-            }
-        }
-
-        let trans = ret.collect_transition_pairs();
         trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect()
     }
 }
 
-#[cfg(test)]
+#[cfg(never)]
 mod test {
     use nfa;
-    use nfa::NFA;
+    use nfa::Nfa;
     use regex;
     use regex::Regex;
-    use std::collections::{BitvSet, Bitv};
+    use std::collections::{BitSet, BitVec};
 
-    fn set(elts: &[uint]) -> BitvSet {
-        let mut ret = BitvSet::new();
+    fn set(elts: &[usize]) -> BitSet {
+        let mut ret = BitSet::new();
         for e in elts.iter() {
             ret.insert(*e);
         }

@@ -1,9 +1,11 @@
-use std::num::Int;
-use std::collections::{BitvSet, HashSet, HashMap};
+use regex_syntax::CharClass;
+use std;
+use std::cmp::Ordering;
+use std::collections::{BitSet, HashSet, HashMap};
+use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
-use std::fmt::Show;
-use nfa::NFA;
-use regex::native::{Program, OneChar, CharClass, Any, Save, Jump, Split, FLAG_NEGATED};
+use std::u32;
+use nfa::Nfa;
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -24,29 +26,29 @@ impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
 /// A range of symbols.
 ///
 /// Includes the endpoints.
-#[deriving(PartialEq, Show, Copy, Clone, Hash)]
-pub struct SymbRange<Symb> {
-    from: Symb,
-    to: Symb,
+#[derive(PartialEq, Debug, Copy, Clone, Hash)]
+pub struct SymbRange {
+    pub from: u32,
+    pub to: u32,
 }
 
-impl<Symb: Int> Eq for SymbRange<Symb> {}
+impl Eq for SymbRange {}
 
-impl<Symb: Int + Hash> SymbRange<Symb> {
-    pub fn new(from: Symb, to: Symb) -> SymbRange<Symb> {
+impl SymbRange {
+    pub fn new(from: u32, to: u32) -> SymbRange {
         SymbRange {
             from: from,
             to: to,
         }
     }
 
-    pub fn single(symb: Symb) -> SymbRange<Symb> {
+    pub fn single(symb: u32) -> SymbRange {
         SymbRange::new(symb, symb)
     }
 }
 
-impl<Symb: Int> PartialOrd for SymbRange<Symb> {
-    fn partial_cmp(&self, other: &SymbRange<Symb>) -> Option<Ordering> {
+impl PartialOrd for SymbRange {
+    fn partial_cmp(&self, other: &SymbRange) -> Option<Ordering> {
         if self.from < other.from {
             Some(Ordering::Less)
         } else if self.from > other.from {
@@ -57,21 +59,36 @@ impl<Symb: Int> PartialOrd for SymbRange<Symb> {
     }
 }
 
-#[deriving(PartialEq, Show)]
-pub struct TransList<Symb> {
-    pub ranges: Vec<(SymbRange<Symb>, uint)>
+#[derive(PartialEq, Debug)]
+pub struct TransList {
+    pub ranges: Vec<(SymbRange, usize)>,
+    pub eps: Vec<usize>, // Transitions that don't consume any input.
 }
 
-impl<Symb: Int + Hash> TransList<Symb> {
-    pub fn new() -> TransList<Symb> {
-        TransList { ranges: Vec::new() }
+impl TransList {
+    pub fn new() -> TransList {
+        TransList {
+            ranges: Vec::new(),
+            eps: Vec::new(),
+        }
     }
 
-    pub fn from_vec(vec: Vec<(SymbRange<Symb>, uint)>) -> TransList<Symb> {
-        TransList { ranges: vec }
+    pub fn from_vec(vec: Vec<(SymbRange, usize)>) -> TransList {
+        TransList {
+            ranges: vec,
+            eps: Vec::new(),
+        }
     }
 
-    pub fn find_transition(&self, ch: Symb) -> Option<uint> {
+    pub fn from_char_class(c: &CharClass, target: usize) -> TransList {
+        let mut ret = TransList::new();
+        for range in c {
+            ret.ranges.push((SymbRange::new(range.start as u32, range.end as u32), target))
+        }
+        ret
+    }
+
+    pub fn find_transition(&self, ch: u32) -> Option<usize> {
         // TODO: ensure that the transitions are sorted, and use binary search
         for &(ref range, state) in self.ranges.iter() {
             if range.from <= ch && ch <= range.to {
@@ -88,24 +105,17 @@ impl<Symb: Int + Hash> TransList<Symb> {
     /// component is the SymbRange and whose second component
     /// is a set containing all the indices of states associated with
     /// that SymbRange.
-    pub fn collect_transition_pairs(self) -> Vec<(SymbRange<Symb>, BitvSet)> {
-        let mut map = HashMap::<SymbRange<Symb>, BitvSet>::new();
-
+    pub fn collect_transition_pairs(self) -> Vec<(SymbRange, BitSet)> {
+        let mut map = HashMap::<SymbRange, BitSet>::new();
         for (range, state) in self.split_transitions().ranges.into_iter() {
-            if map.contains_key(&range) {
-                map[range].insert(state);
-            } else {
-                let mut new_set = BitvSet::new();
-                new_set.insert(state);
-                map.insert(range, new_set);
-            }
+            map.entry(range).or_insert(BitSet::new()).insert(state);
         }
 
         map.into_iter().collect()
     }
 
     /// Like collect_transition_pairs, but without the SymbRanges.
-    pub fn collect_transitions(self) -> Vec<BitvSet> {
+    pub fn collect_transitions(self) -> Vec<BitSet> {
         self.collect_transition_pairs().into_iter().map(|x| x.1).collect()
     }
 
@@ -113,14 +123,14 @@ impl<Symb: Int + Hash> TransList<Symb> {
     ///
     /// The output is a list of transitions in which every pair of transitions
     /// either have identical SymbRanges or disjoint SymbRanges.
-    fn split_transitions(&self) -> TransList<Symb> {
+    fn split_transitions(&self) -> TransList {
         let mut ret = TransList::new();
         let mut start_symbs = Vec::new();
 
         for &(ref range, _) in self.ranges.iter() {
             start_symbs.push(range.from);
-            if range.to < Int::max_value() {
-                start_symbs.push(range.to + Int::one());
+            if range.to < u32::MAX {
+                start_symbs.push(range.to + 1u32);
             }
         }
 
@@ -138,7 +148,7 @@ impl<Symb: Int + Hash> TransList<Symb> {
                     ret.ranges.push((SymbRange::new(last, range.to), *state));
                     break;
                 } else {
-                    ret.ranges.push((SymbRange::new(last, start_symbs[idx] - Int::one()), *state));
+                    ret.ranges.push((SymbRange::new(last, start_symbs[idx] - 1u32), *state));
                     last = start_symbs[idx];
                     idx += 1;
                 }
@@ -152,30 +162,31 @@ impl<Symb: Int + Hash> TransList<Symb> {
     ///
     /// This assumes that the transition list is sorted and that
     /// every range has the same target state.
-    fn negated(&self) -> TransList<Symb> {
+    fn negated(&self) -> TransList {
         let mut ret = TransList::new();
         let state = self.ranges[0].1;
-        let mut last = Int::min_value();
+        let mut last = 0u32;
 
         for &(ref range, _) in self.ranges.iter() {
             if range.from > last {
-                ret.ranges.push((SymbRange::new(last, range.from - Int::one()), state));
+                ret.ranges.push((SymbRange::new(last, range.from - 1u32), state));
             }
-            last = range.to + Int::one();
+            last = range.to + 1u32;
         }
-        if last < Int::max_value() {
-            ret.ranges.push((SymbRange::new(last, Int::max_value()), state));
+        if last < u32::MAX {
+            ret.ranges.push((SymbRange::new(last, u32::MAX), state));
         }
 
         ret
     }
 }
 
-impl TransList<u32> {
+impl TransList {
     // TODO: support case insensitivity
+        /* FIXME
     pub fn from_char_class(ranges: &Vec<(char, char)>,
                            flags: u8,
-                           state: uint) -> TransList<u32> {
+                           state: usize) -> TransList {
         let mut ret = TransList::new();
 
         for &(from, to) in ranges.iter() {
@@ -186,17 +197,19 @@ impl TransList<u32> {
         } else {
             ret
         }
+        ret
     }
+        */
 }
 
-#[deriving(PartialEq, Show)]
-pub struct State<Symb> {
-    transitions: TransList<Symb>,
-    accepting: bool,
+#[derive(PartialEq, Debug)]
+pub struct State {
+    pub transitions: TransList,
+    pub accepting: bool,
 }
 
-impl<Symb: Int + Hash> State<Symb> {
-    pub fn new(accepting: bool) -> State<Symb> {
+impl State {
+    pub fn new(accepting: bool) -> State {
         State {
             transitions: TransList::new(),
             accepting: accepting,
@@ -204,23 +217,67 @@ impl<Symb: Int + Hash> State<Symb> {
     }
 }
 
-#[deriving(PartialEq, Show)]
-pub struct Automaton<Symb> {
-    states: Vec<State<Symb>>,
+#[derive(PartialEq)]
+pub struct Automaton {
+    // TODO: after stabilizing the appropriate accessor/modifiers, make this private.
+    pub states: Vec<State>,
 }
 
-fn singleton(i: uint) -> BitvSet {
-    let mut ret = BitvSet::with_capacity(i+1);
+fn singleton(i: usize) -> BitSet {
+    let mut ret = BitSet::with_capacity(i+1);
     ret.insert(i);
     ret
 }
 
-impl Automaton<u32> {
+impl Debug for Automaton {
+    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        try!(f.write_fmt(format_args!("Automaton ({} states):\n", self.states.len())));
+
+        for (st_idx, st) in self.states.iter().enumerate() {
+            try!(f.write_fmt(format_args!("\tState {} (accepting: {}):\n", st_idx, st.accepting)));
+
+            if !st.transitions.ranges.is_empty() {
+                try!(f.write_str("\t\tTransitions:\n"));
+                for &(range, target) in &st.transitions.ranges {
+                    try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
+                                                  range.from, range.to, target)));
+                }
+            }
+
+            if !st.transitions.eps.is_empty() {
+                try!(f.write_fmt(format_args!("\t\tEps-transitions: {:?}\n", &st.transitions.eps)));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Automaton {
+    pub fn new() -> Automaton {
+        Automaton {
+            states: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(n: usize) -> Automaton {
+        Automaton {
+            states: Vec::with_capacity(n),
+        }
+    }
+
+    pub fn add_transition(&mut self, from: usize, to: usize, r: SymbRange) {
+        self.states[from].transitions.ranges.push((r, to));
+    }
+
+    pub fn add_eps(&mut self, from: usize, to: usize) {
+        self.states[from].transitions.eps.push(to);
+    }
+
     /// Creates a deterministic automaton given a non-deterministic one.
-    pub fn from_nfa(nfa: &Program) -> Automaton<u32> {
-        let mut ret = Automaton { states: Vec::new() };
-        let mut state_map = HashMap::<BitvSet, uint>::new();
-        let mut active_states = Vec::<BitvSet>::new();
+    pub fn from_nfa<T: Nfa>(nfa: &T) -> Automaton {
+        let mut ret = Automaton::new();
+        let mut state_map = HashMap::<BitSet, usize>::new();
+        let mut active_states = Vec::<BitSet>::new();
         let start_state = nfa.eps_closure(&singleton(0));
 
         ret.states.push(State::new(nfa.accepting(&start_state)));
@@ -246,18 +303,16 @@ impl Automaton<u32> {
 
         ret
     }
-}
 
-impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
-    pub fn execute<'a, Iter: Iterator<&'a Symb>>(&self, mut iter: Iter) -> bool {
-        let mut state = 0u;
+    pub fn execute<Iter: Iterator<Item=u32>>(&self, mut iter: Iter) -> bool {
+        let mut state = 0usize;
 
         loop {
             let cur_state = &self.states[state];
             match iter.next() {
                 None => return cur_state.accepting,
                 Some(ch) => {
-                    match cur_state.transitions.find_transition(*ch) {
+                    match cur_state.transitions.find_transition(ch) {
                         Some(next_state) => state = next_state,
                         None => return false,
                     }
@@ -266,8 +321,8 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
         }
     }
 
-    fn accepting_states(&self) -> BitvSet {
-        let mut ret = BitvSet::with_capacity(self.states.len());
+    fn accepting_states(&self) -> BitSet {
+        let mut ret = BitSet::with_capacity(self.states.len());
 
         for (idx, state) in self.states.iter().enumerate() {
             if state.accepting {
@@ -278,8 +333,8 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
         ret
     }
 
-    fn non_accepting_states(&self) -> BitvSet {
-        let mut ret = BitvSet::with_capacity(self.states.len());
+    fn non_accepting_states(&self) -> BitSet {
+        let mut ret = BitSet::with_capacity(self.states.len());
 
         for (idx, state) in self.states.iter().enumerate() {
             if !state.accepting {
@@ -294,10 +349,8 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
     ///
     /// This may be a non-deterministic automaton. Its states
     /// will have the same indices as those of the original automaton.
-    fn reversed(&self) -> Automaton<Symb> {
-        let mut ret = Automaton {
-            states: Vec::with_capacity(self.states.len()),
-        };
+    fn reversed(&self) -> Automaton {
+        let mut ret = Automaton::with_capacity(self.states.len());
 
         for st in self.states.iter() {
             ret.states.push(State::new(st.accepting));
@@ -315,11 +368,11 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
     /// Returns an equivalent DFA with a minimal number of states.
     ///
     /// Uses Hopcroft's algorithm.
-    pub fn minimize(&self) -> Automaton<Symb> {
+    pub fn minimize(&self) -> Automaton {
         let acc_states = self.accepting_states();
         let non_acc_states = self.non_accepting_states();
-        let mut partition = HashSet::<BitvSet>::new();
-        let mut distinguishers = HashSet::<BitvSet>::new();
+        let mut partition = HashSet::<BitSet>::new();
+        let mut distinguishers = HashSet::<BitSet>::new();
         let reversed = self.reversed();
 
         partition.insert(acc_states.clone());
@@ -334,7 +387,7 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
             // Find all transitions leading into dist.
             let mut trans = TransList::new();
             for state in dist.iter() {
-                trans.ranges.push_all(reversed.states[state].transitions.ranges.as_slice());
+                trans.ranges.push_all(&reversed.states[state].transitions.ranges[..]);
             }
 
             let sets = trans.collect_transitions();
@@ -343,11 +396,11 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
             // some element of `sets` reveals it to contain more than
             // one equivalence class.
             for s in sets.iter() {
-                let mut next_partition = HashSet::<BitvSet>::new();
+                let mut next_partition = HashSet::<BitSet>::new();
 
                 for y in partition.iter() {
-                    let y0: BitvSet = y.intersection(s).collect();
-                    let y1: BitvSet = y.difference(s).collect();
+                    let y0: BitSet = y.intersection(s).collect();
+                    let y1: BitSet = y.difference(s).collect();
 
                     if y0.is_empty() || y1.is_empty() {
                         next_partition.insert(y.clone());
@@ -371,24 +424,22 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
             }
         }
 
-        let mut ret = Automaton {
-            states: vec![],
-        };
+        let mut ret = Automaton::new();
 
         // Build a map that associates a state with the partition element it
         // belongs to.
-        let mut state_to_partition = HashMap::<uint, &BitvSet>::new();
+        let mut state_to_partition = HashMap::<usize, &BitSet>::new();
         for part in partition.iter() {
             for state in part.iter() {
                 state_to_partition.insert(state, part);
             }
         }
 
-        let mut old_state_to_new = HashMap::<uint, uint>::new();
+        let mut old_state_to_new = HashMap::<usize, usize>::new();
         for part in partition.iter() {
             let rep_idx = part.iter().next().unwrap();
             let rep = &self.states[rep_idx];
-            ret.states.push(State::<Symb>::new(rep.accepting));
+            ret.states.push(State::new(rep.accepting));
 
             for state in part.iter() {
                 old_state_to_new.insert(state, ret.states.len() - 1);
@@ -409,11 +460,11 @@ impl<Symb: Int + Hash + Show + 'static> Automaton<Symb> {
     }
 }
 
-#[cfg(test)]
+#[cfg(never)]
 mod test {
     use automaton;
     use automaton::{Automaton, State, SymbRange, TransList};
-    use std::collections::{Bitv, BitvSet};
+    use std::collections::{BitVec, BitSet};
     use regex;
     use regex::Regex;
 
@@ -433,18 +484,18 @@ mod test {
     }
 
     /// Returns an automaton that accepts strings with an even number of 'b's.
-    fn even_bs_auto() -> Automaton<u8> {
-        let mut auto = Automaton::<u8> {
+    fn even_bs_auto() -> Automaton {
+        let mut auto = Automaton {
             states: vec![],
         };
 
         auto.states.push(State::new(true));
         auto.states.push(State::new(false));
 
-        auto.states[0].transitions.ranges.push((SymbRange::single('a' as u8), 0));
-        auto.states[0].transitions.ranges.push((SymbRange::single('b' as u8), 1));
-        auto.states[1].transitions.ranges.push((SymbRange::single('a' as u8), 1));
-        auto.states[1].transitions.ranges.push((SymbRange::single('b' as u8), 0));
+        auto.states[0].transitions.ranges.push((SymbRange::single('a' as u32), 0));
+        auto.states[0].transitions.ranges.push((SymbRange::single('b' as u32), 1));
+        auto.states[1].transitions.ranges.push((SymbRange::single('a' as u32), 1));
+        auto.states[1].transitions.ranges.push((SymbRange::single('b' as u32), 0));
 
         auto
     }
@@ -463,7 +514,7 @@ mod test {
 
     #[test]
     fn test_split_transitions() {
-        let trans = TransList::<u8>::from_vec(vec![
+        let trans = TransList::from_vec(vec![
             (SymbRange::new(0, 5), 0),
             (SymbRange::new(2, 7), 1),
         ]);
@@ -482,18 +533,18 @@ mod test {
         let mut auto = even_bs_auto();
         auto.states[0].transitions.ranges.push((SymbRange::single('c' as u8), 1));
 
-        let mut rev = Automaton::<u8> {
+        let mut rev = Automaton {
             states: vec![],
         };
 
         rev.states.push(State::new(true));
         rev.states.push(State::new(false));
 
-        rev.states[0].transitions.ranges.push((SymbRange::single('a' as u8), 0));
-        rev.states[0].transitions.ranges.push((SymbRange::single('b' as u8), 1));
-        rev.states[1].transitions.ranges.push((SymbRange::single('b' as u8), 0));
-        rev.states[1].transitions.ranges.push((SymbRange::single('c' as u8), 0));
-        rev.states[1].transitions.ranges.push((SymbRange::single('a' as u8), 1));
+        rev.states[0].transitions.ranges.push((SymbRange::single('a' as u32), 0));
+        rev.states[0].transitions.ranges.push((SymbRange::single('b' as u32), 1));
+        rev.states[1].transitions.ranges.push((SymbRange::single('b' as u32), 0));
+        rev.states[1].transitions.ranges.push((SymbRange::single('c' as u32), 0));
+        rev.states[1].transitions.ranges.push((SymbRange::single('a' as u32), 1));
 
         assert_eq!(rev, auto.reversed());
     }
@@ -511,9 +562,9 @@ mod test {
         sets.sort();
 
         assert_eq!(sets, vec![
-            BitvSet::from_bitv(Bitv::from_bytes(&[0b01000000])),
-            BitvSet::from_bitv(Bitv::from_bytes(&[0b10100000])),
-            BitvSet::from_bitv(Bitv::from_bytes(&[0b01100000])),
+            BitSet::from_bitv(BitVec::from_bytes(&[0b01000000])),
+            BitSet::from_bitv(BitVec::from_bytes(&[0b10100000])),
+            BitSet::from_bitv(BitVec::from_bytes(&[0b01100000])),
         ]);
     }
 
