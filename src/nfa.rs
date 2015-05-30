@@ -1,6 +1,7 @@
+use automaton::Automaton;
 use std::mem;
 use std::collections::BitSet;
-use automaton::{Automaton, TransList, SymbRange};
+use transition::{SymbRange, TransList};
 
 pub trait Nfa {
     /// Returns the epsilon-closure of the given set of states.

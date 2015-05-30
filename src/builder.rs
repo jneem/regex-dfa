@@ -1,6 +1,7 @@
-use automaton::{Automaton, State, SymbRange, TransList};
+use automaton::{Automaton, State};
+use transition::{SymbRange, TransList};
 use regex_syntax::{CharClass, Expr, Repeater};
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 
 // The automaton here is non-deterministic, and guaranteed to have exactly
 // one accepting state: the last one. In fact, we don't even mark that state
@@ -8,20 +9,9 @@ use std::ops::{Deref, DerefMut};
 // TODO: test some optimizations:
 //  - avoid fixing up indices by using relative instead of absolute offsets
 //  - avoid reallocation and copying by using linked lists instead of vectors
-struct AutomatonBuilder {
+pub struct AutomatonBuilder {
     auto: Automaton,
 }
-
-impl Deref for AutomatonBuilder {
-    type Target = Automaton;
-    
-    fn deref(&self) -> &Automaton { &self.auto }
-}
-
-impl DerefMut for AutomatonBuilder {
-    fn deref_mut(&mut self) -> &mut Automaton { &mut self.auto }
-}
-
 
 impl AutomatonBuilder {
     // Private, because the return value doesn't satisfy the invariants:
@@ -34,7 +24,7 @@ impl AutomatonBuilder {
 
     // Adds an increment to all state indices in this automaton.
     fn fix_indices(&mut self, increment: usize) {
-        for s in &mut self.states {
+        for s in &mut self.auto.states {
             for &mut(_, ref mut target) in &mut s.transitions.ranges {
                 *target += increment;
             }
@@ -43,9 +33,13 @@ impl AutomatonBuilder {
             }
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.auto.states.len()
+    }
     
     pub fn to_automaton(mut self) -> Automaton {
-        let len = self.states.len();
+        let len = self.len();
         self.auto.states[len-1].accepting = true;
         self.auto
     }
@@ -54,9 +48,9 @@ impl AutomatonBuilder {
     pub fn char(c: &CharClass) -> AutomatonBuilder {
         let mut ret = AutomatonBuilder::with_capacity(2);
 
-        ret.states.push(State::new(false));
-        ret.states.push(State::new(false));
-        ret.states[0].transitions = TransList::from_char_class(c, 1);
+        ret.auto.states.push(State::new(false));
+        ret.auto.states.push(State::new(false));
+        ret.auto.states[0].transitions = TransList::from_char_class(c, 1);
         ret
     }
 
@@ -66,29 +60,29 @@ impl AutomatonBuilder {
     {
         let len = chars.size_hint().0 + 1;
         let mut ret = AutomatonBuilder::with_capacity(len);
-        ret.states.push(State::new(false));
+        ret.auto.states.push(State::new(false));
 
         for (i, ch) in chars.enumerate() {
-            ret.states.push(State::new(false));
-            ret.add_transition(i, i+1, SymbRange::single(*ch as u32));
+            ret.auto.states.push(State::new(false));
+            ret.auto.add_transition(i, i+1, SymbRange::single(*ch as u32));
         }
 
         ret
     }
 
     fn append(&mut self, mut other: AutomatonBuilder) {
-        let len = self.states.len();
+        let len = self.len();
 
         other.fix_indices(len);
-        self.states.extend(other.auto.states);
+        self.auto.states.extend(other.auto.states);
 
         if len > 0 {
-            self.add_eps(len-1, len);
+            self.auto.add_eps(len-1, len);
         }
     }
 
     pub fn concat(autos: Vec<AutomatonBuilder>) -> AutomatonBuilder {
-        let new_len = autos.iter().map(|a| a.states.len()).sum::<usize>();
+        let new_len = autos.iter().map(|a| a.len()).sum::<usize>();
         let mut ret = AutomatonBuilder::with_capacity(new_len);
 
         for auto in autos {
@@ -100,36 +94,36 @@ impl AutomatonBuilder {
     pub fn alternate(alts: Vec<AutomatonBuilder>) -> AutomatonBuilder {
         // The new length is 2 more than the sum of existing lengths: 1 for the
         // new initial state and 1 for the new final state.
-        let new_len = alts.iter().map(|a| a.states.len()).sum::<usize>() + 2;
+        let new_len = alts.iter().map(|a| a.len()).sum::<usize>() + 2;
         let mut ret = AutomatonBuilder::with_capacity(new_len);
 
-        ret.states.push(State::new(false));
+        ret.auto.states.push(State::new(false));
 
         for mut alt in alts {
-            let cur_len = ret.states.len();
-            ret.add_eps(0, cur_len);
+            let cur_len = ret.len();
+            ret.auto.add_eps(0, cur_len);
 
-            let this_len = alt.states.len();
+            let this_len = alt.len();
             alt.fix_indices(cur_len);
-            ret.states.extend(alt.auto.states);
-            ret.add_eps(cur_len + this_len - 1, new_len - 1);
+            ret.auto.states.extend(alt.auto.states);
+            ret.auto.add_eps(cur_len + this_len - 1, new_len - 1);
         }
-        ret.states.push(State::new(true));
+        ret.auto.states.push(State::new(true));
         ret
     }
 
     pub fn repeat(mut self, rep: Repeater) -> AutomatonBuilder {
-        let last = self.states.len() - 1;
+        let last = self.len() - 1;
         match rep {
             Repeater::ZeroOrOne => {
-                self.states[0].transitions.eps.push(last);
+                self.auto.add_eps(0, last);
             },
             Repeater::ZeroOrMore => {
-                self.states[0].transitions.eps.push(last);
-                self.states[last].transitions.eps.push(0);
+                self.auto.add_eps(0, last);
+                self.auto.add_eps(last, 0);
             },
             Repeater::OneOrMore => {
-                self.states[last].transitions.eps.push(0);
+                self.auto.add_eps(last, 0);
             },
             Repeater::Range{..} => {
                 panic!("range not supported yet");
@@ -144,8 +138,6 @@ impl AutomatonBuilder {
         fn from_exprs(es: &Vec<Expr>) -> Vec<AutomatonBuilder> {
             es.iter().map(AutomatonBuilder::from_expr).collect()
         }
-
-        println!("{:?}", e);
 
         match e {
             &Class(ref c) => AutomatonBuilder::char(c),
@@ -162,7 +154,8 @@ impl AutomatonBuilder {
 #[cfg(test)]
 mod tests {
     use ::builder::AutomatonBuilder;
-    use ::automaton::{Automaton, State, SymbRange};
+    use ::automaton::{Automaton, State};
+    use ::transition::SymbRange;
     use regex_syntax;
 
     fn parse(s: &str) -> regex_syntax::Result<Automaton> {
