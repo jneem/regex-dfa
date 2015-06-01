@@ -161,25 +161,45 @@ impl TransList {
     }
 }
 
-impl TransList {
-    // TODO: support case insensitivity
-        /* FIXME
-    pub fn from_char_class(ranges: &Vec<(char, char)>,
-                           flags: u8,
-                           state: usize) -> TransList {
-        let mut ret = TransList::new();
 
-        for &(from, to) in ranges.iter() {
-            ret.ranges.push((SymbRange::new(from as u32, to as u32), state));
-        }
-        if flags & FLAG_NEGATED > 0 {
-            ret.negated()
-        } else {
-            ret
-        }
-        ret
+#[cfg(test)]
+mod tests {
+    use std::collections::{BitVec, BitSet};
+    use transition::*;
+
+    #[test]
+    fn test_collect_transitions() {
+        let trans = TransList::from_vec(vec![
+            (SymbRange::new(0, 2), 0),
+            (SymbRange::new(4, 5), 2),
+            (SymbRange::new(0, 2), 2),
+            (SymbRange::new(3, 3), 1),
+            (SymbRange::new(4, 5), 1),
+        ]);
+        let mut sets = trans.collect_transitions();
+        sets.sort();
+
+        assert_eq!(sets, vec![
+            BitSet::from_bit_vec(BitVec::from_bytes(&[0b01000000])),
+            BitSet::from_bit_vec(BitVec::from_bytes(&[0b10100000])),
+            BitSet::from_bit_vec(BitVec::from_bytes(&[0b01100000])),
+        ]);
     }
-        */
-}
 
+    #[test]
+    fn test_split_transitions() {
+        let trans = TransList::from_vec(vec![
+            (SymbRange::new(0, 5), 0),
+            (SymbRange::new(2, 7), 1),
+        ]);
+
+        let trans = trans.split_transitions();
+        assert_eq!(trans.ranges, vec![
+            (SymbRange::new(0, 1), 0),
+            (SymbRange::new(2, 5), 0),
+            (SymbRange::new(2, 5), 1),
+            (SymbRange::new(6, 7), 1),
+        ]);
+    }
+}
 

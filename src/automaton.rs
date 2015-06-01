@@ -2,7 +2,7 @@ use std;
 use std::collections::{BitSet, HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
-use nfa::Nfa;
+use std::mem;
 use transition::{SymbRange, TransList};
 
 trait PopArbitrary<T> {
@@ -37,8 +37,10 @@ impl State {
 
 #[derive(PartialEq)]
 pub struct Automaton {
-    // TODO: after stabilizing the appropriate accessor/modifiers, make this private.
+    // TODO: make this private once builder has been transitioned away from
+    // using Automaton.
     pub states: Vec<State>,
+    pub initial: usize,
 }
 
 fn singleton(i: usize) -> BitSet {
@@ -74,12 +76,14 @@ impl Automaton {
     pub fn new() -> Automaton {
         Automaton {
             states: Vec::new(),
+            initial: 0,
         }
     }
 
     pub fn with_capacity(n: usize) -> Automaton {
         Automaton {
             states: Vec::with_capacity(n),
+            initial: 0,
         }
     }
 
@@ -92,25 +96,25 @@ impl Automaton {
     }
 
     /// Creates a deterministic automaton given a non-deterministic one.
-    pub fn from_nfa<T: Nfa>(nfa: &T) -> Automaton {
+    pub fn determinize(&self) -> Automaton {
         let mut ret = Automaton::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
         let mut active_states = Vec::<BitSet>::new();
-        let start_state = nfa.eps_closure(&singleton(0));
+        let start_state = self.eps_closure(&singleton(0));
 
-        ret.states.push(State::new(nfa.accepting(&start_state)));
+        ret.states.push(State::new(self.accepting(&start_state)));
         active_states.push(start_state.clone());
         state_map.insert(start_state, 0);
 
         while active_states.len() > 0 {
             let state = active_states.pop().unwrap();
             let state_idx = *state_map.get(&state).unwrap();
-            let trans = nfa.transitions(&state);
+            let trans = self.transitions(&state);
             for (range, target) in trans.into_iter() {
                 let target_idx = if state_map.contains_key(&target) {
                         *state_map.get(&target).unwrap()
                     } else {
-                        ret.states.push(State::new(nfa.accepting(&target)));
+                        ret.states.push(State::new(self.accepting(&target)));
                         active_states.push(target.clone());
                         state_map.insert(target, ret.states.len() - 1);
                         ret.states.len() - 1
@@ -123,7 +127,7 @@ impl Automaton {
     }
 
     pub fn execute<Iter: Iterator<Item=u32>>(&self, mut iter: Iter) -> bool {
-        let mut state = 0usize;
+        let mut state = self.initial;
 
         loop {
             let cur_state = &self.states[state];
@@ -244,15 +248,8 @@ impl Automaton {
 
         let mut ret = Automaton::new();
 
-        // Build a map that associates a state with the partition element it
-        // belongs to.
-        let mut state_to_partition = HashMap::<usize, &BitSet>::new();
-        for part in partition.iter() {
-            for state in part.iter() {
-                state_to_partition.insert(state, part);
-            }
-        }
-
+        // We need to re-index the states: build a map that maps old indices to
+        // new indices.
         let mut old_state_to_new = HashMap::<usize, usize>::new();
         for part in partition.iter() {
             let rep_idx = part.iter().next().unwrap();
@@ -264,6 +261,7 @@ impl Automaton {
             }
         }
 
+        // Fix the indices in all transitions to refer to the new state numbering.
         for part in partition.iter() {
             let old_src_idx = part.iter().next().unwrap();
             let new_src_idx = old_state_to_new.get(&old_src_idx).unwrap();
@@ -272,27 +270,65 @@ impl Automaton {
                 let new_tgt_idx = old_state_to_new.get(&old_tgt_idx).unwrap();
                 ret.states[*new_src_idx].transitions.ranges.push((range.clone(), *new_tgt_idx));
             }
+
+            if part.contains(&self.initial) {
+                ret.initial = *new_src_idx;
+            }
         }
 
         ret
     }
+
+    fn eps_closure(&self, states: &BitSet) -> BitSet {
+        let mut ret = states.clone();
+        let mut new_states = states.clone();
+        let mut next_states = BitSet::with_capacity(self.states.len());
+        loop {
+            for s in &new_states {
+                for &t in &self.states[s].transitions.eps {
+                    next_states.insert(t);
+                }
+            }
+
+            if next_states.is_subset(&ret) {
+                return ret;
+            } else {
+                next_states.difference_with(&ret);
+                ret.union_with(&next_states);
+                mem::swap(&mut next_states, &mut new_states);
+                next_states.clear();
+            }
+        }
+    }
+
+    fn accepting(&self, states: &BitSet) -> bool {
+        states.iter().any(|s| { self.states[s].accepting })
+    }
+
+    /// Finds all the transitions out of the given set of states.
+    ///
+    /// Only transitions that consume output are returned. In particular, you
+    /// probably want `states` to already be eps-closed.
+    fn transitions(&self, states: &BitSet) -> Vec<(SymbRange, BitSet)> {
+        let trans = states.iter()
+                          .flat_map(|s| self.states[s].transitions.ranges.iter().map(|&i| i))
+                          .collect();
+        let trans = TransList::from_vec(trans).collect_transition_pairs();
+
+        trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect()
+    }
 }
 
-#[cfg(never)]
-mod test {
-    use automaton;
-    use automaton::{Automaton, State, SymbRange, TransList};
-    use std::collections::{BitVec, BitSet};
-    use regex;
-    use regex::Regex;
+#[cfg(test)]
+mod tests {
+    use automaton::{Automaton, State};
+    use builder;
+    use regex_syntax;
+    use transition::SymbRange;
 
-    /// FIXME: this is C&P from ::nfa. Refactor it somewhere.
-    fn prog(re_str: &str) -> regex::native::Program {
-        let re = Regex::new(re_str).ok().unwrap();
-        match re {
-            Regex::Dynamic(dyn) => dyn.prog,
-            _ => { panic!("failed to compile re") }
-        }
+    fn parse(re: &str) -> Automaton {
+        let expr = regex_syntax::Expr::parse(re).unwrap();
+        builder::AutomatonBuilder::from_expr(&expr).to_automaton()
     }
 
     // FIXME: there should be a better way to implement
@@ -303,9 +339,7 @@ mod test {
 
     /// Returns an automaton that accepts strings with an even number of 'b's.
     fn even_bs_auto() -> Automaton {
-        let mut auto = Automaton {
-            states: vec![],
-        };
+        let mut auto = Automaton::new();
 
         auto.states.push(State::new(true));
         auto.states.push(State::new(false));
@@ -322,38 +356,20 @@ mod test {
     fn test_execute() {
         let auto = even_bs_auto();
 
-        assert_eq!(auto.execute("aaaaaaa".as_bytes().iter()), true);
-        assert_eq!(auto.execute("aabaaaaa".as_bytes().iter()), false);
-        assert_eq!(auto.execute("aabaaaaab".as_bytes().iter()), true);
-        assert_eq!(auto.execute("aabaaaaaba".as_bytes().iter()), true);
-        assert_eq!(auto.execute("aabaabaaba".as_bytes().iter()), false);
-        assert_eq!(auto.execute("aabbabaaba".as_bytes().iter()), true);
-    }
-
-    #[test]
-    fn test_split_transitions() {
-        let trans = TransList::from_vec(vec![
-            (SymbRange::new(0, 5), 0),
-            (SymbRange::new(2, 7), 1),
-        ]);
-
-        let trans = trans.split_transitions();
-        assert_eq!(trans.ranges, vec![
-            (SymbRange::new(0, 1), 0),
-            (SymbRange::new(2, 5), 0),
-            (SymbRange::new(2, 5), 1),
-            (SymbRange::new(6, 7), 1),
-        ]);
+        assert_eq!(auto.execute(u32str("aaaaaaa").into_iter()), true);
+        assert_eq!(auto.execute(u32str("aabaaaaa").into_iter()), false);
+        assert_eq!(auto.execute(u32str("aabaaaaab").into_iter()), true);
+        assert_eq!(auto.execute(u32str("aabaaaaaba").into_iter()), true);
+        assert_eq!(auto.execute(u32str("aabaabaaba").into_iter()), false);
+        assert_eq!(auto.execute(u32str("aabbabaaba").into_iter()), true);
     }
 
     #[test]
     fn test_reverse() {
         let mut auto = even_bs_auto();
-        auto.states[0].transitions.ranges.push((SymbRange::single('c' as u8), 1));
+        auto.states[0].transitions.ranges.push((SymbRange::single('c' as u32), 1));
 
-        let mut rev = Automaton {
-            states: vec![],
-        };
+        let mut rev = Automaton::new();
 
         rev.states.push(State::new(true));
         rev.states.push(State::new(false));
@@ -368,48 +384,29 @@ mod test {
     }
 
     #[test]
-    fn test_collect_transitions() {
-        let trans = TransList::<u8>::from_vec(vec![
-            (SymbRange::new(0, 2), 0),
-            (SymbRange::new(4, 5), 2),
-            (SymbRange::new(0, 2), 2),
-            (SymbRange::new(3, 3), 1),
-            (SymbRange::new(4, 5), 1),
-        ]);
-        let mut sets = trans.collect_transitions();
-        sets.sort();
-
-        assert_eq!(sets, vec![
-            BitSet::from_bitv(BitVec::from_bytes(&[0b01000000])),
-            BitSet::from_bitv(BitVec::from_bytes(&[0b10100000])),
-            BitSet::from_bitv(BitVec::from_bytes(&[0b01100000])),
-        ]);
-    }
-
-    #[test]
     fn test_minimize() {
-        let auto = Automaton::from_nfa(&prog("a*b*")).minimize();
+        let auto = parse("a*b*").determinize().minimize();
 
-        assert_eq!(auto.execute(u32str("aaabbbbbb").iter()), true);
-        assert_eq!(auto.execute(u32str("bbbb").iter()), true);
-        assert_eq!(auto.execute(u32str("a").iter()), true);
-        assert_eq!(auto.execute(u32str("").iter()), true);
-        assert_eq!(auto.execute(u32str("ba").iter()), false);
-        assert_eq!(auto.execute(u32str("aba").iter()), false);
+        assert_eq!(auto.execute(u32str("aaabbbbbb").into_iter()), true);
+        assert_eq!(auto.execute(u32str("bbbb").into_iter()), true);
+        assert_eq!(auto.execute(u32str("a").into_iter()), true);
+        assert_eq!(auto.execute(u32str("").into_iter()), true);
+        assert_eq!(auto.execute(u32str("ba").into_iter()), false);
+        assert_eq!(auto.execute(u32str("aba").into_iter()), false);
 
-        assert_eq!(auto.minimize(), auto);
+        assert_eq!(auto.states.len(), 2);
     }
 
     #[test]
-    fn test_from_nfa() {
-        let auto = Automaton::from_nfa(&prog("a*b*"));
+    fn test_determinize() {
+        let auto = parse("a*b*").determinize();
 
-        assert_eq!(auto.execute(u32str("aaabbbbbb").iter()), true);
-        assert_eq!(auto.execute(u32str("bbbb").iter()), true);
-        assert_eq!(auto.execute(u32str("a").iter()), true);
-        assert_eq!(auto.execute(u32str("").iter()), true);
-        assert_eq!(auto.execute(u32str("ba").iter()), false);
-        assert_eq!(auto.execute(u32str("aba").iter()), false);
+        assert_eq!(auto.execute(u32str("aaabbbbbb").into_iter()), true);
+        assert_eq!(auto.execute(u32str("bbbb").into_iter()), true);
+        assert_eq!(auto.execute(u32str("a").into_iter()), true);
+        assert_eq!(auto.execute(u32str("").into_iter()), true);
+        assert_eq!(auto.execute(u32str("ba").into_iter()), false);
+        assert_eq!(auto.execute(u32str("aba").into_iter()), false);
     }
 }
 
