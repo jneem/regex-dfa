@@ -1,6 +1,7 @@
 use regex_syntax::CharClass;
 use std::cmp::Ordering;
 use std::collections::{BitSet, HashMap};
+use std::ops::Deref;
 use std::u32;
 
 /// A range of symbols.
@@ -25,6 +26,10 @@ impl SymbRange {
     pub fn single(symb: u32) -> SymbRange {
         SymbRange::new(symb, symb)
     }
+
+    pub fn contains(&self, symb: u32) -> bool {
+        self.from <= symb && symb <= self.to
+    }
 }
 
 impl PartialOrd for SymbRange {
@@ -40,42 +45,32 @@ impl PartialOrd for SymbRange {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct TransList {
+pub struct NfaTransitions {
     pub ranges: Vec<(SymbRange, usize)>,
     pub eps: Vec<usize>, // Transitions that don't consume any input.
 }
 
-impl TransList {
-    pub fn new() -> TransList {
-        TransList {
+impl NfaTransitions {
+    pub fn new() -> NfaTransitions {
+        NfaTransitions {
             ranges: Vec::new(),
             eps: Vec::new(),
         }
     }
 
-    pub fn from_vec(vec: Vec<(SymbRange, usize)>) -> TransList {
-        TransList {
+    pub fn from_vec(vec: Vec<(SymbRange, usize)>) -> NfaTransitions {
+        NfaTransitions {
             ranges: vec,
             eps: Vec::new(),
         }
     }
 
-    pub fn from_char_class(c: &CharClass, target: usize) -> TransList {
-        let mut ret = TransList::new();
+    pub fn from_char_class(c: &CharClass, target: usize) -> NfaTransitions {
+        let mut ret = NfaTransitions::new();
         for range in c {
             ret.ranges.push((SymbRange::new(range.start as u32, range.end as u32), target))
         }
         ret
-    }
-
-    pub fn find_transition(&self, ch: u32) -> Option<usize> {
-        // TODO: ensure that the transitions are sorted, and use binary search
-        for &(ref range, state) in self.ranges.iter() {
-            if range.from <= ch && ch <= range.to {
-                return Some(state)
-            }
-        }
-        return None
     }
 
     /// Collects transitions with the same symbol range.
@@ -103,8 +98,8 @@ impl TransList {
     ///
     /// The output is a list of transitions in which every pair of transitions
     /// either have identical SymbRanges or disjoint SymbRanges.
-    fn split_transitions(&self) -> TransList {
-        let mut ret = TransList::new();
+    fn split_transitions(&self) -> NfaTransitions {
+        let mut ret = NfaTransitions::new();
         let mut start_symbs = Vec::new();
 
         for &(ref range, _) in self.ranges.iter() {
@@ -142,8 +137,8 @@ impl TransList {
     ///
     /// This assumes that the transition list is sorted and that
     /// every range has the same target state.
-    fn negated(&self) -> TransList {
-        let mut ret = TransList::new();
+    fn negated(&self) -> NfaTransitions {
+        let mut ret = NfaTransitions::new();
         let state = self.ranges[0].1;
         let mut last = 0u32;
 
@@ -161,6 +156,46 @@ impl TransList {
     }
 }
 
+#[derive(PartialEq, Debug)]
+pub struct DfaTransitions {
+    ranges: Vec<(SymbRange, usize)>,
+}
+
+impl DfaTransitions {
+    pub fn new() -> DfaTransitions {
+        DfaTransitions {
+            ranges: Vec::new(),
+        }
+    }
+
+    pub fn sort(&mut self) {
+        self.ranges.sort_by(|&(r1, _), &(r2, _)| r1.from.cmp(&r2.from));
+    }
+
+    pub fn add(&mut self, range: SymbRange, tgt: usize) {
+        self.ranges.push((range, tgt));
+    }
+
+    pub fn find_transition(&self, ch: u32) -> Option<usize> {
+        match self.ranges[..].binary_search_by(|&(r, _)| r.from.cmp(&ch)) {
+            Ok(idx) => { Some(self.ranges[idx].1) },
+            Err(idx) => {
+                if idx > 0 && self.ranges[idx-1].0.contains(ch) {
+                    Some(self.ranges[idx - 1].1)
+                } else {
+                    None
+                }
+            },
+        }
+
+    }
+}
+
+impl Deref for DfaTransitions {
+    type Target = Vec<(SymbRange, usize)>;
+
+    fn deref(&self) -> &Vec<(SymbRange, usize)> { &self.ranges }
+}
 
 #[cfg(test)]
 mod tests {
@@ -169,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_collect_transitions() {
-        let trans = TransList::from_vec(vec![
+        let trans = NfaTransitions::from_vec(vec![
             (SymbRange::new(0, 2), 0),
             (SymbRange::new(4, 5), 2),
             (SymbRange::new(0, 2), 2),
@@ -188,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_split_transitions() {
-        let trans = TransList::from_vec(vec![
+        let trans = NfaTransitions::from_vec(vec![
             (SymbRange::new(0, 5), 0),
             (SymbRange::new(2, 7), 1),
         ]);
@@ -200,6 +235,31 @@ mod tests {
             (SymbRange::new(2, 5), 1),
             (SymbRange::new(6, 7), 1),
         ]);
+    }
+
+    #[test]
+    fn test_find_transition() {
+        fn from_vec(vec: Vec<(SymbRange, usize)>) -> DfaTransitions {
+            DfaTransitions {
+                ranges: vec,
+            }
+        }
+
+        let trans = from_vec(vec![
+            (SymbRange::new(1, 1), 10),
+            (SymbRange::new(3, 3), 11),
+            (SymbRange::new(5, 7), 12),
+            (SymbRange::new(9, 9), 13),
+        ]);
+        assert_eq!(trans.find_transition(1), Some(10));
+        assert_eq!(trans.find_transition(3), Some(11));
+        assert_eq!(trans.find_transition(5), Some(12));
+        assert_eq!(trans.find_transition(6), Some(12));
+        assert_eq!(trans.find_transition(9), Some(13));
+        assert_eq!(trans.find_transition(0), None);
+        assert_eq!(trans.find_transition(2), None);
+        assert_eq!(trans.find_transition(4), None);
+        assert_eq!(trans.find_transition(77), None);
     }
 }
 

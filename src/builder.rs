@@ -1,5 +1,5 @@
-use automaton::{Automaton, State};
-use transition::{SymbRange, TransList};
+use automaton::{Nfa, NfaState};
+use transition::{SymbRange, NfaTransitions};
 use regex_syntax::{CharClass, Expr, Repeater};
 use std::ops::Deref;
 
@@ -9,16 +9,16 @@ use std::ops::Deref;
 // TODO: test some optimizations:
 //  - avoid fixing up indices by using relative instead of absolute offsets
 //  - avoid reallocation and copying by using linked lists instead of vectors
-pub struct AutomatonBuilder {
-    auto: Automaton,
+pub struct NfaBuilder {
+    auto: Nfa,
 }
 
-impl AutomatonBuilder {
+impl NfaBuilder {
     // Private, because the return value doesn't satisfy the invariants:
     // accept is not the index of a valid state.
-    fn with_capacity(n: usize) -> AutomatonBuilder {
-        AutomatonBuilder {
-            auto: Automaton::with_capacity(n),
+    fn with_capacity(n: usize) -> NfaBuilder {
+        NfaBuilder {
+            auto: Nfa::with_capacity(n),
         }
     }
 
@@ -38,39 +38,39 @@ impl AutomatonBuilder {
         self.auto.states.len()
     }
     
-    pub fn to_automaton(mut self) -> Automaton {
+    pub fn to_automaton(mut self) -> Nfa {
         let len = self.len();
         self.auto.states[len-1].accepting = true;
         self.auto
     }
 
     // Builds an automaton that recognizes a language consisting of a single character.
-    pub fn char(c: &CharClass) -> AutomatonBuilder {
-        let mut ret = AutomatonBuilder::with_capacity(2);
+    pub fn char(c: &CharClass) -> NfaBuilder {
+        let mut ret = NfaBuilder::with_capacity(2);
 
-        ret.auto.states.push(State::new(false));
-        ret.auto.states.push(State::new(false));
-        ret.auto.states[0].transitions = TransList::from_char_class(c, 1);
+        ret.auto.states.push(NfaState::new(false));
+        ret.auto.states.push(NfaState::new(false));
+        ret.auto.states[0].transitions = NfaTransitions::from_char_class(c, 1);
         ret
     }
 
-    pub fn literal<C, I>(chars: I) -> AutomatonBuilder
+    pub fn literal<C, I>(chars: I) -> NfaBuilder
         where C: Deref<Target=char>,
               I: Iterator<Item=C>
     {
         let len = chars.size_hint().0 + 1;
-        let mut ret = AutomatonBuilder::with_capacity(len);
-        ret.auto.states.push(State::new(false));
+        let mut ret = NfaBuilder::with_capacity(len);
+        ret.auto.states.push(NfaState::new(false));
 
         for (i, ch) in chars.enumerate() {
-            ret.auto.states.push(State::new(false));
+            ret.auto.states.push(NfaState::new(false));
             ret.auto.add_transition(i, i+1, SymbRange::single(*ch as u32));
         }
 
         ret
     }
 
-    fn append(&mut self, mut other: AutomatonBuilder) {
+    fn append(&mut self, mut other: NfaBuilder) {
         let len = self.len();
 
         other.fix_indices(len);
@@ -81,9 +81,9 @@ impl AutomatonBuilder {
         }
     }
 
-    pub fn concat(autos: Vec<AutomatonBuilder>) -> AutomatonBuilder {
+    pub fn concat(autos: Vec<NfaBuilder>) -> NfaBuilder {
         let new_len = autos.iter().map(|a| a.len()).sum::<usize>();
-        let mut ret = AutomatonBuilder::with_capacity(new_len);
+        let mut ret = NfaBuilder::with_capacity(new_len);
 
         for auto in autos {
             ret.append(auto);
@@ -91,13 +91,13 @@ impl AutomatonBuilder {
         ret
     }
 
-    pub fn alternate(alts: Vec<AutomatonBuilder>) -> AutomatonBuilder {
+    pub fn alternate(alts: Vec<NfaBuilder>) -> NfaBuilder {
         // The new length is 2 more than the sum of existing lengths: 1 for the
         // new initial state and 1 for the new final state.
         let new_len = alts.iter().map(|a| a.len()).sum::<usize>() + 2;
-        let mut ret = AutomatonBuilder::with_capacity(new_len);
+        let mut ret = NfaBuilder::with_capacity(new_len);
 
-        ret.auto.states.push(State::new(false));
+        ret.auto.states.push(NfaState::new(false));
 
         for mut alt in alts {
             let cur_len = ret.len();
@@ -108,11 +108,11 @@ impl AutomatonBuilder {
             ret.auto.states.extend(alt.auto.states);
             ret.auto.add_eps(cur_len + this_len - 1, new_len - 1);
         }
-        ret.auto.states.push(State::new(true));
+        ret.auto.states.push(NfaState::new(true));
         ret
     }
 
-    pub fn repeat(mut self, rep: Repeater) -> AutomatonBuilder {
+    pub fn repeat(mut self, rep: Repeater) -> NfaBuilder {
         let last = self.len() - 1;
         match rep {
             Repeater::ZeroOrOne => {
@@ -132,20 +132,20 @@ impl AutomatonBuilder {
         self
     }
 
-    pub fn from_expr(e: &Expr) -> AutomatonBuilder {
+    pub fn from_expr(e: &Expr) -> NfaBuilder {
         use regex_syntax::Expr::*;
 
-        fn from_exprs(es: &Vec<Expr>) -> Vec<AutomatonBuilder> {
-            es.iter().map(AutomatonBuilder::from_expr).collect()
+        fn from_exprs(es: &Vec<Expr>) -> Vec<NfaBuilder> {
+            es.iter().map(NfaBuilder::from_expr).collect()
         }
 
         match e {
-            &Class(ref c) => AutomatonBuilder::char(c),
-            &Concat(ref es) => AutomatonBuilder::concat(from_exprs(es)),
-            &Alternate(ref es) => AutomatonBuilder::alternate(from_exprs(es)),
-            &Literal { ref chars, .. } => AutomatonBuilder::literal(chars.iter()),
-            &Group { ref e, .. } => AutomatonBuilder::from_expr(&e),
-            &Repeat { ref e, r, .. } => AutomatonBuilder::repeat(AutomatonBuilder::from_expr(e), r),
+            &Class(ref c) => NfaBuilder::char(c),
+            &Concat(ref es) => NfaBuilder::concat(from_exprs(es)),
+            &Alternate(ref es) => NfaBuilder::alternate(from_exprs(es)),
+            &Literal { ref chars, .. } => NfaBuilder::literal(chars.iter()),
+            &Group { ref e, .. } => NfaBuilder::from_expr(&e),
+            &Repeat { ref e, r, .. } => NfaBuilder::repeat(NfaBuilder::from_expr(e), r),
             _ => { panic!("unsupported expr") }
         }
     }
@@ -153,24 +153,24 @@ impl AutomatonBuilder {
 
 #[cfg(test)]
 mod tests {
-    use ::builder::AutomatonBuilder;
-    use ::automaton::{Automaton, State};
+    use ::builder::NfaBuilder;
+    use ::automaton::{Nfa, NfaState};
     use ::transition::SymbRange;
     use regex_syntax;
 
-    fn parse(s: &str) -> regex_syntax::Result<Automaton> {
+    fn parse(s: &str) -> regex_syntax::Result<Nfa> {
         let expr = try!(regex_syntax::Expr::parse(s));
-        Ok(AutomatonBuilder::from_expr(&expr).to_automaton())
+        Ok(NfaBuilder::from_expr(&expr).to_automaton())
     }
 
-    fn make_auto(n_states: usize) -> Automaton {
-        let mut ret = Automaton::with_capacity(n_states);
+    fn make_auto(n_states: usize) -> Nfa {
+        let mut ret = Nfa::with_capacity(n_states);
 
         if n_states > 0 {
             for _ in 0..(n_states-1) {
-                ret.states.push(State::new(false));
+                ret.states.push(NfaState::new(false));
             }
-            ret.states.push(State::new(true));
+            ret.states.push(NfaState::new(true));
         }
         ret
     }

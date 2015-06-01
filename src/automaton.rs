@@ -3,7 +3,7 @@ use std::collections::{BitSet, HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
-use transition::{SymbRange, TransList};
+use transition::{DfaTransitions, NfaTransitions, SymbRange};
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -21,26 +21,46 @@ impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct State {
-    pub transitions: TransList,
+pub struct NfaState {
+    pub transitions: NfaTransitions,
     pub accepting: bool,
 }
 
-impl State {
-    pub fn new(accepting: bool) -> State {
-        State {
-            transitions: TransList::new(),
+impl NfaState {
+    pub fn new(accepting: bool) -> NfaState {
+        NfaState {
+            transitions: NfaTransitions::new(),
             accepting: accepting,
         }
     }
 }
 
+#[derive(PartialEq, Debug)]
+pub struct DfaState {
+    pub transitions: DfaTransitions,
+    pub accepting: bool,
+}
+
+impl DfaState {
+    pub fn new(accepting: bool) -> DfaState {
+        DfaState {
+            transitions: DfaTransitions::new(),
+            accepting: accepting,
+        }
+    }
+}
+
+
 #[derive(PartialEq)]
-pub struct Automaton {
+pub struct Nfa {
     // TODO: make this private once builder has been transitioned away from
-    // using Automaton.
-    pub states: Vec<State>,
-    pub initial: usize,
+    // using Nfa.
+    pub states: Vec<NfaState>,
+}
+
+pub struct Dfa {
+    states: Vec<DfaState>,
+    initial: usize,
 }
 
 fn singleton(i: usize) -> BitSet {
@@ -49,9 +69,9 @@ fn singleton(i: usize) -> BitSet {
     ret
 }
 
-impl Debug for Automaton {
+impl Debug for Nfa {
     fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
-        try!(f.write_fmt(format_args!("Automaton ({} states):\n", self.states.len())));
+        try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
 
         for (st_idx, st) in self.states.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tState {} (accepting: {}):\n", st_idx, st.accepting)));
@@ -72,18 +92,16 @@ impl Debug for Automaton {
     }
 }
 
-impl Automaton {
-    pub fn new() -> Automaton {
-        Automaton {
+impl Nfa {
+    pub fn new() -> Nfa {
+        Nfa {
             states: Vec::new(),
-            initial: 0,
         }
     }
 
-    pub fn with_capacity(n: usize) -> Automaton {
-        Automaton {
+    pub fn with_capacity(n: usize) -> Nfa {
+        Nfa {
             states: Vec::with_capacity(n),
-            initial: 0,
         }
     }
 
@@ -96,13 +114,13 @@ impl Automaton {
     }
 
     /// Creates a deterministic automaton given a non-deterministic one.
-    pub fn determinize(&self) -> Automaton {
-        let mut ret = Automaton::new();
+    pub fn determinize(&self) -> Dfa {
+        let mut ret = Dfa::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
         let mut active_states = Vec::<BitSet>::new();
         let start_state = self.eps_closure(&singleton(0));
 
-        ret.states.push(State::new(self.accepting(&start_state)));
+        ret.add_state(self.accepting(&start_state));
         active_states.push(start_state.clone());
         state_map.insert(start_state, 0);
 
@@ -114,16 +132,79 @@ impl Automaton {
                 let target_idx = if state_map.contains_key(&target) {
                         *state_map.get(&target).unwrap()
                     } else {
-                        ret.states.push(State::new(self.accepting(&target)));
+                        ret.add_state(self.accepting(&target));
                         active_states.push(target.clone());
                         state_map.insert(target, ret.states.len() - 1);
                         ret.states.len() - 1
                     };
-                ret.states[state_idx].transitions.ranges.push((range, target_idx));
+                ret.add_transition(state_idx, target_idx, range);
             }
         }
 
+        ret.sort_transitions();
         ret
+    }
+
+    fn eps_closure(&self, states: &BitSet) -> BitSet {
+        let mut ret = states.clone();
+        let mut new_states = states.clone();
+        let mut next_states = BitSet::with_capacity(self.states.len());
+        loop {
+            for s in &new_states {
+                for &t in &self.states[s].transitions.eps {
+                    next_states.insert(t);
+                }
+            }
+
+            if next_states.is_subset(&ret) {
+                return ret;
+            } else {
+                next_states.difference_with(&ret);
+                ret.union_with(&next_states);
+                mem::swap(&mut next_states, &mut new_states);
+                next_states.clear();
+            }
+        }
+    }
+
+    fn accepting(&self, states: &BitSet) -> bool {
+        states.iter().any(|s| { self.states[s].accepting })
+    }
+
+    /// Finds all the transitions out of the given set of states.
+    ///
+    /// Only transitions that consume output are returned. In particular, you
+    /// probably want `states` to already be eps-closed.
+    fn transitions(&self, states: &BitSet) -> Vec<(SymbRange, BitSet)> {
+        let trans = states.iter()
+                          .flat_map(|s| self.states[s].transitions.ranges.iter().map(|&i| i))
+                          .collect();
+        let trans = NfaTransitions::from_vec(trans).collect_transition_pairs();
+
+        trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect()
+    }
+}
+
+impl Dfa {
+    fn new() -> Dfa {
+        Dfa {
+            states: Vec::new(),
+            initial: 0,
+        }
+    }
+
+    fn add_state(&mut self, accepting: bool) {
+        self.states.push(DfaState::new(accepting));
+    }
+
+    fn add_transition(&mut self, from: usize, to: usize, range: SymbRange) {
+        self.states[from].transitions.add(range, to);
+    }
+
+    fn sort_transitions(&mut self) {
+        for st in &mut self.states {
+            st.transitions.sort();
+        }
     }
 
     pub fn execute<Iter: Iterator<Item=u32>>(&self, mut iter: Iter) -> bool {
@@ -143,54 +224,10 @@ impl Automaton {
         }
     }
 
-    fn accepting_states(&self) -> BitSet {
-        let mut ret = BitSet::with_capacity(self.states.len());
-
-        for (idx, state) in self.states.iter().enumerate() {
-            if state.accepting {
-                ret.insert(idx);
-            }
-        }
-
-        ret
-    }
-
-    fn non_accepting_states(&self) -> BitSet {
-        let mut ret = BitSet::with_capacity(self.states.len());
-
-        for (idx, state) in self.states.iter().enumerate() {
-            if !state.accepting {
-                ret.insert(idx);
-            }
-        }
-
-        ret
-    }
-
-    /// Returns the automaton with all its transitions reversed.
-    ///
-    /// This may be a non-deterministic automaton. Its states
-    /// will have the same indices as those of the original automaton.
-    fn reversed(&self) -> Automaton {
-        let mut ret = Automaton::with_capacity(self.states.len());
-
-        for st in self.states.iter() {
-            ret.states.push(State::new(st.accepting));
-        }
-
-        for (idx, st) in self.states.iter().enumerate() {
-            for &(ref range, target) in st.transitions.ranges.iter() {
-                ret.states[target].transitions.ranges.push((*range, idx));
-            }
-        }
-
-        ret
-    }
-
     /// Returns an equivalent DFA with a minimal number of states.
     ///
     /// Uses Hopcroft's algorithm.
-    pub fn minimize(&self) -> Automaton {
+    pub fn minimize(&self) -> Dfa {
         let acc_states = self.accepting_states();
         let non_acc_states = self.non_accepting_states();
         let mut partition = HashSet::<BitSet>::new();
@@ -207,7 +244,7 @@ impl Automaton {
             let dist = distinguishers.pop_arbitrary();
 
             // Find all transitions leading into dist.
-            let mut trans = TransList::new();
+            let mut trans = NfaTransitions::new();
             for state in dist.iter() {
                 trans.ranges.push_all(&reversed.states[state].transitions.ranges[..]);
             }
@@ -246,7 +283,7 @@ impl Automaton {
             }
         }
 
-        let mut ret = Automaton::new();
+        let mut ret = Dfa::new();
 
         // We need to re-index the states: build a map that maps old indices to
         // new indices.
@@ -254,7 +291,7 @@ impl Automaton {
         for part in partition.iter() {
             let rep_idx = part.iter().next().unwrap();
             let rep = &self.states[rep_idx];
-            ret.states.push(State::new(rep.accepting));
+            ret.states.push(DfaState::new(rep.accepting));
 
             for state in part.iter() {
                 old_state_to_new.insert(state, ret.states.len() - 1);
@@ -266,12 +303,12 @@ impl Automaton {
             let old_src_idx = part.iter().next().unwrap();
             let new_src_idx = old_state_to_new.get(&old_src_idx).unwrap();
 
-            for &(ref range, old_tgt_idx) in self.states[old_src_idx].transitions.ranges.iter() {
+            for &(ref range, old_tgt_idx) in self.states[old_src_idx].transitions.iter() {
                 let new_tgt_idx = old_state_to_new.get(&old_tgt_idx).unwrap();
-                ret.states[*new_src_idx].transitions.ranges.push((range.clone(), *new_tgt_idx));
+                ret.states[*new_src_idx].transitions.add(range.clone(), *new_tgt_idx);
             }
 
-            if part.contains(&self.initial) {
+            if part.contains(&0) {
                 ret.initial = *new_src_idx;
             }
         }
@@ -279,70 +316,93 @@ impl Automaton {
         ret
     }
 
-    fn eps_closure(&self, states: &BitSet) -> BitSet {
-        let mut ret = states.clone();
-        let mut new_states = states.clone();
-        let mut next_states = BitSet::with_capacity(self.states.len());
-        loop {
-            for s in &new_states {
-                for &t in &self.states[s].transitions.eps {
-                    next_states.insert(t);
-                }
-            }
+    fn accepting_states(&self) -> BitSet {
+        let mut ret = BitSet::with_capacity(self.states.len());
 
-            if next_states.is_subset(&ret) {
-                return ret;
-            } else {
-                next_states.difference_with(&ret);
-                ret.union_with(&next_states);
-                mem::swap(&mut next_states, &mut new_states);
-                next_states.clear();
+        for (idx, state) in self.states.iter().enumerate() {
+            if state.accepting {
+                ret.insert(idx);
             }
         }
+
+        ret
     }
 
-    fn accepting(&self, states: &BitSet) -> bool {
-        states.iter().any(|s| { self.states[s].accepting })
+    fn non_accepting_states(&self) -> BitSet {
+        let mut ret = BitSet::with_capacity(self.states.len());
+
+        for (idx, state) in self.states.iter().enumerate() {
+            if !state.accepting {
+                ret.insert(idx);
+            }
+        }
+
+        ret
     }
 
-    /// Finds all the transitions out of the given set of states.
-    ///
-    /// Only transitions that consume output are returned. In particular, you
-    /// probably want `states` to already be eps-closed.
-    fn transitions(&self, states: &BitSet) -> Vec<(SymbRange, BitSet)> {
-        let trans = states.iter()
-                          .flat_map(|s| self.states[s].transitions.ranges.iter().map(|&i| i))
-                          .collect();
-        let trans = TransList::from_vec(trans).collect_transition_pairs();
+    /// Returns the automaton with all its transitions reversed.
+    /// Its states will have the same indices as those of the original automaton.
+    fn reversed(&self) -> Nfa {
+        let mut ret = Nfa::with_capacity(self.states.len());
 
-        trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect()
+        for st in self.states.iter() {
+            ret.states.push(NfaState::new(st.accepting));
+        }
+
+        for (idx, st) in self.states.iter().enumerate() {
+            for &(ref range, target) in st.transitions.iter() {
+                ret.states[target].transitions.ranges.push((*range, idx));
+            }
+        }
+
+        ret
     }
 }
 
+impl Debug for Dfa {
+    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        try!(f.write_fmt(format_args!("Dfa ({} states):\n", self.states.len())));
+
+        for (st_idx, st) in self.states.iter().enumerate() {
+            try!(f.write_fmt(format_args!("\tState {} (accepting: {}):\n", st_idx, st.accepting)));
+
+            if !st.transitions.is_empty() {
+                try!(f.write_str("\t\tTransitions:\n"));
+                for &(range, target) in st.transitions.iter() {
+                    try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
+                                                  range.from, range.to, target)));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
-    use automaton::{Automaton, State};
+    use automaton::{Nfa, NfaState};
     use builder;
     use regex_syntax;
     use transition::SymbRange;
 
-    fn parse(re: &str) -> Automaton {
+    fn parse(re: &str) -> Nfa {
         let expr = regex_syntax::Expr::parse(re).unwrap();
-        builder::AutomatonBuilder::from_expr(&expr).to_automaton()
+        builder::NfaBuilder::from_expr(&expr).to_automaton()
     }
 
     // FIXME: there should be a better way to implement
-    // Automaton::execute that doesn't require this convenience function
+    // Nfa::execute that doesn't require this convenience function
     fn u32str(s: &str) -> Vec<u32> {
         s.chars().map(|c| c as u32).collect()
     }
 
     /// Returns an automaton that accepts strings with an even number of 'b's.
-    fn even_bs_auto() -> Automaton {
-        let mut auto = Automaton::new();
+    fn even_bs_auto() -> Nfa {
+        let mut auto = Nfa::new();
 
-        auto.states.push(State::new(true));
-        auto.states.push(State::new(false));
+        auto.states.push(NfaState::new(true));
+        auto.states.push(NfaState::new(false));
 
         auto.states[0].transitions.ranges.push((SymbRange::single('a' as u32), 0));
         auto.states[0].transitions.ranges.push((SymbRange::single('b' as u32), 1));
@@ -354,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_execute() {
-        let auto = even_bs_auto();
+        let auto = even_bs_auto().determinize();
 
         assert_eq!(auto.execute(u32str("aaaaaaa").into_iter()), true);
         assert_eq!(auto.execute(u32str("aabaaaaa").into_iter()), false);
@@ -366,18 +426,17 @@ mod tests {
 
     #[test]
     fn test_reverse() {
-        let mut auto = even_bs_auto();
-        auto.states[0].transitions.ranges.push((SymbRange::single('c' as u32), 1));
+        // TODO: test something non-palindromic
+        let auto = even_bs_auto().determinize();
 
-        let mut rev = Automaton::new();
+        let mut rev = Nfa::new();
 
-        rev.states.push(State::new(true));
-        rev.states.push(State::new(false));
+        rev.states.push(NfaState::new(true));
+        rev.states.push(NfaState::new(false));
 
         rev.states[0].transitions.ranges.push((SymbRange::single('a' as u32), 0));
         rev.states[0].transitions.ranges.push((SymbRange::single('b' as u32), 1));
         rev.states[1].transitions.ranges.push((SymbRange::single('b' as u32), 0));
-        rev.states[1].transitions.ranges.push((SymbRange::single('c' as u32), 0));
         rev.states[1].transitions.ranges.push((SymbRange::single('a' as u32), 1));
 
         assert_eq!(rev, auto.reversed());
