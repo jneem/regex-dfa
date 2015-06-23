@@ -1,4 +1,4 @@
-#![feature(collections, core)]
+#![feature(bitset, bitvec, iter_arith)]
 #![allow(dead_code)]
 
 extern crate regex;

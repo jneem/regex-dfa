@@ -176,6 +176,21 @@ impl DfaTransitions {
         self.ranges.push((range, tgt));
     }
 
+    /// If this transition accepts only a single char, return it
+    /// and the target state.
+    pub fn only_valid_char(&self) -> Option<(u32, usize)> {
+        if self.ranges.len() == 1 {
+            let r = self.ranges[0].0;
+            if r.from == r.to {
+                Some((r.from, self.ranges[0].1))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn find_transition(&self, ch: u32) -> Option<usize> {
         match self.ranges[..].binary_search_by(|&(r, _)| r.from.cmp(&ch)) {
             Ok(idx) => { Some(self.ranges[idx].1) },
@@ -237,14 +252,14 @@ mod tests {
         ]);
     }
 
+    fn from_vec(vec: Vec<(SymbRange, usize)>) -> DfaTransitions {
+        DfaTransitions {
+            ranges: vec,
+        }
+    }
+
     #[test]
     fn test_find_transition() {
-        fn from_vec(vec: Vec<(SymbRange, usize)>) -> DfaTransitions {
-            DfaTransitions {
-                ranges: vec,
-            }
-        }
-
         let trans = from_vec(vec![
             (SymbRange::new(1, 1), 10),
             (SymbRange::new(3, 3), 11),
@@ -260,6 +275,16 @@ mod tests {
         assert_eq!(trans.find_transition(2), None);
         assert_eq!(trans.find_transition(4), None);
         assert_eq!(trans.find_transition(77), None);
+    }
+
+    #[test]
+    fn test_only_valid_char() {
+        let t1 = from_vec(vec![(SymbRange::new(5, 5), 7)]);
+        let t2 = from_vec(vec![(SymbRange::new(5, 6), 7)]);
+        let t3 = from_vec(vec![(SymbRange::new(5, 5), 7), (SymbRange::new(6, 6), 8)]);
+        assert_eq!(t1.only_valid_char(), Some((5, 7)));
+        assert_eq!(t2.only_valid_char(), None);
+        assert_eq!(t3.only_valid_char(), None);
     }
 }
 

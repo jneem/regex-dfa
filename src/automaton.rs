@@ -224,6 +224,73 @@ impl Dfa {
         }
     }
 
+    /// If the beginning of this DFA matches a literal string, return it.
+    /* TODO
+    pub fn prefix(&self) -> String {
+        let mut ret = String::new();
+        let mut state = self.initial;
+
+        let accepts_one_char = |st| {
+            self.states[st].transitions.len() == 1
+                && self.states[st].transitions.
+        };
+
+        loop {
+
+        }
+    }
+    */
+
+    /// If we match some prefix of the string, returns the index after
+    /// the endpoint of the longest match.
+    pub fn longest_match<Iter>(&self, mut iter: Iter) -> Option<usize>
+    where Iter: Iterator<Item=(usize, char)> {
+        let mut state = self.initial;
+        let mut last_match = if self.states[state].accepting { Some(0) } else { None };
+
+        loop {
+            let cur_state = &self.states[state];
+            match iter.next() {
+                None => return last_match,
+                Some((idx, ch)) => {
+                    match cur_state.transitions.find_transition(ch as u32) {
+                        Some(next_state) => {
+                            state = next_state;
+                            if self.states[state].accepting {
+                                last_match = Some(idx + ch.len_utf8());
+                            }
+                        },
+                        None => return last_match,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Returns the index range of the match, if found.
+    // TODO: would prefer to take an iterator, but it seems hard to
+    // produce something of type Iterator<Item=(usize, u32)> + Clone.
+    pub fn search(&self, s: &str) -> Option<(usize, usize)> {
+    // where Iter: Iterator<Item=(usize, u32)> + Clone {
+        let mut iter = s.char_indices();
+
+        match self.longest_match(iter.clone()) {
+            None => (),
+            Some(n) => return Some((0, n)),
+        }
+        loop {
+            match iter.next() {
+                None => return None,
+                Some((m, ch)) => {
+                    match self.longest_match(iter.clone()) {
+                        None => (),
+                        Some(n) => return Some((m + ch.len_utf8(), n)),
+                    }
+                }
+            }
+        }
+    }
+
     /// Returns an equivalent DFA with a minimal number of states.
     ///
     /// Uses Hopcroft's algorithm.
@@ -246,7 +313,7 @@ impl Dfa {
             // Find all transitions leading into dist.
             let mut trans = NfaTransitions::new();
             for state in dist.iter() {
-                trans.ranges.push_all(&reversed.states[state].transitions.ranges[..]);
+                trans.ranges.extend(reversed.states[state].transitions.ranges.iter());
             }
 
             let sets = trans.collect_transitions();
@@ -391,10 +458,12 @@ mod tests {
         builder::NfaBuilder::from_expr(&expr).to_automaton()
     }
 
-    // FIXME: there should be a better way to implement
-    // Nfa::execute that doesn't require this convenience function
-    fn u32str(s: &str) -> Vec<u32> {
-        s.chars().map(|c| c as u32).collect()
+    fn u32str<'a>(s: &'a str) -> Box<Iterator<Item=u32> + 'a> {
+        Box::new(s.chars().map(|c| c as u32))
+    }
+
+    fn u32istr<'a>(s: &'a str) -> Box<Iterator<Item=(usize, u32)> + 'a> {
+        Box::new(s.char_indices().map(|(i, c)| (i, c as u32)))
     }
 
     /// Returns an automaton that accepts strings with an even number of 'b's.
@@ -416,12 +485,12 @@ mod tests {
     fn test_execute() {
         let auto = even_bs_auto().determinize();
 
-        assert_eq!(auto.execute(u32str("aaaaaaa").into_iter()), true);
-        assert_eq!(auto.execute(u32str("aabaaaaa").into_iter()), false);
-        assert_eq!(auto.execute(u32str("aabaaaaab").into_iter()), true);
-        assert_eq!(auto.execute(u32str("aabaaaaaba").into_iter()), true);
-        assert_eq!(auto.execute(u32str("aabaabaaba").into_iter()), false);
-        assert_eq!(auto.execute(u32str("aabbabaaba").into_iter()), true);
+        assert_eq!(auto.execute(u32str("aaaaaaa")), true);
+        assert_eq!(auto.execute(u32str("aabaaaaa")), false);
+        assert_eq!(auto.execute(u32str("aabaaaaab")), true);
+        assert_eq!(auto.execute(u32str("aabaaaaaba")), true);
+        assert_eq!(auto.execute(u32str("aabaabaaba")), false);
+        assert_eq!(auto.execute(u32str("aabbabaaba")), true);
     }
 
     #[test]
@@ -446,12 +515,12 @@ mod tests {
     fn test_minimize() {
         let auto = parse("a*b*").determinize().minimize();
 
-        assert_eq!(auto.execute(u32str("aaabbbbbb").into_iter()), true);
-        assert_eq!(auto.execute(u32str("bbbb").into_iter()), true);
-        assert_eq!(auto.execute(u32str("a").into_iter()), true);
-        assert_eq!(auto.execute(u32str("").into_iter()), true);
-        assert_eq!(auto.execute(u32str("ba").into_iter()), false);
-        assert_eq!(auto.execute(u32str("aba").into_iter()), false);
+        assert_eq!(auto.execute(u32str("aaabbbbbb")), true);
+        assert_eq!(auto.execute(u32str("bbbb")), true);
+        assert_eq!(auto.execute(u32str("a")), true);
+        assert_eq!(auto.execute(u32str("")), true);
+        assert_eq!(auto.execute(u32str("ba")), false);
+        assert_eq!(auto.execute(u32str("aba")), false);
 
         assert_eq!(auto.states.len(), 2);
     }
@@ -460,12 +529,54 @@ mod tests {
     fn test_determinize() {
         let auto = parse("a*b*").determinize();
 
-        assert_eq!(auto.execute(u32str("aaabbbbbb").into_iter()), true);
-        assert_eq!(auto.execute(u32str("bbbb").into_iter()), true);
-        assert_eq!(auto.execute(u32str("a").into_iter()), true);
-        assert_eq!(auto.execute(u32str("").into_iter()), true);
-        assert_eq!(auto.execute(u32str("ba").into_iter()), false);
-        assert_eq!(auto.execute(u32str("aba").into_iter()), false);
+        assert_eq!(auto.execute(u32str("aaabbbbbb")), true);
+        assert_eq!(auto.execute(u32str("bbbb")), true);
+        assert_eq!(auto.execute(u32str("a")), true);
+        assert_eq!(auto.execute(u32str("")), true);
+        assert_eq!(auto.execute(u32str("ba")), false);
+        assert_eq!(auto.execute(u32str("aba")), false);
+    }
+
+    #[test]
+    fn test_longest_match() {
+        let auto = parse("a*b*").determinize();
+
+        assert_eq!(auto.longest_match("aba".char_indices()), Some(2));
+        assert_eq!(auto.longest_match("baba".char_indices()), Some(1));
+        assert_eq!(auto.longest_match("ac".char_indices()), Some(1));
+        assert_eq!(auto.longest_match("ab".char_indices()), Some(2));
+        assert_eq!(auto.longest_match("bc".char_indices()), Some(1));
+        assert_eq!(auto.longest_match("b".char_indices()), Some(1));
+
+        let auto = parse("a+b*").determinize();
+
+        assert_eq!(auto.longest_match("aba".char_indices()), Some(2));
+        assert_eq!(auto.longest_match("baba".char_indices()), None);
+        assert_eq!(auto.longest_match("ac".char_indices()), Some(1));
+        assert_eq!(auto.longest_match("ab".char_indices()), Some(2));
+        assert_eq!(auto.longest_match("bc".char_indices()), None);
+        assert_eq!(auto.longest_match("b".char_indices()), None);
+    }
+
+    #[test]
+    fn test_search() {
+        let auto = parse("a+b*").determinize();
+
+        assert_eq!(auto.search("cdacd"), Some((2, 3)));
+        assert_eq!(auto.search("cdaabbcd"), Some((2, 6)));
+        assert_eq!(auto.search("aabbcd"), Some((0, 4)));
+        assert_eq!(auto.search("cdb"), None);
+        assert_eq!(auto.search("ab"), Some((0, 2)));
+
+        // If the pattern matches the empty string, it will always be found
+        // at the beginning.
+        let auto = parse("a*b*").determinize();
+
+        assert_eq!(auto.search("cdacd"), Some((0, 0)));
+        assert_eq!(auto.search("cdaabbcd"), Some((0, 0)));
+        assert_eq!(auto.search("aabbcd"), Some((0, 4)));
+        assert_eq!(auto.search("cdb"), Some((0, 0)));
+        assert_eq!(auto.search("ab"), Some((0, 2)));
     }
 }
 
