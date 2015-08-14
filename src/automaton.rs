@@ -1,5 +1,6 @@
+use bit_set::BitSet;
 use std;
-use std::collections::{BitSet, HashSet, HashMap};
+use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;

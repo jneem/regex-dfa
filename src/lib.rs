@@ -1,8 +1,9 @@
-#![feature(bitset, bitvec, iter_arith)]
+#![feature(iter_arith)]
 #![allow(dead_code)]
 
 extern crate regex;
 extern crate regex_syntax;
+extern crate bit_set;
 
 pub mod automaton;
 pub mod builder;

@@ -1,6 +1,7 @@
+use bit_set::BitSet;
 use regex_syntax::CharClass;
 use std::cmp::Ordering;
-use std::collections::{BitSet, HashMap};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::u32;
 
@@ -214,7 +215,7 @@ impl Deref for DfaTransitions {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BitVec, BitSet};
+    use bit_set::BitSet;
     use transition::*;
 
     #[test]
@@ -230,9 +231,9 @@ mod tests {
         sets.sort();
 
         assert_eq!(sets, vec![
-            BitSet::from_bit_vec(BitVec::from_bytes(&[0b01000000])),
-            BitSet::from_bit_vec(BitVec::from_bytes(&[0b10100000])),
-            BitSet::from_bit_vec(BitVec::from_bytes(&[0b01100000])),
+            BitSet::from_bytes(&[0b10100000]),
+            BitSet::from_bytes(&[0b01000000]),
+            BitSet::from_bytes(&[0b01100000]),
         ]);
     }
 

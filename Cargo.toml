@@ -7,4 +7,5 @@ authors = ["Joe Neeman <joeneeman@gmail.com>"]
 [dependencies]
 regex = "*"
 regex-syntax = "*"
+bit-set = "*"
 
