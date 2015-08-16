@@ -5,7 +5,7 @@ A crate for creating and manipulating deterministic finite automata (DFAs).
 Currently, the implementation is somewhat biased towards building DFAs from
 regular expressions.
 
-[![Build status](https://travis-ci.org/jneem/regex_dfa.svg)](https://travis-ci.org/jneem/regex_dfa)
+[![Build status](https://travis-ci.org/jneem/regex-dfa.svg)](https://travis-ci.org/jneem/regex-dfa)
 
 # Why
 
