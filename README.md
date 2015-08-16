@@ -1,11 +1,11 @@
-automaton
+regex_dfa
 =========
 
 A crate for creating and manipulating deterministic finite automata (DFAs).
 Currently, the implementation is somewhat biased towards building DFAs from
 regular expressions.
 
-[![Build status](https://travis-ci.org/jneem/automaton.svg)](https://travis-ci.org/jneem/automaton)
+[![Build status](https://travis-ci.org/jneem/regex_dfa.svg)](https://travis-ci.org/jneem/regex_dfa)
 
 # Why
 
@@ -23,10 +23,10 @@ support (nor does it plan to support) lazy repetition or subgroup captures.
 There are also some whose support is planned, but not implemented (e.g. word
 boundaries).
 
-`automaton` currently only works on nightly rust.
+`regex_dfa` currently only works on nightly rust.
 
 # License
 
-`automaton` is distributed under the MIT license and the Apache license (version 2.0).
+`regex_dfa` is distributed under the MIT license and the Apache license (version 2.0).
 See LICENSE-APACHE and LICENSE-MIT for details.
 
