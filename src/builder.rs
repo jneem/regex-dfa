@@ -165,51 +165,85 @@ impl NfaBuilder {
     }
 
     fn add_repeat(&mut self, expr: &Expr, rep: Repeater) {
-        let init_idx = self.len();
-        self.add_expr(expr);
-        let final_idx = self.len() - 1;
-
         match rep {
             Repeater::ZeroOrOne => {
-                self.add_eps(init_idx, final_idx);
+                self.add_repeat_min_max(expr, 0, Some(1));
             },
             Repeater::ZeroOrMore => {
-                self.add_eps(init_idx, final_idx);
-                self.add_eps(final_idx, init_idx);
+                self.add_repeat_min_max(expr, 0, None);
             },
             Repeater::OneOrMore => {
-                self.add_eps(final_idx, init_idx);
+                self.add_repeat_min_max(expr, 1, None);
             },
-            Repeater::Range{..} => {
-                panic!("range not supported yet");
+            Repeater::Range{ min, max } => {
+                self.add_repeat_min_max(expr, min, max);
             }
         }
     }
 
-    fn add_expr(&mut self, expr: &Expr) {
-        use regex_syntax::Expr::*;
+    fn add_repeat_min_max(&mut self, expr: &Expr, min: u32, maybe_max: Option<u32>) {
+        let mut cur_init_idx = 0;
+        if min > 0 {
+            self.add_expr(expr);
+            for _ in 1..min {
+                cur_init_idx = self.states.len();
+                self.add_expr(expr);
+                self.add_eps(cur_init_idx - 1, cur_init_idx);
+            }
+        }
 
-        match expr {
-            &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
-            &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
-            &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
-            &Concat(ref es) => self.add_concat_exprs(es),
-            &Alternate(ref es) => self.add_alternate_exprs(es),
-            &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+        if let Some(max) = maybe_max {
+            let mut init_indices = Vec::<usize>::with_capacity((max - min) as usize);
+            for i in 0..(max - min) {
+                cur_init_idx = self.states.len();
+                self.add_expr(expr);
+                init_indices.push(cur_init_idx);
+                
+                if i > 0 || min > 0 {
+                    self.add_eps(cur_init_idx - 1, cur_init_idx);
+                }
+            }
+            let final_idx = self.states.len() - 1;
+            for idx in init_indices {
+                self.add_eps(idx, final_idx);
+            }
+        } else {
+            if min == 0 {
+                cur_init_idx = self.states.len();
+                self.add_expr(expr);
+                let final_idx = self.states.len() - 1;
+                self.add_eps(cur_init_idx, final_idx);
+            }
 
-            // We don't support capture groups, so there is no need to keep track of
-            // the group name or number.
-            &Group { ref e, .. } => self.add_expr(e),
-
-            // We don't support greedy vs. lazy matching, because I don't know
-            // if it can be expressed in a DFA.
-            &Repeat { ref e, r, .. } => self.add_repeat(e, r),
-            _ => { panic!("unsupported expr: {:?}", expr) }
+            let final_idx = self.states.len() - 1;
+            self.add_eps(final_idx, cur_init_idx);
         }
     }
-}
 
-#[cfg(test)]
+        fn add_expr(&mut self, expr: &Expr) {
+            use regex_syntax::Expr::*;
+
+            match expr {
+                &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
+                &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
+                &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
+                &Concat(ref es) => self.add_concat_exprs(es),
+                &Alternate(ref es) => self.add_alternate_exprs(es),
+                &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+
+                // We don't support capture groups, so there is no need to keep track of
+                // the group name or number.
+                &Group { ref e, .. } => self.add_expr(e),
+
+                // We don't support greedy vs. lazy matching, because I don't know
+                // if it can be expressed in a DFA.
+                &Repeat { ref e, r, .. } => self.add_repeat(e, r),
+                _ => { panic!("unsupported expr: {:?}", expr) }
+            }
+        }
+    }
+
+    #[cfg(test)]
 mod tests {
     use builder::{NfaBuilder, BuilderState};
     use transition::SymbRange;
@@ -252,6 +286,7 @@ mod tests {
     #[test]
     fn test_repeat_zero_or_more() {
         let builder = parse("a*z").unwrap();
+        let builder2 = parse("a{0,}z").unwrap();
         let mut target = make_builder(4);
         target.states[0].ranges.push(SymbRange::single('a' as u32));
         target.states[2].ranges.push(SymbRange::single('z' as u32));
@@ -260,11 +295,13 @@ mod tests {
         target.add_eps(1, 2);
 
         assert_eq!(builder, target);
+        assert_eq!(builder2, target);
     }
 
     #[test]
     fn test_repeat_one_or_more() {
         let builder = parse("a+z").unwrap();
+        let builder2 = parse("a{1,}z").unwrap();
         let mut target = make_builder(4);
         target.states[0].ranges.push(SymbRange::single('a' as u32));
         target.states[2].ranges.push(SymbRange::single('z' as u32));
@@ -272,16 +309,51 @@ mod tests {
         target.add_eps(1, 2);
 
         assert_eq!(builder, target);
+        assert_eq!(builder2, target);
     }
 
     #[test]
     fn test_repeat_zero_or_one() {
         let builder = parse("a?z").unwrap();
+        let builder2 = parse("a{0,1}z").unwrap();
         let mut target = make_builder(4);
         target.states[0].ranges.push(SymbRange::single('a' as u32));
         target.states[2].ranges.push(SymbRange::single('z' as u32));
         target.add_eps(0, 1);
         target.add_eps(1, 2);
+
+        assert_eq!(builder, target);
+        assert_eq!(builder2, target);
+    }
+
+    #[test]
+    fn test_repeat_exact() {
+        let builder = parse("a{3}z").unwrap();
+        let mut target = make_builder(8);
+        target.states[0].ranges.push(SymbRange::single('a' as u32));
+        target.states[2].ranges.push(SymbRange::single('a' as u32));
+        target.states[4].ranges.push(SymbRange::single('a' as u32));
+        target.states[6].ranges.push(SymbRange::single('z' as u32));
+        target.add_eps(1, 2);
+        target.add_eps(3, 4);
+        target.add_eps(5, 6);
+
+        assert_eq!(builder, target);
+    }
+
+    #[test]
+    fn test_repeat_between() {
+        let builder = parse("a{2,4}z").unwrap();
+        let mut target = parse("a{4}z").unwrap();
+        target.add_eps(4, 7);
+        target.add_eps(6, 7);
+
+        assert_eq!(builder, target);
+
+        let builder = parse("a{0,2}z").unwrap();
+        let mut target = parse("a{2}z").unwrap();
+        target.add_eps(0, 3);
+        target.add_eps(2, 3);
 
         assert_eq!(builder, target);
     }
