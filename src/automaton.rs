@@ -23,9 +23,7 @@ impl NfaState {
 
 #[derive(PartialEq)]
 pub struct Nfa {
-    // TODO: make this private once builder has been transitioned away from
-    // using Nfa.
-    pub states: Vec<NfaState>,
+    states: Vec<NfaState>,
 }
 
 impl Debug for Nfa {
@@ -66,6 +64,10 @@ impl Nfa {
 
     pub fn add_transition(&mut self, from: usize, to: usize, r: SymbRange) {
         self.states[from].transitions.ranges.push((r, to));
+    }
+
+    pub fn add_state(&mut self, accepting: bool) {
+        self.states.push(NfaState::new(accepting));
     }
 
     pub fn add_eps(&mut self, from: usize, to: usize) {
@@ -461,10 +463,6 @@ mod tests {
 
     fn u32str<'a>(s: &'a str) -> Box<Iterator<Item=u32> + 'a> {
         Box::new(s.chars().map(|c| c as u32))
-    }
-
-    fn u32istr<'a>(s: &'a str) -> Box<Iterator<Item=(usize, u32)> + 'a> {
-        Box::new(s.char_indices().map(|(i, c)| (i, c as u32)))
     }
 
     /// Returns an automaton that accepts strings with an even number of 'b's.

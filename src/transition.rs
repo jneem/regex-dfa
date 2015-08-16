@@ -1,5 +1,4 @@
 use bit_set::BitSet;
-use regex_syntax::CharClass;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -66,30 +65,6 @@ impl NfaTransitions {
         }
     }
 
-    pub fn from_char_class(c: &CharClass, target: usize) -> NfaTransitions {
-        let mut ret = NfaTransitions::new();
-        for range in c {
-            ret.ranges.push((SymbRange::new(range.start as u32, range.end as u32), target))
-        }
-        ret
-    }
-
-    pub fn any_char(target: usize) -> NfaTransitions {
-        let mut ret = NfaTransitions::new();
-        ret.ranges.push((SymbRange::new(0, u32::MAX), target));
-
-        ret
-    }
-
-    pub fn any_char_except(chars: &str, target: usize) -> NfaTransitions {
-        let mut ret = NfaTransitions::new();
-        for c in chars.chars() {
-            ret.ranges.push((SymbRange::new(c as u32, c as u32), target));
-        }
-
-        ret.negated()
-    }
-
     /// Collects transitions with the same symbol range.
     ///
     /// For every unique SymbRange that appears in `trans`, adds an extra
@@ -154,7 +129,7 @@ impl NfaTransitions {
     ///
     /// This assumes that the transition list is sorted and that
     /// every range has the same target state.
-    fn negated(&self) -> NfaTransitions {
+    pub fn negated(&self) -> NfaTransitions {
         let mut ret = NfaTransitions::new();
         let state = self.ranges[0].1;
         let mut last = 0u32;

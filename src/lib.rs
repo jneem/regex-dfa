@@ -1,5 +1,4 @@
-#![feature(iter_arith, test)]
-#![allow(dead_code)]
+#![feature(slice_splits, test)]
 
 extern crate bit_set;
 extern crate regex;

@@ -1,247 +1,263 @@
-use automaton::{Nfa, NfaState};
-use transition::{SymbRange, NfaTransitions};
+use automaton::Nfa;
+use transition::SymbRange;
 use regex_syntax::{CharClass, Expr, Repeater};
+use std;
 use std::ops::Deref;
 
-// The automaton here is non-deterministic, and guaranteed to have exactly
-// one accepting state: the last one. In fact, we don't even mark that state
-// as accepting, but we implicitly know that it is.
-// TODO: test some optimizations:
-//  - avoid fixing up indices by using relative instead of absolute offsets
-//  - avoid reallocation and copying by using linked lists instead of vectors
+// Utility functions for constructing Vec<SymbRange>
+
+fn symb_ranges_from_char_class(c: &CharClass) -> Vec<SymbRange> {
+    let mut ret = Vec::with_capacity(c.len());
+    for range in c {
+        ret.push(SymbRange::new(range.start as u32, range.end as u32))
+    }
+    ret
+}
+
+fn symb_ranges_from_any_char() -> Vec<SymbRange> {
+    let mut ret = Vec::with_capacity(1);
+    ret.push(SymbRange::new(0, std::u32::MAX));
+    ret
+}
+
+fn symb_ranges_from_any_char_except(chars: &str) -> Vec<SymbRange> {
+    let mut ret = Vec::with_capacity(chars.len());
+    let mut next_allowed = 0u32;
+    for c in chars.chars() {
+        let n = c as u32;
+        if n > next_allowed {
+            ret.push(SymbRange::new(next_allowed, n - 1));
+        }
+        next_allowed = n + 1;
+    }
+    ret
+}
+
+// When constructing an Nfa from a regex, the states have special structure: if the transition
+// accepts any input, then it always moves to the next state. Therefore, there is no need to store
+// the target state of a transition.
+// Also, the last state is always the accepting state, so there is no need to store whether
+// a state is accepting.
+#[derive(Debug, PartialEq)]
+struct BuilderState {
+    ranges: Vec<SymbRange>,
+    eps: Vec<usize>,
+}
+
+impl BuilderState {
+    fn new() -> BuilderState {
+        BuilderState {
+            ranges: Vec::new(),
+            eps: Vec::new(),
+        }
+    }
+
+    fn from_ranges(rs: Vec<SymbRange>) -> BuilderState {
+        BuilderState {
+            ranges: rs,
+            eps: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct NfaBuilder {
-    auto: Nfa,
+    states: Vec<BuilderState>,
 }
 
 impl NfaBuilder {
-    pub fn with_capacity(n: usize) -> NfaBuilder {
-        NfaBuilder {
-            auto: Nfa::with_capacity(n),
-        }
-    }
-
-    // Adds an increment to all state indices in this automaton.
-    fn fix_indices(&mut self, increment: usize) {
-        for s in &mut self.auto.states {
-            for &mut(_, ref mut target) in &mut s.transitions.ranges {
-                *target += increment;
-            }
-            for target in &mut s.transitions.eps {
-                *target += increment;
-            }
-        }
+    pub fn new() -> NfaBuilder {
+        NfaBuilder { states: Vec::new() }
     }
 
     pub fn len(&self) -> usize {
-        self.auto.states.len()
+        self.states.len()
     }
     
-    pub fn to_automaton(mut self) -> Nfa {
-        let len = self.len();
-        self.auto.states[len-1].accepting = true;
-        self.auto
-    }
+    pub fn to_automaton(&self) -> Nfa {
+        let mut ret = Nfa::with_capacity(self.len());
+        let mut ret_len: usize = 0;
+        for s in &self.states {
+            ret_len += 1;
+            ret.add_state(ret_len == self.len());
 
-    // Given a transition list, constructs the automaton with two
-    // states and that transition list. The target state of all transitions
-    // in the list should be `1'.
-    fn single_transition(trans: NfaTransitions) -> NfaBuilder {
-        let mut ret = NfaBuilder::with_capacity(2);
-
-        ret.auto.states.push(NfaState::new(false));
-        ret.auto.states.push(NfaState::new(false));
-        ret.auto.states[0].transitions = trans;
+            for ch in &s.ranges {
+                ret.add_transition(ret_len-1, ret_len, *ch);
+            }
+            for eps in &s.eps {
+                ret.add_eps(ret_len-1, *eps);
+            }
+        }
 
         ret
+    }
+
+    pub fn from_expr(expr: &Expr) -> NfaBuilder {
+        let mut ret = NfaBuilder { states: Vec::new() };
+        ret.add_expr(expr);
+        ret
+    }
+
+    fn add_eps(&mut self, from: usize, to: usize) {
+        self.states[from].eps.push(to);
+    }
+
+    // Appends two states, with a given transition between them.
+    fn add_single_transition(&mut self, ranges: Vec<SymbRange>) {
+        self.states.push(BuilderState::from_ranges(ranges));
+        self.states.push(BuilderState::new());
      }
 
-    /// Builds an automaton that recognizes a language consisting of a single character from a
-    /// specific class.
-    pub fn char(c: &CharClass) -> NfaBuilder {
-        NfaBuilder::single_transition(NfaTransitions::from_char_class(c, 1))
-    }
-
-    /// Builds an automaton that recognizes the language consisting of any single character.
-    pub fn any_char() -> NfaBuilder {
-        NfaBuilder::single_transition(NfaTransitions::any_char(1))
-    }
-
-    /// Builds an automaton that recognizes the language consisting of a single character belonging
-    /// to the given string. The string must be sorted.
-    pub fn any_char_except(chars: &str) -> NfaBuilder {
-        NfaBuilder::single_transition(NfaTransitions::any_char_except(chars, 1))
-    }
-
-    pub fn literal<C, I>(chars: I) -> NfaBuilder
+    // Adds a sequence of states, and a sequence of transitions between them.
+    pub fn add_literal<C, I>(&mut self, chars: I)
         where C: Deref<Target=char>,
               I: Iterator<Item=C>
     {
-        let len = chars.size_hint().0 + 1;
-        let mut ret = NfaBuilder::with_capacity(len);
-        ret.auto.states.push(NfaState::new(false));
-
-        for (i, ch) in chars.enumerate() {
-            ret.auto.states.push(NfaState::new(false));
-            ret.auto.add_transition(i, i+1, SymbRange::single(*ch as u32));
+        for ch in chars {
+            self.states.push(BuilderState::from_ranges(vec![SymbRange::single(*ch as u32)]));
         }
-
-        ret
+        self.states.push(BuilderState::new());
     }
 
-    fn append(&mut self, mut other: NfaBuilder) {
-        let len = self.len();
+    fn add_concat_exprs(&mut self, exprs: &Vec<Expr>) {
+        if let Some((expr, rest)) = exprs.split_first() {
+            self.add_expr(expr);
 
-        other.fix_indices(len);
-        self.auto.states.extend(other.auto.states);
-
-        if len > 0 {
-            self.auto.add_eps(len-1, len);
+            for expr in rest {
+                let cur_len = self.states.len();
+                self.add_eps(cur_len - 1, cur_len);
+                self.add_expr(expr);
+            }
         }
     }
 
-    pub fn concat(autos: Vec<NfaBuilder>) -> NfaBuilder {
-        let new_len = autos.iter().map(|a| a.len()).sum::<usize>();
-        let mut ret = NfaBuilder::with_capacity(new_len);
+    fn add_alternate_exprs(&mut self, alts: &Vec<Expr>) {
+        // Add the new initial state that feeds into the alternate.
+        let init_idx = self.states.len();
+        self.states.push(BuilderState::new());
 
-        for auto in autos {
-            ret.append(auto);
+        let mut expr_end_indices = Vec::<usize>::new();
+        for expr in alts {
+            let expr_init_idx = self.states.len();
+            self.add_eps(init_idx, expr_init_idx);
+            self.add_expr(expr);
+            expr_end_indices.push(self.states.len() - 1);
         }
-        ret
+
+        // Make the final state of each alternative point to our new final state.
+        self.states.push(BuilderState::new());
+        let final_idx = self.states.len() - 1;
+        for idx in expr_end_indices {
+            self.add_eps(idx, final_idx);
+        }
     }
 
-    pub fn alternate(alts: Vec<NfaBuilder>) -> NfaBuilder {
-        // The new length is 2 more than the sum of existing lengths: 1 for the
-        // new initial state and 1 for the new final state.
-        let new_len = alts.iter().map(|a| a.len()).sum::<usize>() + 2;
-        let mut ret = NfaBuilder::with_capacity(new_len);
+    fn add_repeat(&mut self, expr: &Expr, rep: Repeater) {
+        let init_idx = self.len();
+        self.add_expr(expr);
+        let final_idx = self.len() - 1;
 
-        ret.auto.states.push(NfaState::new(false));
-
-        for mut alt in alts {
-            let cur_len = ret.len();
-            ret.auto.add_eps(0, cur_len);
-
-            let this_len = alt.len();
-            alt.fix_indices(cur_len);
-            ret.auto.states.extend(alt.auto.states);
-            ret.auto.add_eps(cur_len + this_len - 1, new_len - 1);
-        }
-        ret.auto.states.push(NfaState::new(true));
-        ret
-    }
-
-    pub fn repeat(mut self, rep: Repeater) -> NfaBuilder {
-        let last = self.len() - 1;
         match rep {
             Repeater::ZeroOrOne => {
-                self.auto.add_eps(0, last);
+                self.add_eps(init_idx, final_idx);
             },
             Repeater::ZeroOrMore => {
-                self.auto.add_eps(0, last);
-                self.auto.add_eps(last, 0);
+                self.add_eps(init_idx, final_idx);
+                self.add_eps(final_idx, init_idx);
             },
             Repeater::OneOrMore => {
-                self.auto.add_eps(last, 0);
+                self.add_eps(final_idx, init_idx);
             },
             Repeater::Range{..} => {
                 panic!("range not supported yet");
             }
         }
-        self
     }
 
-    pub fn from_expr(e: &Expr) -> NfaBuilder {
+    fn add_expr(&mut self, expr: &Expr) {
         use regex_syntax::Expr::*;
 
-        fn from_exprs(es: &Vec<Expr>) -> Vec<NfaBuilder> {
-            es.iter().map(NfaBuilder::from_expr).collect()
-        }
-
-        match e {
-            &Class(ref c) => NfaBuilder::char(c),
-            &Concat(ref es) => NfaBuilder::concat(from_exprs(es)),
-            &Alternate(ref es) => NfaBuilder::alternate(from_exprs(es)),
-            &Literal { ref chars, .. } => NfaBuilder::literal(chars.iter()),
-            &Group { ref e, .. } => NfaBuilder::from_expr(&e),
-            &Repeat { ref e, r, .. } => NfaBuilder::repeat(NfaBuilder::from_expr(e), r),
-            &AnyChar => NfaBuilder::any_char(),
-            &AnyCharNoNL => NfaBuilder::any_char_except("\n\r"),
-            _ => { panic!("unsupported expr: {:?}", e) }
+        match expr {
+            &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
+            &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
+            &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
+            &Literal { ref chars, .. } => self.add_literal(chars.iter()),
+            &Concat(ref es) => self.add_concat_exprs(es),
+            &Alternate(ref es) => self.add_alternate_exprs(es),
+            &Group { ref e, .. } => self.add_expr(e),
+            &Repeat { ref e, r, .. } => self.add_repeat(e, r),
+            _ => { panic!("unsupported expr: {:?}", expr) }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use builder::NfaBuilder;
-    use automaton::{Nfa, NfaState};
+    use builder::{NfaBuilder, BuilderState};
     use transition::SymbRange;
     use regex_syntax;
 
-    fn parse(s: &str) -> regex_syntax::Result<Nfa> {
+    fn parse(s: &str) -> regex_syntax::Result<NfaBuilder> {
         let expr = try!(regex_syntax::Expr::parse(s));
-        Ok(NfaBuilder::from_expr(&expr).to_automaton())
+        Ok(NfaBuilder::from_expr(&expr))
     }
 
-    fn make_auto(n_states: usize) -> Nfa {
-        let mut ret = Nfa::with_capacity(n_states);
-
-        if n_states > 0 {
-            for _ in 0..(n_states-1) {
-                ret.states.push(NfaState::new(false));
-            }
-            ret.states.push(NfaState::new(true));
+    fn make_builder(n_states: usize) -> NfaBuilder {
+        let mut ret = NfaBuilder::new();
+        for _ in 0..n_states {
+            ret.states.push(BuilderState::new());
         }
         ret
     }
 
     #[test]
     fn test_char_class() {
-        let auto = parse("[a-z][A-Z]").unwrap();
-        let mut target = make_auto(4);
-        target.add_transition(0, 1, SymbRange::new('a' as u32, 'z' as u32));
+        let builder = parse("[a-z][A-Z]").unwrap();
+        let mut target = make_builder(4);
+        target.states[0].ranges.push(SymbRange::new('a' as u32, 'z' as u32));
         target.add_eps(1, 2);
-        target.add_transition(2, 3, SymbRange::new('A' as u32, 'Z' as u32));
+        target.states[2].ranges.push(SymbRange::new('A' as u32, 'Z' as u32));
 
-        assert_eq!(auto, target);
+        assert_eq!(builder, target);
     }
 
     #[test]
     fn test_literal() {
-        let auto = parse("aZ").unwrap();
-        let mut target = make_auto(3);
-        target.add_transition(0, 1, SymbRange::single('a' as u32));
-        target.add_transition(1, 2, SymbRange::single('Z' as u32));
+        let builder = parse("aZ").unwrap();
+        let mut target = make_builder(3);
+        target.states[0].ranges.push(SymbRange::single('a' as u32));
+        target.states[1].ranges.push(SymbRange::single('Z' as u32));
 
-        assert_eq!(auto, target);
+        assert_eq!(builder, target);
     }
 
     #[test]
     fn test_repeat() {
-        let auto = parse("a*z").unwrap();
-        let mut target = make_auto(4);
-        target.add_transition(0, 1, SymbRange::single('a' as u32));
+        let builder = parse("a*z").unwrap();
+        let mut target = make_builder(4);
+        target.states[0].ranges.push(SymbRange::single('a' as u32));
+        target.states[2].ranges.push(SymbRange::single('z' as u32));
         target.add_eps(0, 1);
         target.add_eps(1, 0);
         target.add_eps(1, 2);
-        target.add_transition(2, 3, SymbRange::single('z' as u32));
 
-        assert_eq!(auto, target);
+        assert_eq!(builder, target);
+
+        // TODO: test other repeat styles
     }
 
     #[test]
     fn test_alternate() {
-        let auto = parse("a|z").unwrap();
-        let mut target = make_auto(6);
+        let builder = parse("a|z").unwrap();
+        let mut target = make_builder(6);
+        target.states[1].ranges.push(SymbRange::single('a' as u32));
+        target.states[3].ranges.push(SymbRange::single('z' as u32));
         target.add_eps(0, 1);
-        target.add_transition(1, 2, SymbRange::single('a' as u32));
         target.add_eps(2, 5);
-
         target.add_eps(0, 3);
-        target.add_transition(3, 4, SymbRange::single('z' as u32));
         target.add_eps(4, 5);
 
-        assert_eq!(auto, target);
+        assert_eq!(builder, target);
     }
 }
 
