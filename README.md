@@ -5,6 +5,8 @@ A crate for creating and manipulating deterministic finite automata (DFAs).
 Currently, the implementation is somewhat biased towards building DFAs from
 regular expressions.
 
+[![Build status](https://travis-ci.org/jneem/automaton.svg)](https://travis-ci.org/jneem/automaton)
+
 # Why
 
 Regular expression implementations (e.g. [rust's regex
@@ -20,6 +22,8 @@ Some regex features don't map well to DFAs. Specifically, this crate does not
 support (nor does it plan to support) lazy repetition or subgroup captures.
 There are also some whose support is planned, but not implemented (e.g. word
 boundaries).
+
+`automaton` currently only works on nightly rust.
 
 # License
 
