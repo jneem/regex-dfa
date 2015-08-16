@@ -9,3 +9,11 @@ regex = "*"
 regex-syntax = "*"
 bit-set = "*"
 
+[package]
+description = "A crate for turning regexes into DFAs."
+documentation = "http://jneem.github.io/regex-dfa"
+homepage = "http://jneem.github.io/regex-dfa"
+repository = "http://github.com/jneem/regex-dfa"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+
