@@ -1,6 +1,6 @@
 [package]
 
-name = "automaton"
+name = "regex_dfa"
 version = "0.0.1"
 authors = ["Joe Neeman <joeneeman@gmail.com>"]
 
