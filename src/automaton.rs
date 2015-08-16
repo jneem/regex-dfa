@@ -212,6 +212,10 @@ impl Dfa {
             initial: 0,
         }
     }
+    pub fn from_regex(re: &str) -> Result<Dfa, error::Error> {
+        let nfa = try!(Nfa::from_regex(re));
+        Ok(nfa.determinize().minimize())
+    }
 
     fn add_state(&mut self, accepting: bool) {
         self.states.push(DfaState::new(accepting));
