@@ -74,6 +74,22 @@ impl NfaTransitions {
         ret
     }
 
+    pub fn any_char(target: usize) -> NfaTransitions {
+        let mut ret = NfaTransitions::new();
+        ret.ranges.push((SymbRange::new(0, u32::MAX), target));
+
+        ret
+    }
+
+    pub fn any_char_except(chars: &str, target: usize) -> NfaTransitions {
+        let mut ret = NfaTransitions::new();
+        for c in chars.chars() {
+            ret.ranges.push((SymbRange::new(c as u32, c as u32), target));
+        }
+
+        ret.negated()
+    }
+
     /// Collects transitions with the same symbol range.
     ///
     /// For every unique SymbRange that appears in `trans`, adds an extra

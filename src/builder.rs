@@ -14,9 +14,7 @@ pub struct NfaBuilder {
 }
 
 impl NfaBuilder {
-    // Private, because the return value doesn't satisfy the invariants:
-    // accept is not the index of a valid state.
-    fn with_capacity(n: usize) -> NfaBuilder {
+    pub fn with_capacity(n: usize) -> NfaBuilder {
         NfaBuilder {
             auto: Nfa::with_capacity(n),
         }
@@ -44,14 +42,34 @@ impl NfaBuilder {
         self.auto
     }
 
-    // Builds an automaton that recognizes a language consisting of a single character.
-    pub fn char(c: &CharClass) -> NfaBuilder {
+    // Given a transition list, constructs the automaton with two
+    // states and that transition list. The target state of all transitions
+    // in the list should be `1'.
+    fn single_transition(trans: NfaTransitions) -> NfaBuilder {
         let mut ret = NfaBuilder::with_capacity(2);
 
         ret.auto.states.push(NfaState::new(false));
         ret.auto.states.push(NfaState::new(false));
-        ret.auto.states[0].transitions = NfaTransitions::from_char_class(c, 1);
+        ret.auto.states[0].transitions = trans;
+
         ret
+     }
+
+    /// Builds an automaton that recognizes a language consisting of a single character from a
+    /// specific class.
+    pub fn char(c: &CharClass) -> NfaBuilder {
+        NfaBuilder::single_transition(NfaTransitions::from_char_class(c, 1))
+    }
+
+    /// Builds an automaton that recognizes the language consisting of any single character.
+    pub fn any_char() -> NfaBuilder {
+        NfaBuilder::single_transition(NfaTransitions::any_char(1))
+    }
+
+    /// Builds an automaton that recognizes the language consisting of a single character belonging
+    /// to the given string. The string must be sorted.
+    pub fn any_char_except(chars: &str) -> NfaBuilder {
+        NfaBuilder::single_transition(NfaTransitions::any_char_except(chars, 1))
     }
 
     pub fn literal<C, I>(chars: I) -> NfaBuilder
@@ -146,16 +164,18 @@ impl NfaBuilder {
             &Literal { ref chars, .. } => NfaBuilder::literal(chars.iter()),
             &Group { ref e, .. } => NfaBuilder::from_expr(&e),
             &Repeat { ref e, r, .. } => NfaBuilder::repeat(NfaBuilder::from_expr(e), r),
-            _ => { panic!("unsupported expr") }
+            &AnyChar => NfaBuilder::any_char(),
+            &AnyCharNoNL => NfaBuilder::any_char_except("\n\r"),
+            _ => { panic!("unsupported expr: {:?}", e) }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ::builder::NfaBuilder;
-    use ::automaton::{Nfa, NfaState};
-    use ::transition::SymbRange;
+    use builder::NfaBuilder;
+    use automaton::{Nfa, NfaState};
+    use transition::SymbRange;
     use regex_syntax;
 
     fn parse(s: &str) -> regex_syntax::Result<Nfa> {

@@ -6,21 +6,6 @@ use std::hash::Hash;
 use std::mem;
 use transition::{DfaTransitions, NfaTransitions, SymbRange};
 
-trait PopArbitrary<T> {
-    /// Removes and returns an arbitrary member of this collection.
-    ///
-    /// If the collection is empty, this panics.
-    fn pop_arbitrary(&mut self) -> T;
-}
-
-impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
-    fn pop_arbitrary(&mut self) -> T {
-        let elt = self.iter().next().unwrap().clone();
-        self.remove(&elt);
-        elt
-    }
-}
-
 #[derive(PartialEq, Debug)]
 pub struct NfaState {
     pub transitions: NfaTransitions,
@@ -36,38 +21,11 @@ impl NfaState {
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub struct DfaState {
-    pub transitions: DfaTransitions,
-    pub accepting: bool,
-}
-
-impl DfaState {
-    pub fn new(accepting: bool) -> DfaState {
-        DfaState {
-            transitions: DfaTransitions::new(),
-            accepting: accepting,
-        }
-    }
-}
-
-
 #[derive(PartialEq)]
 pub struct Nfa {
     // TODO: make this private once builder has been transitioned away from
     // using Nfa.
     pub states: Vec<NfaState>,
-}
-
-pub struct Dfa {
-    states: Vec<DfaState>,
-    initial: usize,
-}
-
-fn singleton(i: usize) -> BitSet {
-    let mut ret = BitSet::with_capacity(i+1);
-    ret.insert(i);
-    ret
 }
 
 impl Debug for Nfa {
@@ -184,6 +142,48 @@ impl Nfa {
 
         trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect()
     }
+}
+
+
+trait PopArbitrary<T> {
+    /// Removes and returns an arbitrary member of this collection.
+    ///
+    /// If the collection is empty, this panics.
+    fn pop_arbitrary(&mut self) -> T;
+}
+
+impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
+    fn pop_arbitrary(&mut self) -> T {
+        let elt = self.iter().next().unwrap().clone();
+        self.remove(&elt);
+        elt
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct DfaState {
+    pub transitions: DfaTransitions,
+    pub accepting: bool,
+}
+
+impl DfaState {
+    pub fn new(accepting: bool) -> DfaState {
+        DfaState {
+            transitions: DfaTransitions::new(),
+            accepting: accepting,
+        }
+    }
+}
+
+pub struct Dfa {
+    states: Vec<DfaState>,
+    initial: usize,
+}
+
+fn singleton(i: usize) -> BitSet {
+    let mut ret = BitSet::with_capacity(i+1);
+    ret.insert(i);
+    ret
 }
 
 impl Dfa {
@@ -449,14 +449,14 @@ impl Debug for Dfa {
 
 #[cfg(test)]
 mod tests {
-    use automaton::{Nfa, NfaState};
+    use automaton::{Dfa, Nfa, NfaState};
     use builder;
     use regex_syntax;
     use transition::SymbRange;
 
-    fn parse(re: &str) -> Nfa {
+    fn make_dfa(re: &str) -> Dfa {
         let expr = regex_syntax::Expr::parse(re).unwrap();
-        builder::NfaBuilder::from_expr(&expr).to_automaton()
+        builder::NfaBuilder::from_expr(&expr).to_automaton().determinize()
     }
 
     fn u32str<'a>(s: &'a str) -> Box<Iterator<Item=u32> + 'a> {
@@ -468,7 +468,7 @@ mod tests {
     }
 
     /// Returns an automaton that accepts strings with an even number of 'b's.
-    fn even_bs_auto() -> Nfa {
+    fn even_bs_auto() -> Dfa {
         let mut auto = Nfa::new();
 
         auto.states.push(NfaState::new(true));
@@ -479,12 +479,12 @@ mod tests {
         auto.states[1].transitions.ranges.push((SymbRange::single('a' as u32), 1));
         auto.states[1].transitions.ranges.push((SymbRange::single('b' as u32), 0));
 
-        auto
+        auto.determinize()
     }
 
     #[test]
     fn test_execute() {
-        let auto = even_bs_auto().determinize();
+        let auto = even_bs_auto();
 
         assert_eq!(auto.execute(u32str("aaaaaaa")), true);
         assert_eq!(auto.execute(u32str("aabaaaaa")), false);
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn test_reverse() {
         // TODO: test something non-palindromic
-        let auto = even_bs_auto().determinize();
+        let auto = even_bs_auto();
 
         let mut rev = Nfa::new();
 
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_minimize() {
-        let auto = parse("a*b*").determinize().minimize();
+        let auto = make_dfa("a*b*").minimize();
 
         assert_eq!(auto.execute(u32str("aaabbbbbb")), true);
         assert_eq!(auto.execute(u32str("bbbb")), true);
@@ -527,8 +527,8 @@ mod tests {
     }
 
     #[test]
-    fn test_determinize() {
-        let auto = parse("a*b*").determinize();
+    fn test_dfa() {
+        let auto = make_dfa("a*b*");
 
         assert_eq!(auto.execute(u32str("aaabbbbbb")), true);
         assert_eq!(auto.execute(u32str("bbbb")), true);
@@ -540,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_longest_match() {
-        let auto = parse("a*b*").determinize();
+        let auto = make_dfa("a*b*");
 
         assert_eq!(auto.longest_match("aba".char_indices()), Some(2));
         assert_eq!(auto.longest_match("baba".char_indices()), Some(1));
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(auto.longest_match("bc".char_indices()), Some(1));
         assert_eq!(auto.longest_match("b".char_indices()), Some(1));
 
-        let auto = parse("a+b*").determinize();
+        let auto = make_dfa("a+b*");
 
         assert_eq!(auto.longest_match("aba".char_indices()), Some(2));
         assert_eq!(auto.longest_match("baba".char_indices()), None);
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_search() {
-        let auto = parse("a+b*").determinize();
+        let auto = make_dfa("a+b*");
 
         assert_eq!(auto.search("cdacd"), Some((2, 3)));
         assert_eq!(auto.search("cdaabbcd"), Some((2, 6)));
@@ -571,7 +571,7 @@ mod tests {
 
         // If the pattern matches the empty string, it will always be found
         // at the beginning.
-        let auto = parse("a*b*").determinize();
+        let auto = make_dfa("a*b*");
 
         assert_eq!(auto.search("cdacd"), Some((0, 0)));
         assert_eq!(auto.search("cdaabbcd"), Some((0, 0)));
@@ -579,5 +579,60 @@ mod tests {
         assert_eq!(auto.search("cdb"), Some((0, 0)));
         assert_eq!(auto.search("ab"), Some((0, 2)));
     }
+
+    // Benches copied from regex. Everything is anchored so far,
+    // since we don't have any optimizations for non-anchored benchmarks.
+    use test::Bencher;
+    use regex::Regex;
+    use std::iter::repeat;
+    #[bench]
+    fn anchored_literal_short_non_match(b: &mut Bencher) {
+        let re = Regex::new("^zbc(d|e)").unwrap();
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        b.iter(|| re.is_match(text));
+    }
+
+    #[bench]
+    fn anchored_literal_short_non_match_dfa(b: &mut Bencher) {
+        let auto = make_dfa("zbc(d|e)").minimize();
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        b.iter(|| auto.execute(u32str(text)));
+    }
+
+    #[bench]
+    fn anchored_literal_long_non_match(b: &mut Bencher) {
+        let re = Regex::new("^zbc(d|e)").unwrap();
+        let text: String = repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
+        b.iter(|| re.is_match(&text));
+    }
+
+    #[bench]
+    fn anchored_literal_short_match(b: &mut Bencher) {
+        let re = Regex::new("^.bc(d|e)").unwrap();
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        b.iter(|| re.is_match(text));
+    }
+
+    #[bench]
+    fn anchored_literal_short_match_dfa(b: &mut Bencher) {
+        let auto = make_dfa(".bc(d|e)").minimize();
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        b.iter(|| auto.execute(u32str(text)));
+    }
+
+    #[bench]
+    fn anchored_literal_long_match(b: &mut Bencher) {
+        let re = Regex::new("^.bc(d|e)").unwrap();
+        let text: String = repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
+        b.iter(|| re.is_match(&text));
+    }
+
+    #[bench]
+    fn anchored_literal_long_match_dfa(b: &mut Bencher) {
+        let auto = make_dfa(".bc(d|e)").minimize();
+        let text: String = repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
+        b.iter(|| auto.execute(u32str(&text)));
+    }
+
 }
 
