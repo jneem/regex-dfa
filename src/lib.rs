@@ -6,7 +6,7 @@ extern crate regex_syntax;
 extern crate test;
 
 pub mod automaton;
-pub mod builder;
+mod builder;
 mod error;
 pub mod transition;
 

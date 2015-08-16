@@ -1,6 +1,6 @@
 use automaton::Nfa;
 use transition::SymbRange;
-use regex_syntax::{CharClass, Expr, Repeater};
+use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std;
 use std::ops::Deref;
 
@@ -66,10 +66,6 @@ pub struct NfaBuilder {
 }
 
 impl NfaBuilder {
-    pub fn new() -> NfaBuilder {
-        NfaBuilder { states: Vec::new() }
-    }
-
     pub fn len(&self) -> usize {
         self.states.len()
     }
@@ -109,12 +105,20 @@ impl NfaBuilder {
      }
 
     // Adds a sequence of states, and a sequence of transitions between them.
-    pub fn add_literal<C, I>(&mut self, chars: I)
+    pub fn add_literal<C, I>(&mut self, chars: I, case_insensitive: bool)
         where C: Deref<Target=char>,
               I: Iterator<Item=C>
     {
         for ch in chars {
-            self.states.push(BuilderState::from_ranges(vec![SymbRange::single(*ch as u32)]));
+            let ranges = if case_insensitive {
+                // NOTE: it isn't really necessary to create a new CharClass here, but
+                // regex_syntax doesn't expose case_fold (or new) on ClassRange.
+                let cc = CharClass::new(vec![ClassRange { start: *ch, end: *ch }]);
+                symb_ranges_from_char_class(&cc.case_fold())
+            } else {
+                vec![SymbRange::single(*ch as u32)]
+            };
+            self.states.push(BuilderState::from_ranges(ranges));
         }
         self.states.push(BuilderState::new());
     }
@@ -181,10 +185,16 @@ impl NfaBuilder {
             &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
             &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
             &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
-            &Literal { ref chars, .. } => self.add_literal(chars.iter()),
             &Concat(ref es) => self.add_concat_exprs(es),
             &Alternate(ref es) => self.add_alternate_exprs(es),
+            &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+
+            // We don't support capture groups, so there is no need to keep track of
+            // the group name or number.
             &Group { ref e, .. } => self.add_expr(e),
+
+            // We don't support greedy vs. lazy matching, because I don't know
+            // if it can be expressed in a DFA.
             &Repeat { ref e, r, .. } => self.add_repeat(e, r),
             _ => { panic!("unsupported expr: {:?}", expr) }
         }
@@ -203,7 +213,7 @@ mod tests {
     }
 
     fn make_builder(n_states: usize) -> NfaBuilder {
-        let mut ret = NfaBuilder::new();
+        let mut ret = NfaBuilder { states: Vec::new() };
         for _ in 0..n_states {
             ret.states.push(BuilderState::new());
         }
@@ -232,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn test_repeat() {
+    fn test_repeat_zero_or_more() {
         let builder = parse("a*z").unwrap();
         let mut target = make_builder(4);
         target.states[0].ranges.push(SymbRange::single('a' as u32));
@@ -242,8 +252,30 @@ mod tests {
         target.add_eps(1, 2);
 
         assert_eq!(builder, target);
+    }
 
-        // TODO: test other repeat styles
+    #[test]
+    fn test_repeat_one_or_more() {
+        let builder = parse("a+z").unwrap();
+        let mut target = make_builder(4);
+        target.states[0].ranges.push(SymbRange::single('a' as u32));
+        target.states[2].ranges.push(SymbRange::single('z' as u32));
+        target.add_eps(1, 0);
+        target.add_eps(1, 2);
+
+        assert_eq!(builder, target);
+    }
+
+    #[test]
+    fn test_repeat_zero_or_one() {
+        let builder = parse("a?z").unwrap();
+        let mut target = make_builder(4);
+        target.states[0].ranges.push(SymbRange::single('a' as u32));
+        target.states[2].ranges.push(SymbRange::single('z' as u32));
+        target.add_eps(0, 1);
+        target.add_eps(1, 2);
+
+        assert_eq!(builder, target);
     }
 
     #[test]
@@ -256,6 +288,18 @@ mod tests {
         target.add_eps(2, 5);
         target.add_eps(0, 3);
         target.add_eps(4, 5);
+
+        assert_eq!(builder, target);
+    }
+
+    #[test]
+    fn test_case_insensitive() {
+        let builder = parse("(?i)ab").unwrap();
+        let mut target = make_builder(3);
+        target.states[0].ranges.push(SymbRange::single('A' as u32));
+        target.states[0].ranges.push(SymbRange::single('a' as u32));
+        target.states[1].ranges.push(SymbRange::single('B' as u32));
+        target.states[1].ranges.push(SymbRange::single('b' as u32));
 
         assert_eq!(builder, target);
     }

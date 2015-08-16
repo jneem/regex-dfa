@@ -1,9 +1,13 @@
 use bit_set::BitSet;
+use builder::NfaBuilder;
+use error;
+use regex_syntax;
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
+use std::result::Result;
 use transition::{DfaTransitions, NfaTransitions, SymbRange};
 
 #[derive(PartialEq, Debug)]
@@ -27,7 +31,7 @@ pub struct Nfa {
 }
 
 impl Debug for Nfa {
-    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
 
         for (st_idx, st) in self.states.iter().enumerate() {
@@ -54,6 +58,11 @@ impl Nfa {
         Nfa {
             states: Vec::new(),
         }
+    }
+
+    pub fn from_regex(re: &str) -> Result<Nfa, error::Error> {
+        let expr = try!(regex_syntax::Expr::parse(re));
+        Ok(NfaBuilder::from_expr(&expr).to_automaton())
     }
 
     pub fn with_capacity(n: usize) -> Nfa {
@@ -430,7 +439,7 @@ impl Dfa {
 }
 
 impl Debug for Dfa {
-    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Dfa ({} states):\n", self.states.len())));
 
         for (st_idx, st) in self.states.iter().enumerate() {
