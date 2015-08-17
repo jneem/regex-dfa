@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use automaton::Nfa;
-use transition::SymbRange;
+use transition::{Predicate, SymbRange};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std;
 use std::ops::Deref;
@@ -23,9 +23,11 @@ fn symb_ranges_from_char_class(c: &CharClass) -> Vec<SymbRange> {
 }
 
 fn symb_ranges_from_any_char() -> Vec<SymbRange> {
-    let mut ret = Vec::with_capacity(1);
-    ret.push(SymbRange::new(0, std::u32::MAX));
-    ret
+    vec![SymbRange::new(0, std::u32::MAX)]
+}
+
+fn symb_ranges_from_char(ch: char) -> Vec<SymbRange> {
+    vec![SymbRange::single(ch as u32)]
 }
 
 fn symb_ranges_from_any_char_except(chars: &str) -> Vec<SymbRange> {
@@ -42,14 +44,14 @@ fn symb_ranges_from_any_char_except(chars: &str) -> Vec<SymbRange> {
 }
 
 // When constructing an Nfa from a regex, the states have special structure: if the transition
-// accepts any input, then it always moves to the next state. Therefore, there is no need to store
-// the target state of a transition.
-// Also, the last state is always the accepting state, so there is no need to store whether
-// a state is accepting.
+// accepts any input or matches a predicate, then it always moves to the next state. Therefore,
+// there is no need to store the target state of a transition or predicate.  Also, the last state
+// is always the accepting state, so there is no need to store whether a state is accepting.
 #[derive(Debug, PartialEq)]
 struct BuilderState {
     ranges: Vec<SymbRange>,
     eps: Vec<usize>,
+    predicates: Vec<Predicate>
 }
 
 impl BuilderState {
@@ -57,6 +59,7 @@ impl BuilderState {
         BuilderState {
             ranges: Vec::new(),
             eps: Vec::new(),
+            predicates: Vec::new(),
         }
     }
 
@@ -64,6 +67,7 @@ impl BuilderState {
         BuilderState {
             ranges: rs,
             eps: Vec::new(),
+            predicates: Vec::new(),
         }
     }
 }
@@ -77,7 +81,7 @@ impl NfaBuilder {
     pub fn len(&self) -> usize {
         self.states.len()
     }
-    
+
     pub fn to_automaton(&self) -> Nfa {
         let mut ret = Nfa::with_capacity(self.len());
         let mut ret_len: usize = 0;
@@ -86,10 +90,13 @@ impl NfaBuilder {
             ret.add_state(ret_len == self.len());
 
             for ch in &s.ranges {
-                ret.add_transition(ret_len-1, ret_len, *ch);
+                ret.add_transition(ret_len - 1, ret_len, *ch);
             }
             for eps in &s.eps {
-                ret.add_eps(ret_len-1, *eps);
+                ret.add_eps(ret_len - 1, *eps);
+            }
+            for p in &s.predicates {
+                ret.add_predicate(ret_len - 1, ret_len, p.clone());
             }
         }
 
@@ -113,7 +120,7 @@ impl NfaBuilder {
      }
 
     // Adds a sequence of states, and a sequence of transitions between them.
-    pub fn add_literal<C, I>(&mut self, chars: I, case_insensitive: bool)
+    fn add_literal<C, I>(&mut self, chars: I, case_insensitive: bool)
         where C: Deref<Target=char>,
               I: Iterator<Item=C>
     {
@@ -198,7 +205,7 @@ impl NfaBuilder {
                 cur_init_idx = self.states.len();
                 self.add_expr(expr);
                 init_indices.push(cur_init_idx);
-                
+
                 if i > 0 || min > 0 {
                     self.add_eps(cur_init_idx - 1, cur_init_idx);
                 }
@@ -220,28 +227,47 @@ impl NfaBuilder {
         }
     }
 
-        fn add_expr(&mut self, expr: &Expr) {
-            use regex_syntax::Expr::*;
+    fn add_predicate(&mut self, pred: Predicate) {
+        if self.states.is_empty() {
+            self.states.push(BuilderState::new());
+        }
+        self.states.last_mut().unwrap().predicates.push(pred);
+        self.states.push(BuilderState::new());
+    }
 
-            match expr {
-                &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
-                &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
-                &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
-                &Concat(ref es) => self.add_concat_exprs(es),
-                &Alternate(ref es) => self.add_alternate_exprs(es),
-                &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+    fn add_expr(&mut self, expr: &Expr) {
+        use regex_syntax::Expr::*;
+        use transition::Predicate::*;
 
-                // We don't support capture groups, so there is no need to keep track of
-                // the group name or number.
-                &Group { ref e, .. } => self.add_expr(e),
+        match expr {
+            &Empty => {},
+            &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
+            &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
+            &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
+            &Concat(ref es) => self.add_concat_exprs(es),
+            &Alternate(ref es) => self.add_alternate_exprs(es),
+            &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+            &StartLine => {
+                self.add_predicate(InClasses(symb_ranges_from_char('\n'),
+                                             symb_ranges_from_any_char()));
+                self.add_predicate(Beginning);
+            },
+            &EndLine => { panic!("TODO") },
+            &StartText => { panic!("TODO") },
+            &EndText => { panic!("TODO") },
+            &WordBoundary => { panic!("TODO") },
+            &NotWordBoundary => { panic!("TODO") },
 
-                // We don't support greedy vs. lazy matching, because I don't know
-                // if it can be expressed in a DFA.
-                &Repeat { ref e, r, .. } => self.add_repeat(e, r),
-                _ => { panic!("unsupported expr: {:?}", expr) }
-            }
+            // We don't support capture groups, so there is no need to keep track of
+            // the group name or number.
+            &Group { ref e, .. } => self.add_expr(e),
+
+            // We don't support greedy vs. lazy matching, because I don't know
+            // if it can be expressed in a DFA.
+            &Repeat { ref e, r, .. } => self.add_repeat(e, r),
         }
     }
+}
 
     #[cfg(test)]
 mod tests {

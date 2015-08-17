@@ -7,14 +7,15 @@
 // except according to those terms.
 
 use bit_set::BitSet;
+use std;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::u32;
 
-/// A range of symbols.
+/// A range of symbols, including the endpoints.
 ///
-/// Includes the endpoints.
+/// If `from` is strictly larger than `to` then this represents an empty range.
 #[derive(PartialEq, Debug, Copy, Clone, Hash)]
 pub struct SymbRange {
     pub from: u32,
@@ -38,6 +39,10 @@ impl SymbRange {
     pub fn contains(&self, symb: u32) -> bool {
         self.from <= symb && symb <= self.to
     }
+
+    pub fn intersection(&self, other: &SymbRange) -> SymbRange {
+        SymbRange::new(std::cmp::max(self.from, other.from), std::cmp::min(self.to, other.to))
+    }
 }
 
 impl PartialOrd for SymbRange {
@@ -52,10 +57,109 @@ impl PartialOrd for SymbRange {
     }
 }
 
+// Assumes the two ranges are sorted and non-overlapping.
+// TODO: there are a lot of utility functions for SymbRange -- collect them in a newtype somewhere.
+fn symb_ranges_intersect(rs: &Vec<SymbRange>, ss: &Vec<SymbRange>) -> Vec<SymbRange> {
+    use std::cmp::{max, min};
+
+    let mut ret = Vec::new();
+    let mut ss_slice: &[SymbRange] = &ss;
+
+    for &r in rs {
+        while !ss_slice.is_empty() {
+            let (s, ss_tail) = ss_slice.split_first().unwrap();
+            if s.to >= r.from && s.from <= r.to {
+                ret.push(SymbRange::new(max(s.from, r.from), min(s.to, r.to)));
+            }
+            if s.to >= r.to {
+                break;
+            } else {
+                ss_slice = ss_tail;
+            }
+        }
+    }
+
+    ret
+}
+
+/// A predicate is a transition that doesn't consume any input, but that can only be traversed if
+/// the previous char and the next char satisfy some condition.
+#[derive(PartialEq, Debug, Clone)]
+pub enum Predicate {
+    /// This predicate succeeeds if the previous character is in the first class and the next
+    /// character is in the second class.
+    InClasses(Vec<SymbRange>, Vec<SymbRange>),
+    /// This succeeds if we are currently at the beginning of the input.
+    Beginning,
+    /// This succeeds if we are currently at the end of the input.
+    End,
+}
+
+impl Predicate {
+    /// Returns a predicate representing the intersection of this one and another one.
+    ///
+    /// If the intersection is empty, returns None.
+    pub fn intersect(&self, other: &Predicate) -> Option<Predicate> {
+        use transition::Predicate::*;
+
+        match self {
+            &InClasses(ref my_in, ref my_out) => {
+                if let &InClasses(ref other_in, ref other_out) = other {
+                    let in_ranges = symb_ranges_intersect(my_in, other_in);
+                    let out_ranges = symb_ranges_intersect(my_out, other_out);
+                    if !in_ranges.is_empty() && !out_ranges.is_empty() {
+                        Some(InClasses(in_ranges, out_ranges))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            },
+            _ => if self.eq(other) { Some(self.clone()) } else { None }
+        }
+    }
+
+    // mine is sorted, other is not necessarily.
+    fn filter_one<T: Clone>(mine: &Vec<SymbRange>, other: &Vec<(SymbRange, T)>)
+        -> Vec<(SymbRange, T)> {
+
+        let mut ret = Vec::new();
+        for &(ref his_range, ref target) in other {
+            // TODO: use binary search to get the starting range.
+            for my_range in mine {
+                if my_range.from > his_range.to {
+                    break;
+                } else if my_range.to >= his_range.from {
+                    ret.push((SymbRange::intersection(my_range, his_range), target.clone()));
+                }
+            }
+        }
+        ret
+    }
+
+    pub fn filter_transitions<T: Clone>(&self,
+                              in_trans: &Vec<(SymbRange, T)>,
+                              out_trans: &Vec<(SymbRange, T)>)
+        -> (Vec<(SymbRange, T)>, Vec<(SymbRange, T)>) {
+
+        use transition::Predicate::*;
+        if let &InClasses(ref my_in, ref my_out) = self {
+            (Predicate::filter_one(my_in, in_trans), Predicate::filter_one(my_out, out_trans))
+        } else {
+            (vec![], vec![])
+        }
+    }
+}
+
 #[derive(PartialEq, Debug)]
 pub struct NfaTransitions {
+    /// Transitions that consume input.
     pub ranges: Vec<(SymbRange, usize)>,
-    pub eps: Vec<usize>, // Transitions that don't consume any input.
+    /// Unconditional transitions that don't consume any input.
+    pub eps: Vec<usize>,
+    /// Conditional transitions that don't consume any input.
+    pub predicates: Vec<(Predicate, usize)>,
 }
 
 impl NfaTransitions {
@@ -63,6 +167,7 @@ impl NfaTransitions {
         NfaTransitions {
             ranges: Vec::new(),
             eps: Vec::new(),
+            predicates: Vec::new(),
         }
     }
 
@@ -70,6 +175,7 @@ impl NfaTransitions {
         NfaTransitions {
             ranges: vec,
             eps: Vec::new(),
+            predicates: Vec::new(),
         }
     }
 
@@ -133,6 +239,7 @@ impl NfaTransitions {
         ret
     }
 
+    /* TODO: needed?
     /// Returns the complement of this transition list.
     ///
     /// This assumes that the transition list is sorted and that
@@ -154,6 +261,7 @@ impl NfaTransitions {
 
         ret
     }
+    */
 }
 
 #[derive(PartialEq, Debug)]
