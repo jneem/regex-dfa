@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use automaton::Nfa;
+use nfa::Nfa;
 use transition::{Predicate, SymbRange};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std;

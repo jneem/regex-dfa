@@ -28,12 +28,14 @@ extern crate regex;
 extern crate regex_syntax;
 extern crate test;
 
-mod automaton;
 mod builder;
+mod dfa;
 mod error;
+mod nfa;
 mod transition;
 
-pub use automaton::{Dfa, Nfa};
+pub use dfa::Dfa;
+pub use nfa::Nfa;
 
 pub use error::Error;
 
