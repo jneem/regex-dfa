@@ -8,6 +8,7 @@
 
 use bit_set::BitSet;
 use builder::NfaBuilder;
+use char_map::{CharMultiMap, CharRange};
 use dfa::Dfa;
 use error;
 use regex_syntax;
@@ -15,8 +16,9 @@ use std;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::mem;
+use std::ops::Deref;
 use std::result::Result;
-use transition::{NfaTransitions, Predicate, SymbRange};
+use transition::{NfaTransitions, Predicate};
 
 
 #[derive(PartialEq, Debug)]
@@ -67,11 +69,11 @@ impl Debug for Nfa {
         for (st_idx, st) in self.states.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tState {} (accepting: {}):\n", st_idx, st.accepting)));
 
-            if !st.transitions.ranges.is_empty() {
+            if !st.transitions.consuming.is_empty() {
                 try!(f.write_str("\t\tTransitions:\n"));
-                for &(range, target) in &st.transitions.ranges {
+                for &(range, target) in st.transitions.consuming.iter() {
                     try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
-                                                  range.from, range.to, target)));
+                                                  range.start, range.end, target)));
                 }
             }
 
@@ -111,8 +113,8 @@ impl Nfa {
         }
     }
 
-    pub fn add_transition(&mut self, from: usize, to: usize, r: SymbRange) {
-        self.states[from].transitions.ranges.push((r, to));
+    pub fn add_transition(&mut self, from: usize, to: usize, r: CharRange) {
+        self.states[from].transitions.consuming.add(r, &to);
     }
 
     pub fn add_state(&mut self, accepting: bool) {
@@ -130,8 +132,8 @@ impl Nfa {
     /// Returns the list of all input-consuming transitions from the given state.
     ///
     /// TODO: this would be a prime candidate for using abstract return types, if that ever lands.
-    pub fn transitions_from(&self, from: usize) -> &Vec<(SymbRange, usize)> {
-        &self.states[from].transitions.ranges
+    pub fn transitions_from(&self, from: usize) -> &Vec<(CharRange, usize)> {
+        self.states[from].transitions.consuming.deref()
     }
 
     /// Modifies this automaton to remove all transition predicates.
@@ -180,7 +182,7 @@ impl Nfa {
                 self.states.push(NfaState::new(false));
                 reversed.states.push(NfaState::new(false));
                 let new_idx = self.states.len() - 1;
-                for (range, ref sources) in in_trans {
+                for (range, ref sources) in in_trans.into_iter() {
                     for source in sources {
                         self.add_transition(source, new_idx, range);
                         reversed.add_transition(new_idx, source, range);
@@ -192,7 +194,7 @@ impl Nfa {
                         reversed.add_predicate(new_idx, source, p);
                     }
                 }
-                for (range, ref targets) in out_trans {
+                for (range, ref targets) in out_trans.into_iter() {
                     for target in targets {
                         self.add_transition(new_idx, target, range);
                         reversed.add_transition(target, new_idx, range);
@@ -221,14 +223,14 @@ impl Nfa {
         }
 
         for (idx, st) in self.states.iter().enumerate() {
-            for &(ref range, target) in st.transitions.ranges.iter() {
-                ret.states[target].transitions.ranges.push((*range, idx));
+            for &(ref range, target) in st.transitions.consuming.iter() {
+                ret.add_transition(target, idx, *range);
             }
             for &target in st.transitions.eps.iter() {
-                ret.states[target].transitions.eps.push(idx);
+                ret.add_eps(target, idx);
             }
             for &(ref pred, target) in st.transitions.predicates.iter() {
-                ret.states[target].transitions.predicates.push((pred.clone(), target));
+                ret.add_predicate(target, idx, pred.clone());
             }
         }
 
@@ -314,13 +316,14 @@ impl Nfa {
     ///
     /// Only transitions that consume output are returned. In particular, you
     /// probably want `states` to already be eps-closed.
-    fn transitions(&self, states: &BitSet) -> Vec<(SymbRange, BitSet)> {
+    // TODO: can make this return a CharMap
+    fn transitions(&self, states: &BitSet) -> CharMultiMap<BitSet> {
         let trans = states.iter()
-                          .flat_map(|s| self.states[s].transitions.ranges.iter().cloned())
+                          .flat_map(|s| self.states[s].transitions.consuming.iter().cloned())
                           .collect();
-        let trans = NfaTransitions::from_vec(trans).collect_transition_pairs();
+        let trans = NfaTransitions::from_vec(trans).group_consuming();
 
-        trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect()
+        CharMultiMap::from_vec(trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect())
     }
 
     /// Finds all predicates transitioning out of the given set of states.
@@ -334,7 +337,7 @@ impl Nfa {
 #[cfg(test)]
 mod tests {
     use nfa::Nfa;
-    use transition::SymbRange;
+    use char_map::CharRange;
 
     #[test]
     fn test_predicate_beginning() {
@@ -349,7 +352,7 @@ mod tests {
         target.add_state(false);
         target.add_state(false);
         target.add_state(true);
-        target.add_transition(2, 3, SymbRange::single('a' as u32));
+        target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
         target.anchored_states.insert(1);
         assert_eq!(nfa, target)

@@ -6,42 +6,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use char_map::CharSet;
 use nfa::Nfa;
-use transition::{Predicate, SymbRange};
+use transition::Predicate;
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
-use std;
 use std::ops::Deref;
-
-// Utility functions for constructing Vec<SymbRange>
-
-fn symb_ranges_from_char_class(c: &CharClass) -> Vec<SymbRange> {
-    let mut ret = Vec::with_capacity(c.len());
-    for range in c {
-        ret.push(SymbRange::new(range.start as u32, range.end as u32))
-    }
-    ret
-}
-
-fn symb_ranges_from_any_char() -> Vec<SymbRange> {
-    vec![SymbRange::new(0, std::u32::MAX)]
-}
-
-fn symb_ranges_from_char(ch: char) -> Vec<SymbRange> {
-    vec![SymbRange::single(ch as u32)]
-}
-
-fn symb_ranges_from_any_char_except(chars: &str) -> Vec<SymbRange> {
-    let mut ret = Vec::with_capacity(chars.len());
-    let mut next_allowed = 0u32;
-    for c in chars.chars() {
-        let n = c as u32;
-        if n > next_allowed {
-            ret.push(SymbRange::new(next_allowed, n - 1));
-        }
-        next_allowed = n + 1;
-    }
-    ret
-}
 
 // When constructing an Nfa from a regex, the states have special structure: if the transition
 // accepts any input or matches a predicate, then it always moves to the next state. Therefore,
@@ -49,7 +18,7 @@ fn symb_ranges_from_any_char_except(chars: &str) -> Vec<SymbRange> {
 // is always the accepting state, so there is no need to store whether a state is accepting.
 #[derive(Debug, PartialEq)]
 struct BuilderState {
-    ranges: Vec<SymbRange>,
+    chars: CharSet,
     eps: Vec<usize>,
     predicates: Vec<Predicate>
 }
@@ -57,15 +26,15 @@ struct BuilderState {
 impl BuilderState {
     fn new() -> BuilderState {
         BuilderState {
-            ranges: Vec::new(),
+            chars: CharSet::new(),
             eps: Vec::new(),
             predicates: Vec::new(),
         }
     }
 
-    fn from_ranges(rs: Vec<SymbRange>) -> BuilderState {
+    fn from_chars(chars: CharSet) -> BuilderState {
         BuilderState {
-            ranges: rs,
+            chars: chars,
             eps: Vec::new(),
             predicates: Vec::new(),
         }
@@ -89,7 +58,7 @@ impl NfaBuilder {
             ret_len += 1;
             ret.add_state(ret_len == self.len());
 
-            for ch in &s.ranges {
+            for ch in &s.chars {
                 ret.add_transition(ret_len - 1, ret_len, *ch);
             }
             for eps in &s.eps {
@@ -114,8 +83,8 @@ impl NfaBuilder {
     }
 
     // Appends two states, with a given transition between them.
-    fn add_single_transition(&mut self, ranges: Vec<SymbRange>) {
-        self.states.push(BuilderState::from_ranges(ranges));
+    fn add_single_transition(&mut self, chars: CharSet) {
+        self.states.push(BuilderState::from_chars(chars));
         self.states.push(BuilderState::new());
      }
 
@@ -129,11 +98,11 @@ impl NfaBuilder {
                 // NOTE: it isn't really necessary to create a new CharClass here, but
                 // regex_syntax doesn't expose case_fold (or new) on ClassRange.
                 let cc = CharClass::new(vec![ClassRange { start: *ch, end: *ch }]);
-                symb_ranges_from_char_class(&cc.case_fold())
+                CharSet::from_char_class(&cc.case_fold())
             } else {
-                vec![SymbRange::single(*ch as u32)]
+                CharSet::single(*ch as u32)
             };
-            self.states.push(BuilderState::from_ranges(ranges));
+            self.states.push(BuilderState::from_chars(ranges));
         }
         self.states.push(BuilderState::new());
     }
@@ -241,18 +210,17 @@ impl NfaBuilder {
 
         match expr {
             &Empty => {},
-            &Class(ref c) => self.add_single_transition(symb_ranges_from_char_class(c)),
-            &AnyChar => self.add_single_transition(symb_ranges_from_any_char()),
-            &AnyCharNoNL => self.add_single_transition(symb_ranges_from_any_char_except("\n\r")),
+            &Class(ref c) => self.add_single_transition(CharSet::from_char_class(c)),
+            &AnyChar => self.add_single_transition(CharSet::full()),
+            &AnyCharNoNL => self.add_single_transition(CharSet::except("\n\r")),
             &Concat(ref es) => self.add_concat_exprs(es),
             &Alternate(ref es) => self.add_alternate_exprs(es),
             &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
             &StartLine => {
-                self.add_predicate(InClasses(symb_ranges_from_char('\n'),
-                                             symb_ranges_from_any_char()));
+                self.add_predicate(InClasses(CharSet::single('\n' as u32), CharSet::full()));
                 self.add_predicate(Beginning);
             },
-            &StartText => { 
+            &StartText => {
                 self.add_predicate(Beginning);
             },
             &EndLine => { panic!("TODO") },
@@ -274,7 +242,7 @@ impl NfaBuilder {
     #[cfg(test)]
 mod tests {
     use builder::{NfaBuilder, BuilderState};
-    use transition::SymbRange;
+    use char_map::CharRange;
     use regex_syntax;
 
     fn parse(s: &str) -> regex_syntax::Result<NfaBuilder> {
@@ -294,9 +262,9 @@ mod tests {
     fn test_char_class() {
         let builder = parse("[a-z][A-Z]").unwrap();
         let mut target = make_builder(4);
-        target.states[0].ranges.push(SymbRange::new('a' as u32, 'z' as u32));
+        target.states[0].chars.push(CharRange::new('a' as u32, 'z' as u32));
         target.add_eps(1, 2);
-        target.states[2].ranges.push(SymbRange::new('A' as u32, 'Z' as u32));
+        target.states[2].chars.push(CharRange::new('A' as u32, 'Z' as u32));
 
         assert_eq!(builder, target);
     }
@@ -305,8 +273,8 @@ mod tests {
     fn test_literal() {
         let builder = parse("aZ").unwrap();
         let mut target = make_builder(3);
-        target.states[0].ranges.push(SymbRange::single('a' as u32));
-        target.states[1].ranges.push(SymbRange::single('Z' as u32));
+        target.states[0].chars.push(CharRange::single('a' as u32));
+        target.states[1].chars.push(CharRange::single('Z' as u32));
 
         assert_eq!(builder, target);
     }
@@ -316,8 +284,8 @@ mod tests {
         let builder = parse("a*z").unwrap();
         let builder2 = parse("a{0,}z").unwrap();
         let mut target = make_builder(4);
-        target.states[0].ranges.push(SymbRange::single('a' as u32));
-        target.states[2].ranges.push(SymbRange::single('z' as u32));
+        target.states[0].chars.push(CharRange::single('a' as u32));
+        target.states[2].chars.push(CharRange::single('z' as u32));
         target.add_eps(0, 1);
         target.add_eps(1, 0);
         target.add_eps(1, 2);
@@ -331,8 +299,8 @@ mod tests {
         let builder = parse("a+z").unwrap();
         let builder2 = parse("a{1,}z").unwrap();
         let mut target = make_builder(4);
-        target.states[0].ranges.push(SymbRange::single('a' as u32));
-        target.states[2].ranges.push(SymbRange::single('z' as u32));
+        target.states[0].chars.push(CharRange::single('a' as u32));
+        target.states[2].chars.push(CharRange::single('z' as u32));
         target.add_eps(1, 0);
         target.add_eps(1, 2);
 
@@ -345,8 +313,8 @@ mod tests {
         let builder = parse("a?z").unwrap();
         let builder2 = parse("a{0,1}z").unwrap();
         let mut target = make_builder(4);
-        target.states[0].ranges.push(SymbRange::single('a' as u32));
-        target.states[2].ranges.push(SymbRange::single('z' as u32));
+        target.states[0].chars.push(CharRange::single('a' as u32));
+        target.states[2].chars.push(CharRange::single('z' as u32));
         target.add_eps(0, 1);
         target.add_eps(1, 2);
 
@@ -358,10 +326,10 @@ mod tests {
     fn test_repeat_exact() {
         let builder = parse("a{3}z").unwrap();
         let mut target = make_builder(8);
-        target.states[0].ranges.push(SymbRange::single('a' as u32));
-        target.states[2].ranges.push(SymbRange::single('a' as u32));
-        target.states[4].ranges.push(SymbRange::single('a' as u32));
-        target.states[6].ranges.push(SymbRange::single('z' as u32));
+        target.states[0].chars.push(CharRange::single('a' as u32));
+        target.states[2].chars.push(CharRange::single('a' as u32));
+        target.states[4].chars.push(CharRange::single('a' as u32));
+        target.states[6].chars.push(CharRange::single('z' as u32));
         target.add_eps(1, 2);
         target.add_eps(3, 4);
         target.add_eps(5, 6);
@@ -390,8 +358,8 @@ mod tests {
     fn test_alternate() {
         let builder = parse("a|z").unwrap();
         let mut target = make_builder(6);
-        target.states[1].ranges.push(SymbRange::single('a' as u32));
-        target.states[3].ranges.push(SymbRange::single('z' as u32));
+        target.states[1].chars.push(CharRange::single('a' as u32));
+        target.states[3].chars.push(CharRange::single('z' as u32));
         target.add_eps(0, 1);
         target.add_eps(2, 5);
         target.add_eps(0, 3);
@@ -404,10 +372,10 @@ mod tests {
     fn test_case_insensitive() {
         let builder = parse("(?i)ab").unwrap();
         let mut target = make_builder(3);
-        target.states[0].ranges.push(SymbRange::single('A' as u32));
-        target.states[0].ranges.push(SymbRange::single('a' as u32));
-        target.states[1].ranges.push(SymbRange::single('B' as u32));
-        target.states[1].ranges.push(SymbRange::single('b' as u32));
+        target.states[0].chars.push(CharRange::single('A' as u32));
+        target.states[0].chars.push(CharRange::single('a' as u32));
+        target.states[1].chars.push(CharRange::single('B' as u32));
+        target.states[1].chars.push(CharRange::single('b' as u32));
 
         assert_eq!(builder, target);
     }

@@ -7,6 +7,7 @@
 // except according to those terms.
 
 use bit_set::BitSet;
+use char_map::{CharMap, CharRange, CharSet};
 use error;
 use nfa::Nfa;
 use std;
@@ -14,12 +15,7 @@ use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
-use transition::{DfaTransitions, NfaTransitions, SymbRange};
-
-fn symb_ranges_contains(symbs: &Vec<SymbRange>, ch: u32) -> bool {
-    symbs[..].binary_search_by(|r| r.from.cmp(&ch)).is_ok()
-}
-
+use transition::NfaTransitions;
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -43,21 +39,21 @@ impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
 pub enum Accept {
     Never,
     Always,
-    Conditionally { at_eoi: bool, at_char: Vec<SymbRange> },
+    Conditionally { at_eoi: bool, at_char: CharSet },
 }
 
 impl Eq for Accept {}
 
 #[derive(PartialEq, Debug)]
 pub struct DfaState {
-    pub transitions: DfaTransitions,
+    pub transitions: CharMap<usize>,
     pub accept: Accept,
 }
 
 impl DfaState {
     pub fn new(accept: &Accept) -> DfaState {
         DfaState {
-            transitions: DfaTransitions::new(),
+            transitions: CharMap::new(),
             accept: accept.clone(),
         }
     }
@@ -75,7 +71,7 @@ pub struct Dfa {
     /// This gives the initial state if we start trying to match in the middle of the string:
     /// if the previous char in the string matches one of the ranges, we start at the corresponding
     /// state.
-    pub initial_after_char: Vec<(SymbRange, usize)>,
+    pub initial_after_char: Vec<(CharRange, usize)>,
 
     /// This is the initial state in all other situations. Also, if the previous char does match
     /// something from `initial_after_char`, but the resulting run of the `Dfa` rejected, then we
@@ -109,8 +105,8 @@ impl Dfa {
         self.states.push(DfaState::new(accept));
     }
 
-    pub fn add_transition(&mut self, from: usize, to: usize, range: SymbRange) {
-        self.states[from].transitions.add(range, to);
+    pub fn add_transition(&mut self, from: usize, to: usize, range: CharRange) {
+        self.states[from].transitions.push(range, &to);
     }
 
     pub fn sort_transitions(&mut self) {
@@ -145,7 +141,7 @@ impl Dfa {
             Conditionally { at_eoi, ref at_char } => {
                 match next {
                     None => at_eoi,
-                    Some(c) => symb_ranges_contains(at_char, c as u32),
+                    Some(c) => at_char.contains(c as u32),
                 }
             }
         }
@@ -164,7 +160,7 @@ impl Dfa {
                 }
             }
             Some(ch) => {
-                // TODO: build the abstraction over Vec<(SymbRange,T)>
+                // TODO: build the abstraction over Vec<(CharRange,T)>
                 if let Some(s) = self.initial_otherwise {
                     self.longest_match_from(iter, s)
                 } else {
@@ -190,8 +186,8 @@ impl Dfa {
             match iter.next() {
                 None => return last_match,
                 Some((idx, ch)) => {
-                    match cur_state.transitions.find_transition(ch as u32) {
-                        Some(next_state) => {
+                    match cur_state.transitions.get(ch as u32) {
+                        Some(&next_state) => {
                             state = next_state;
                             let next_ch = iter.peek().map(|&(_, x)| x);
                             if self.accepting(state, next_ch) {
@@ -250,12 +246,13 @@ impl Dfa {
             let dist = distinguishers.pop_arbitrary();
 
             // Find all transitions leading into dist.
+            // TODO: make this a CharMap<usize>
             let mut trans = NfaTransitions::new();
             for state in dist.iter() {
-                trans.ranges.extend(reversed.transitions_from(state).iter());
+                trans.consuming.extend(reversed.transitions_from(state).iter());
             }
 
-            let sets = trans.collect_transitions();
+            let sets = trans.groups();
 
             // For each set in our partition so far, split it if
             // some element of `sets` reveals it to contain more than
@@ -311,7 +308,7 @@ impl Dfa {
 
             for &(ref range, old_tgt_idx) in self.states[old_src_idx].transitions.iter() {
                 let new_tgt_idx = old_state_to_new[old_tgt_idx];
-                ret.states[new_src_idx].transitions.add(range.clone(), new_tgt_idx);
+                ret.add_transition(new_src_idx, new_tgt_idx, *range);
             }
         }
 
@@ -381,7 +378,7 @@ impl Debug for Dfa {
                 try!(f.write_str("\t\tTransitions:\n"));
                 for &(range, target) in st.transitions.iter() {
                     try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
-                                                  range.from, range.to, target)));
+                                                  range.start, range.end, target)));
                 }
             }
         }
@@ -392,11 +389,11 @@ impl Debug for Dfa {
 
 #[cfg(test)]
 mod tests {
+    use char_map::{CharRange, CharSet};
     use dfa::{Accept, Dfa};
     use nfa::Nfa;
     use builder;
     use regex_syntax;
-    use transition::SymbRange;
 
     fn make_dfa(re: &str) -> Dfa {
         let expr = regex_syntax::Expr::parse(re).unwrap();
@@ -410,10 +407,10 @@ mod tests {
         ret.initial_at_start = Some(0);
         ret.add_state(&Accept::Always);
         ret.add_state(&Accept::Never);
-        ret.add_transition(0, 0, SymbRange::single('a' as u32));
-        ret.add_transition(0, 1, SymbRange::single('b' as u32));
-        ret.add_transition(1, 1, SymbRange::single('a' as u32));
-        ret.add_transition(1, 0, SymbRange::single('b' as u32));
+        ret.add_transition(0, 0, CharRange::single('a' as u32));
+        ret.add_transition(0, 1, CharRange::single('b' as u32));
+        ret.add_transition(1, 1, CharRange::single('a' as u32));
+        ret.add_transition(1, 0, CharRange::single('b' as u32));
         ret
     }
 
@@ -424,10 +421,10 @@ mod tests {
         let mut rev = Nfa::new();
         rev.add_state(true);
         rev.add_state(false);
-        rev.add_transition(0, 0, SymbRange::single('a' as u32));
-        rev.add_transition(0, 1, SymbRange::single('b' as u32));
-        rev.add_transition(1, 0, SymbRange::single('b' as u32));
-        rev.add_transition(1, 1, SymbRange::single('a' as u32));
+        rev.add_transition(0, 0, CharRange::single('a' as u32));
+        rev.add_transition(0, 1, CharRange::single('b' as u32));
+        rev.add_transition(1, 0, CharRange::single('b' as u32));
+        rev.add_transition(1, 1, CharRange::single('a' as u32));
 
         assert_eq!(rev, dfa.reversed());
     }
@@ -440,13 +437,13 @@ mod tests {
         dfa.initial_at_start = Some(0);
         dfa.add_state(&Accept::Always);
         dfa.add_state(&Accept::Never);
-        dfa.add_state(&Accept::Conditionally { at_eoi: true, at_char: Vec::new() });
-        dfa.add_transition(0, 0, SymbRange::single('a' as u32));
-        dfa.add_transition(0, 2, SymbRange::single('b' as u32));
-        dfa.add_transition(1, 1, SymbRange::single('a' as u32));
-        dfa.add_transition(1, 0, SymbRange::single('b' as u32));
-        dfa.add_transition(2, 1, SymbRange::single('a' as u32));
-        dfa.add_transition(2, 0, SymbRange::single('b' as u32));
+        dfa.add_state(&Accept::Conditionally { at_eoi: true, at_char: CharSet::new() });
+        dfa.add_transition(0, 0, CharRange::single('a' as u32));
+        dfa.add_transition(0, 2, CharRange::single('b' as u32));
+        dfa.add_transition(1, 1, CharRange::single('a' as u32));
+        dfa.add_transition(1, 0, CharRange::single('b' as u32));
+        dfa.add_transition(2, 1, CharRange::single('a' as u32));
+        dfa.add_transition(2, 0, CharRange::single('b' as u32));
 
         assert_eq!(dfa.longest_match("aaaaaa".char_indices(), None), Some(6));
         assert_eq!(dfa.longest_match("aaaaaba".char_indices(), None), Some(5));

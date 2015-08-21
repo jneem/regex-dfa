@@ -22,6 +22,7 @@ assert_eq!(dfa.search("My birthday is 1986-08-22!"), Some((15, 25)));
 */
 
 #![feature(slice_splits, test)]
+#![allow(dead_code)]
 
 extern crate bit_set;
 extern crate regex;
@@ -29,6 +30,7 @@ extern crate regex_syntax;
 extern crate test;
 
 mod builder;
+mod char_map;
 mod dfa;
 mod error;
 mod nfa;
