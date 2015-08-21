@@ -60,6 +60,9 @@ pub struct Nfa {
 impl Debug for Nfa {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
+        if !self.anchored_states.is_empty() {
+            try!(f.write_fmt(format_args!("Anchored states: {:?}\n", self.anchored_states)));
+        }
 
         for (st_idx, st) in self.states.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tState {} (accepting: {}):\n", st_idx, st.accepting)));
@@ -74,6 +77,10 @@ impl Debug for Nfa {
 
             if !st.transitions.eps.is_empty() {
                 try!(f.write_fmt(format_args!("\t\tEps-transitions: {:?}\n", &st.transitions.eps)));
+            }
+
+            if !st.transitions.predicates.is_empty() {
+                try!(f.write_fmt(format_args!("\t\tPredicates: {:?}\n", &st.transitions.predicates)));
             }
         }
         Ok(())
@@ -157,16 +164,22 @@ impl Nfa {
             }
 
             for &(ref pred, pred_target_idx) in &preds {
-                self.states.push(NfaState::new(false));
-                reversed.states.push(NfaState::new(false));
-                let new_idx = self.states.len() - 1;
-
                 let in_states = reversed.eps_closure_single(idx);
                 let out_states = self.eps_closure_single(pred_target_idx);
+                if pred == &Predicate::Beginning {
+                    if in_states.contains(&0) {
+                        self.anchored_states.insert(pred_target_idx);
+                    }
+                    continue;
+                }
+
                 let (in_trans, out_trans) =
                     pred.filter_transitions(&reversed.transitions(&in_states),
                                             &self.transitions(&out_states));
 
+                self.states.push(NfaState::new(false));
+                reversed.states.push(NfaState::new(false));
+                let new_idx = self.states.len() - 1;
                 for (range, ref sources) in in_trans {
                     for source in sources {
                         self.add_transition(source, new_idx, range);
@@ -227,12 +240,16 @@ impl Nfa {
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
     pub fn determinize(&self) -> Dfa {
+        use dfa::Accept::*;
+
         let mut ret = Dfa::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
         let mut active_states = Vec::<BitSet>::new();
         let start_state = self.eps_closure_single(0);
 
-        ret.add_state(self.accepting(&start_state));
+        // TODO: fix this to use the right predicate
+        let acc = if self.accepting(&start_state) { Always } else { Never };
+        ret.add_state(&acc);
         active_states.push(start_state.clone());
         state_map.insert(start_state, 0);
 
@@ -244,7 +261,9 @@ impl Nfa {
                 let target_idx = if state_map.contains_key(&target) {
                         *state_map.get(&target).unwrap()
                     } else {
-                        ret.add_state(self.accepting(&target));
+                        // TODO
+                        let acc = if self.accepting(&target) { Always } else { Never };
+                        ret.add_state(&acc);
                         active_states.push(target.clone());
                         state_map.insert(target, ret.num_states() - 1);
                         ret.num_states() - 1
@@ -254,6 +273,8 @@ impl Nfa {
         }
 
         ret.sort_transitions();
+        ret.initial_otherwise = Some(0); // FIXME
+        ret.initial_at_start = Some(0); // FIXME
         ret
     }
 
@@ -310,4 +331,27 @@ impl Nfa {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use nfa::Nfa;
+    use transition::SymbRange;
 
+    #[test]
+    fn test_predicate_beginning() {
+        let mut nfa = Nfa::from_regex("^a").unwrap();
+        // There should be a Beginning predicate between states 0 and 1, an eps transition from 1
+        // to 2, and an 'a' transition from 2 to 3.
+        assert_eq!(nfa.num_states(), 4);
+        nfa.remove_predicates();
+
+        let mut target = Nfa::new();
+        target.add_state(false);
+        target.add_state(false);
+        target.add_state(false);
+        target.add_state(true);
+        target.add_transition(2, 3, SymbRange::single('a' as u32));
+        target.add_eps(1, 2);
+        target.anchored_states.insert(1);
+        assert_eq!(nfa, target)
+    }
+}

@@ -252,8 +252,10 @@ impl NfaBuilder {
                                              symb_ranges_from_any_char()));
                 self.add_predicate(Beginning);
             },
+            &StartText => { 
+                self.add_predicate(Beginning);
+            },
             &EndLine => { panic!("TODO") },
-            &StartText => { panic!("TODO") },
             &EndText => { panic!("TODO") },
             &WordBoundary => { panic!("TODO") },
             &NotWordBoundary => { panic!("TODO") },
