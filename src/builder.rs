@@ -8,7 +8,7 @@
 
 use char_map::CharSet;
 use nfa::Nfa;
-use transition::Predicate;
+use transition::{Accept, Predicate, PredicatePart};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std::ops::Deref;
 
@@ -56,7 +56,7 @@ impl NfaBuilder {
         let mut ret_len: usize = 0;
         for s in &self.states {
             ret_len += 1;
-            ret.add_state(ret_len == self.len());
+            ret.add_state(if ret_len == self.len() { Accept::Always } else { Accept::Never });
 
             for ch in &s.chars {
                 ret.add_transition(ret_len - 1, ret_len, *ch);
@@ -196,17 +196,20 @@ impl NfaBuilder {
         }
     }
 
-    fn add_predicate(&mut self, pred: Predicate) {
-        if self.states.is_empty() {
-            self.states.push(BuilderState::new());
-        }
-        self.states.last_mut().unwrap().predicates.push(pred);
+    fn add_predicate(&mut self, part1: PredicatePart, part2: PredicatePart) {
         self.states.push(BuilderState::new());
+        self.states.last_mut().unwrap().predicates.push(Predicate(part1, part2));
+        self.states.push(BuilderState::new());
+    }
+
+    // Adds an extra predicate between the last two states (there must be at least two states).
+    fn extra_predicate(&mut self, part1: PredicatePart, part2: PredicatePart) {
+        let len = self.states.len();
+        self.states[len-2].predicates.push(Predicate(part1, part2));
     }
 
     fn add_expr(&mut self, expr: &Expr) {
         use regex_syntax::Expr::*;
-        use transition::Predicate::*;
 
         match expr {
             &Empty => {},
@@ -217,16 +220,27 @@ impl NfaBuilder {
             &Alternate(ref es) => self.add_alternate_exprs(es),
             &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
             &StartLine => {
-                self.add_predicate(InClasses(CharSet::single('\n' as u32), CharSet::full()));
-                self.add_predicate(Beginning);
+                self.add_predicate(PredicatePart::single_char('\n').or_at_boundary(),
+                                   PredicatePart::full());
             },
             &StartText => {
-                self.add_predicate(Beginning);
+                self.add_predicate(PredicatePart::at_boundary(), PredicatePart::full());
+            }
+            &EndLine => {
+                self.add_predicate(PredicatePart::full(),
+                                   PredicatePart::single_char('\n').or_at_boundary());
             },
-            &EndLine => { panic!("TODO") },
-            &EndText => { panic!("TODO") },
-            &WordBoundary => { panic!("TODO") },
-            &NotWordBoundary => { panic!("TODO") },
+            &EndText => {
+                self.add_predicate(PredicatePart::full(), PredicatePart::at_boundary());
+            }
+            &WordBoundary => {
+                self.add_predicate(PredicatePart::word_char(), PredicatePart::not_word_char());
+                self.extra_predicate(PredicatePart::not_word_char(), PredicatePart::word_char());
+            },
+            &NotWordBoundary => {
+                self.add_predicate(PredicatePart::word_char(), PredicatePart::word_char());
+                self.extra_predicate(PredicatePart::not_word_char(), PredicatePart::word_char());
+            },
 
             // We don't support capture groups, so there is no need to keep track of
             // the group name or number.

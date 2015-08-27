@@ -15,6 +15,7 @@ use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
+use transition::Accept;
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -31,18 +32,6 @@ impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
     }
 }
 
-/// We extend the "CS 101" DFA by allowing the decision of whether a state accepts to depend on
-/// what the next character is: we can either require the next character to be the end of the
-/// input, or we can require it to belong to a specific set.
-#[derive(Clone, Debug, Hash, PartialEq)]
-pub enum Accept {
-    Never,
-    Always,
-    Conditionally { at_eoi: bool, at_char: CharSet },
-}
-
-impl Eq for Accept {}
-
 #[derive(PartialEq, Debug)]
 pub struct DfaState {
     pub transitions: CharMap<usize>,
@@ -50,7 +39,7 @@ pub struct DfaState {
 }
 
 impl DfaState {
-    pub fn new(accept: &Accept) -> DfaState {
+    pub fn new(accept: Accept) -> DfaState {
         DfaState {
             transitions: CharMap::new(),
             accept: accept.clone(),
@@ -97,7 +86,7 @@ impl Dfa {
         Ok(nfa.determinize().minimize())
     }
 
-    pub fn add_state(&mut self, accept: &Accept) {
+    pub fn add_state(&mut self, accept: Accept) {
         self.states.push(DfaState::new(accept));
     }
 
@@ -130,7 +119,7 @@ impl Dfa {
 
     /// Tests if the given state is accepting, assuming that `next` is the next char.
     pub fn accepting(&self, state: usize, next: Option<char>) -> bool {
-        use dfa::Accept::*;
+        use transition::Accept::*;
         match self.states[state].accept {
             Never => false,
             Always => true,
@@ -286,7 +275,7 @@ impl Dfa {
         for part in partition.iter() {
             let rep_idx = part.iter().next().unwrap();
             let rep = &self.states[rep_idx];
-            ret.states.push(DfaState::new(&rep.accept));
+            ret.states.push(DfaState::new(rep.accept.clone()));
 
             for state in part.iter() {
                 old_state_to_new[state] = ret.states.len() - 1;
@@ -345,7 +334,7 @@ impl Dfa {
         let mut ret = Nfa::with_capacity(self.states.len());
 
         for st in self.states.iter() {
-            ret.add_state(st.accept == Accept::Always);
+            ret.add_state(st.accept.clone());
         }
 
         for (idx, st) in self.states.iter().enumerate() {
@@ -380,11 +369,12 @@ impl Debug for Dfa {
 
 #[cfg(test)]
 mod tests {
-    use char_map::{CharMap, CharRange, CharSet};
-    use dfa::{Accept, Dfa};
-    use nfa::Nfa;
     use builder;
+    use char_map::{CharMap, CharRange, CharSet};
+    use dfa::Dfa;
+    use nfa::Nfa;
     use regex_syntax;
+    use transition::Accept;
 
     fn make_dfa(re: &str) -> Dfa {
         let expr = regex_syntax::Expr::parse(re).unwrap();
@@ -396,8 +386,8 @@ mod tests {
         let mut ret = Dfa::new();
 
         ret.initial_at_start = Some(0);
-        ret.add_state(&Accept::Always);
-        ret.add_state(&Accept::Never);
+        ret.add_state(Accept::Always);
+        ret.add_state(Accept::Never);
         ret.add_transition(0, 0, CharRange::single('a' as u32));
         ret.add_transition(0, 1, CharRange::single('b' as u32));
         ret.add_transition(1, 1, CharRange::single('a' as u32));
@@ -416,8 +406,8 @@ mod tests {
         let dfa = even_bs_dfa();
 
         let mut rev = Nfa::new();
-        rev.add_state(true);
-        rev.add_state(false);
+        rev.add_state(Accept::Always);
+        rev.add_state(Accept::Never);
         rev.add_transition(0, 0, CharRange::single('a' as u32));
         rev.add_transition(0, 1, CharRange::single('b' as u32));
         rev.add_transition(1, 0, CharRange::single('b' as u32));
@@ -432,9 +422,9 @@ mod tests {
         // whose last character is a b.
         let mut dfa = Dfa::new();
         dfa.initial_at_start = Some(0);
-        dfa.add_state(&Accept::Always);
-        dfa.add_state(&Accept::Never);
-        dfa.add_state(&Accept::Conditionally { at_eoi: true, at_char: CharSet::new() });
+        dfa.add_state(Accept::Always);
+        dfa.add_state(Accept::Never);
+        dfa.add_state(Accept::Conditionally { at_eoi: true, at_char: CharSet::new() });
         dfa.add_transition(0, 0, CharRange::single('a' as u32));
         dfa.add_transition(0, 2, CharRange::single('b' as u32));
         dfa.add_transition(1, 1, CharRange::single('a' as u32));

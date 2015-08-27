@@ -46,6 +46,19 @@ impl CharRange {
     pub fn is_empty(&self) -> bool {
         self.start > self.end
     }
+
+    /// Returns the smallest range that covers `self` and `other`.
+    pub fn cover(&self, other: &CharRange) -> CharRange {
+        use std::cmp::{max, min};
+
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            CharRange::new(min(self.start, other.start), max(self.end, other.end))
+        }
+    }
 }
 
 impl PartialOrd for CharRange {
@@ -213,6 +226,45 @@ impl CharSet {
         ret
     }
 
+    /// Returns the union between `self` and `other`.
+    pub fn union(&self, other: &CharSet) -> CharSet {
+        if self.is_empty() {
+            return other.clone();
+        } else if other.is_empty() {
+            return self.clone();
+        }
+
+        let mut ret = Vec::with_capacity(self.map.elts.len() + other.map.elts.len());
+        let mut it1 = self.map.elts.iter();
+        let mut it2 = other.map.elts.iter();
+        let mut r1 = it1.next();
+        let mut r2 = it2.next();
+        let mut cur_range = CharRange::new(1, 0);
+
+        while r1.is_some() || r2.is_some() {
+            let r1_start = if let Some(&(r, _)) = r1 { r.start } else { std::u32::MAX };
+            let r2_start = if let Some(&(r, _)) = r2 { r.start } else { std::u32::MAX };
+            if !cur_range.is_empty() && std::cmp::min(r1_start, r2_start) > cur_range.end {
+                ret.push((cur_range, ()));
+                cur_range = CharRange::new(1, 0);
+            }
+
+            if r1_start < r2_start || r2.is_none() {
+                cur_range = cur_range.cover(&r1.unwrap().0);
+                r1 = it1.next();
+            } else {
+                cur_range = cur_range.cover(&r2.unwrap().0);
+                r2 = it2.next();
+            }
+        }
+
+        if !cur_range.is_empty() {
+            ret.push((cur_range, ()));
+        }
+
+        CharSet::from_vec(ret)
+    }
+
     /// Coverts a `regex_syntax::CharClass` into a `CharSet`.
     pub fn from_char_class(cc: &regex_syntax::CharClass) -> CharSet {
         let mut ret = Vec::with_capacity(cc.len());
@@ -286,7 +338,7 @@ impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
         CharMultiMap { elts: Vec::new() }
     }
 
-    pub fn add(&mut self, range: CharRange, data: &T) {
+    pub fn push(&mut self, range: CharRange, data: &T) {
         self.elts.push((range, data.clone()));
     }
 
@@ -436,6 +488,39 @@ mod tests {
         result.push(CharRange::new(15, 20));
         assert_eq!(result, cs1.intersect(&cs2));
         assert_eq!(result, cs2.intersect(&cs1));
+    }
+
+    #[test]
+    fn test_union() {
+        let mut cs1 = CharSet::new();
+        let mut cs2 = CharSet::new();
+        let mut result = CharSet::new();
+        assert_eq!(result, cs1.union(&cs2));
+
+        cs1.push(CharRange::new(1, 3));
+        result.push(CharRange::new(1, 3));
+        assert_eq!(result, cs1.union(&cs2));
+        assert_eq!(result, cs2.union(&cs1));
+
+        cs2.push(CharRange::new(5, 6));
+        result.push(CharRange::new(5, 6));
+        assert_eq!(result, cs1.union(&cs2));
+        assert_eq!(result, cs2.union(&cs1));
+
+        cs1.push(CharRange::new(6, 8));
+        result.map.elts[1].0.end = 8;
+        assert_eq!(result, cs1.union(&cs2));
+        assert_eq!(result, cs2.union(&cs1));
+
+        cs1.push(CharRange::new(7, 10));
+        result.map.elts[1].0.end = 10;
+        assert_eq!(result, cs1.union(&cs2));
+        assert_eq!(result, cs2.union(&cs1));
+
+        cs1.push(CharRange::new(15, 20));
+        result.push(CharRange::new(15, 20));
+        assert_eq!(result, cs1.union(&cs2));
+        assert_eq!(result, cs2.union(&cs1));
     }
 
     #[test]

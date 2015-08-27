@@ -18,20 +18,20 @@ use std::fmt::{Debug, Formatter};
 use std::mem;
 use std::ops::Deref;
 use std::result::Result;
-use transition::{NfaTransitions, Predicate};
+use transition::{Accept, NfaTransitions, Predicate};
 
 
 #[derive(PartialEq, Debug)]
 pub struct NfaState {
     pub transitions: NfaTransitions,
-    pub accepting: bool,
+    pub accept: Accept,
 }
 
 impl NfaState {
-    pub fn new(accepting: bool) -> NfaState {
+    pub fn new(accept: Accept) -> NfaState {
         NfaState {
             transitions: NfaTransitions::new(),
-            accepting: accepting,
+            accept: accept,
         }
     }
 }
@@ -44,30 +44,41 @@ impl NfaState {
 /// the beginning. In terms of regexes, it's like having an implicit ".*" at the start.
 ///
 /// The initial state of an `Nfa` is always state zero, but see also the documentation for
-/// `anchored_states`.
+/// `initial_at_start`.
 #[derive(PartialEq)]
 pub struct Nfa {
     states: Vec<NfaState>,
 
     /// Sometimes we want to only match at the beginning of the text; we can represent this
-    /// using `anchored_states`, which is a set of states that are all valid as starting states,
+    /// using `initial_at_start`, which is a set of states that are all valid as starting states,
     /// but only if we start matching at the beginning of the input.
     ///
     /// Note that `transition::Predicate` provides another, higher-level, way to represent the same
     /// information. Before turning this `Nfa` into a `Dfa`, we will lower the
     /// `transition::Predicate` representation into this one.
-    anchored_states: BitSet,
+    initial_at_start: BitSet,
+
+    /// Sometimes we want to begin in a particular state only if the char before the substring we
+    /// are trying to match is in a particular class. (For example, this is used to implement word
+    /// boundaries.) This is represented by `initial_after_char`: if the char before the current
+    /// position (call it `ch`) is in `initial_after_char` then we start in all the states in
+    /// `initial_after_char.get(ch)`.
+    initial_after_char: CharMap<BitSet>,
 }
 
 impl Debug for Nfa {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
-        if !self.anchored_states.is_empty() {
-            try!(f.write_fmt(format_args!("Anchored states: {:?}\n", self.anchored_states)));
+        if !self.initial_at_start.is_empty() {
+            try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.initial_at_start)));
+        }
+
+        if !self.initial_after_char.is_empty() {
+            try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.initial_after_char)));
         }
 
         for (st_idx, st) in self.states.iter().enumerate() {
-            try!(f.write_fmt(format_args!("\tState {} (accepting: {}):\n", st_idx, st.accepting)));
+            try!(f.write_fmt(format_args!("\tState {} (accept: {:?}):\n", st_idx, st.accept)));
 
             if !st.transitions.consuming.is_empty() {
                 try!(f.write_str("\t\tTransitions:\n"));
@@ -93,7 +104,8 @@ impl Nfa {
     pub fn new() -> Nfa {
         Nfa {
             states: Vec::new(),
-            anchored_states: BitSet::new(),
+            initial_at_start: BitSet::new(),
+            initial_after_char: CharMap::new(),
         }
     }
 
@@ -109,16 +121,17 @@ impl Nfa {
     pub fn with_capacity(n: usize) -> Nfa {
         Nfa {
             states: Vec::with_capacity(n),
-            anchored_states: BitSet::with_capacity(n),
+            initial_at_start: BitSet::with_capacity(n),
+            initial_after_char: CharMap::new(),
         }
     }
 
     pub fn add_transition(&mut self, from: usize, to: usize, r: CharRange) {
-        self.states[from].transitions.consuming.add(r, &to);
+        self.states[from].transitions.consuming.push(r, &to);
     }
 
-    pub fn add_state(&mut self, accepting: bool) {
-        self.states.push(NfaState::new(accepting));
+    pub fn add_state(&mut self, accept: Accept) {
+        self.states.push(NfaState::new(accept));
     }
 
     pub fn add_eps(&mut self, from: usize, to: usize) {
@@ -138,8 +151,15 @@ impl Nfa {
 
     /// Modifies this automaton to remove all transition predicates.
     pub fn remove_predicates(&mut self) {
-        while self.remove_predicates_once() {}
+        let (mut changed, mut initial_preds) = self.remove_predicates_once();
+        while changed {
+            let (next_changed, next_preds) = self.remove_predicates_once();
+            changed = next_changed;
+            initial_preds.extend(next_preds.iter());
+        }
+        self.initial_after_char = initial_preds.group();
     }
+
     // This is the algorithm for removing predicates, which we run repeatedly until
     // we reach a fixed point.
     //  for every predicate {
@@ -153,35 +173,45 @@ impl Nfa {
     //      }
     //  }
     // Above, when we say "leading into" or "leading out of," that includes eps-closures.
-    fn remove_predicates_once(&mut self) -> bool{
+    fn remove_predicates_once(&mut self) -> (bool, CharMultiMap<usize>) {
         let orig_len = self.states.len();
         let mut reversed = self.reversed();
+        // Sometimes an InClasses predicate is attached to the initial state. This map keeps track
+        // of such predicates: if `initial_preds` contains the map 'a' -> 3, for example, then if
+        // we just saw the character 'a' we should start in the state 3.
+        let mut initial_preds = CharMultiMap::<usize>::new();
 
         for idx in 0..orig_len {
             let preds = self.states[idx].transitions.predicates.clone();
             self.states[idx].transitions.predicates.clear();
             // Also remove the preds from our reversed copy.
-            for (pred_idx, &(_, target)) in preds.iter().enumerate() {
-                reversed.states[target].transitions.predicates.remove(pred_idx);
+            for (_, &(_, target)) in preds.iter().enumerate() {
+                reversed.states[target].transitions.predicates.retain(|&(_, s)| s != idx);
             }
 
             for &(ref pred, pred_target_idx) in &preds {
                 let in_states = reversed.eps_closure_single(idx);
                 let out_states = self.eps_closure_single(pred_target_idx);
-                if pred == &Predicate::Beginning {
-                    if in_states.contains(&0) {
-                        self.anchored_states.insert(pred_target_idx);
-                    }
-                    continue;
-                }
-
                 let (in_trans, out_trans) =
                     pred.filter_transitions(&reversed.transitions(&in_states),
                                             &self.transitions(&out_states));
 
-                self.states.push(NfaState::new(false));
-                reversed.states.push(NfaState::new(false));
+                let acc = self.predicate_accept(pred, &out_states);
+                self.states.push(NfaState::new(acc));
+                // We only keep `reversed` around for its transitions and predicates, so it doesn't
+                // matter what we pass for `accept` here.
+                reversed.states.push(NfaState::new(Accept::Never));
                 let new_idx = self.states.len() - 1;
+
+                if in_states.contains(&0) {
+                    if pred.0.at_boundary {
+                        self.initial_at_start.insert(new_idx);
+                    }
+                    for &range in &pred.0.chars {
+                        initial_preds.push(range, &new_idx);
+                    }
+                }
+
                 for (range, ref sources) in in_trans.into_iter() {
                     for source in sources {
                         self.add_transition(source, new_idx, range);
@@ -209,7 +239,13 @@ impl Nfa {
             }
         }
 
-        self.states.len() > orig_len
+        (self.states.len() > orig_len, initial_preds)
+    }
+
+    // We've just created a new state for the predicate `pred`, and `states` is the eps-closure of
+    // its target state. Under what conditions should the new state accept?
+    fn predicate_accept(&self, pred: &Predicate, states: &BitSet) -> Accept {
+        pred.filter_accept(self.accept(states))
     }
 
     /// Returns a copy with all transitions reversed.
@@ -219,7 +255,7 @@ impl Nfa {
         let mut ret = Nfa::with_capacity(self.states.len());
 
         for st in self.states.iter() {
-            ret.states.push(NfaState::new(st.accepting));
+            ret.states.push(NfaState::new(st.accept.clone()));
         }
 
         for (idx, st) in self.states.iter().enumerate() {
@@ -242,7 +278,7 @@ impl Nfa {
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
     pub fn determinize(&self) -> Dfa {
-        use dfa::Accept::*;
+        use transition::Accept::*;
 
         let mut ret = Dfa::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
@@ -250,8 +286,7 @@ impl Nfa {
         let start_state = self.eps_closure_single(0);
 
         // TODO: fix this to use the right predicate
-        let acc = if self.accepting(&start_state) { Always } else { Never };
-        ret.add_state(&acc);
+        ret.add_state(self.accept(&start_state));
         active_states.push(start_state.clone());
         state_map.insert(start_state, 0);
 
@@ -263,9 +298,7 @@ impl Nfa {
                 let target_idx = if state_map.contains_key(&target) {
                         *state_map.get(&target).unwrap()
                     } else {
-                        // TODO
-                        let acc = if self.accepting(&target) { Always } else { Never };
-                        ret.add_state(&acc);
+                        ret.add_state(self.accept(&target));
                         active_states.push(target.clone());
                         state_map.insert(target, ret.num_states() - 1);
                         ret.num_states() - 1
@@ -308,8 +341,8 @@ impl Nfa {
         self.eps_closure(&set)
     }
 
-    fn accepting(&self, states: &BitSet) -> bool {
-        states.iter().any(|s| { self.states[s].accepting })
+    fn accept(&self, states: &BitSet) -> Accept {
+        states.iter().fold(Accept::Never, |a, b| a.union(&self.states[b].accept))
     }
 
     /// Finds all the transitions out of the given set of states.
@@ -335,25 +368,98 @@ impl Nfa {
 
 #[cfg(test)]
 mod tests {
+    use bit_set::BitSet;
     use nfa::Nfa;
-    use char_map::CharRange;
+    use char_map::{CharMap, CharRange, CharSet};
+    use transition::{Accept, PredicatePart};
 
     #[test]
     fn test_predicate_beginning() {
         let mut nfa = Nfa::from_regex("^a").unwrap();
-        // There should be a Beginning predicate between states 0 and 1, an eps transition from 1
-        // to 2, and an 'a' transition from 2 to 3.
+        // There should be a beginning predicate between states 0 and 4, an eps transition from 1
+        // to 2, and 'a' transitions from 2 to 3 and 4 to 3.
         assert_eq!(nfa.num_states(), 4);
         nfa.remove_predicates();
+        assert_eq!(nfa.num_states(), 5);
 
         let mut target = Nfa::new();
-        target.add_state(false);
-        target.add_state(false);
-        target.add_state(false);
-        target.add_state(true);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Always);
+        target.add_state(Accept::Never);
         target.add_transition(2, 3, CharRange::single('a' as u32));
+        target.add_transition(4, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
-        target.anchored_states.insert(1);
+        target.initial_at_start.insert(4);
+        assert_eq!(nfa, target)
+    }
+
+    fn word_chars() -> CharSet { PredicatePart::word_char().chars }
+    fn not_word_chars() -> CharSet { PredicatePart::not_word_char().chars }
+
+    fn word_char_map(word_state: usize, non_word_state: usize) -> CharMap<BitSet> {
+        let mut ret = CharMap::new();
+        let mut word_states = BitSet::new();
+        word_states.insert(word_state);
+        let mut non_word_states = BitSet::new();
+        non_word_states.insert(non_word_state);
+
+        let chs = word_chars();
+        for &range in &chs {
+            ret.push(range, &word_states);
+        }
+        let chs = not_word_chars();
+        for &range in &chs {
+            ret.push(range, &non_word_states);
+        }
+        ret.sort();
+        ret
+    }
+
+    #[test]
+    fn test_word_boundary_beginning() {
+        let mut nfa = Nfa::from_regex(r"\ba").unwrap();
+        // There should be a word boundary predicate between states 0 and 5, an eps transition from
+        // 1 to 2, and 'a' transitions from 2 to 3 and 5 to 3. There will also be a useless state
+        // 4.
+        assert_eq!(nfa.num_states(), 4);
+        nfa.remove_predicates();
+        assert_eq!(nfa.num_states(), 6);
+
+        let mut target = Nfa::new();
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Always);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_transition(2, 3, CharRange::single('a' as u32));
+        target.add_transition(5, 3, CharRange::single('a' as u32));
+        target.add_eps(1, 2);
+        target.initial_at_start.insert(5);
+        target.initial_after_char = word_char_map(4, 5);
+        assert_eq!(nfa, target)
+    }
+
+    #[test]
+    fn test_word_boundary_end() {
+        let mut nfa = Nfa::from_regex(r"a\b").unwrap();
+        assert_eq!(nfa.num_states(), 4);
+        nfa.remove_predicates();
+        assert_eq!(nfa.num_states(), 6);
+
+        let mut target = Nfa::new();
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Never);
+        target.add_state(Accept::Always);
+        target.add_state(Accept::Conditionally { at_eoi: true, at_char: not_word_chars() });
+        target.add_state(Accept::Conditionally { at_eoi: false, at_char: word_chars() });
+        target.add_transition(0, 1, CharRange::single('a' as u32));
+        target.add_transition(0, 4, CharRange::single('a' as u32));
+        target.add_eps(1, 2);
         assert_eq!(nfa, target)
     }
 }
+
