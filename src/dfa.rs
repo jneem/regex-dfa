@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use bit_set::BitSet;
-use char_map::{CharMap, CharRange, CharSet};
+use char_map::{CharMap, CharRange};
 use error;
 use nfa::Nfa;
 use std;
@@ -50,6 +50,7 @@ impl DfaState {
 /// Our `Dfa`s are unanchored, in the sense that by default they can match something in the middle
 /// of the input string. However, we allow the initial state of the `Dfa` to depend on where we
 /// start matching.
+#[derive(PartialEq)]
 pub struct Dfa {
     states: Vec<DfaState>,
 
@@ -229,7 +230,9 @@ impl Dfa {
         }
 
         while distinguishers.len() > 0 {
+            println!("partition: {:?}", partition);
             let dist = distinguishers.pop_arbitrary();
+            println!("distinguisher: {:?}", dist);
             let sets: Vec<BitSet> = reversed.transitions(&dist)
                                             .into_iter()
                                             .map(|(_, x)| x)
@@ -266,6 +269,7 @@ impl Dfa {
                 partition = next_partition;
             }
         }
+        println!("{:?}", partition);
 
         let mut ret = Dfa::new();
 
@@ -351,6 +355,10 @@ impl Debug for Dfa {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Dfa ({} states):\n", self.states.len())));
 
+        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.initial_at_start)));
+        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.initial_after_char)));
+        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.initial_otherwise)));
+
         for (st_idx, st) in self.states.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tState {} (accepting: {:?}):\n", st_idx, st.accept)));
 
@@ -378,7 +386,9 @@ mod tests {
 
     fn make_dfa(re: &str) -> Dfa {
         let expr = regex_syntax::Expr::parse(re).unwrap();
-        builder::NfaBuilder::from_expr(&expr).to_automaton().determinize()
+        let mut nfa = builder::NfaBuilder::from_expr(&expr).to_automaton();
+        nfa.remove_predicates();
+        nfa.determinize()
     }
 
     // Returns an automaton that accepts strings with an even number of 'b's.
@@ -481,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_minimize() {
-        let auto1 = make_dfa("a*b*").minimize();
+        let auto1 = make_dfa("a*b*");
         let auto2 = auto1.minimize();
 
         let test_strings = vec!["aaabbbbbbb", "bbbb", "a", "", "ba", "aba"];
@@ -489,6 +499,9 @@ mod tests {
             assert_eq!(auto1.search(s), auto2.search(s));
         }
         assert_eq!(auto2.states.len(), 2);
+
+        let auto1 = make_dfa(r"^a").minimize();
+        assert_eq!(auto1.states.len(), 2);
     }
 
     #[test]
@@ -530,6 +543,21 @@ mod tests {
         assert_eq!(auto.search("aabbcd"), Some((0, 4)));
         assert_eq!(auto.search("cdb"), Some((0, 0)));
         assert_eq!(auto.search("ab"), Some((0, 2)));
+    }
+
+    #[test]
+    fn test_make_anchored() {
+        let dfa = make_dfa("^a").minimize();
+
+        assert_eq!(dfa.search("abc"), Some((0, 1)));
+        assert_eq!(dfa.search("bac"), None);
+        assert_eq!(dfa.states.len(), 2);
+
+        let dfa = make_dfa("^a$").minimize();
+        assert_eq!(dfa.search("abc"), None);
+        assert_eq!(dfa.search("bca"), None);
+        assert_eq!(dfa.search("a"), Some((0, 1)));
+        assert_eq!(dfa.states.len(), 2);
     }
 
     // Benches copied from regex. Everything is anchored so far,

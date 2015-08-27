@@ -88,6 +88,14 @@ impl<T: Clone + Debug + PartialEq> IntoIterator for CharMap<T> {
     }
 }
 
+impl<'a, T: Clone + Debug + PartialEq> IntoIterator for &'a CharMap<T> {
+    type Item = &'a (CharRange, T);
+    type IntoIter = std::slice::Iter<'a, (CharRange, T)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.elts.iter()
+    }
+}
+
 impl<T: Clone + Debug + PartialEq> CharMap<T> {
     pub fn new() -> CharMap<T> {
         CharMap {

@@ -43,8 +43,8 @@ impl NfaState {
 /// it on some input then it could match any subset of the input, not just the part starting at
 /// the beginning. In terms of regexes, it's like having an implicit ".*" at the start.
 ///
-/// The initial state of an `Nfa` is always state zero, but see also the documentation for
-/// `initial_at_start`.
+/// The initial state of an `Nfa` always includes state zero, but see also the documentation for
+/// `initial_at_start` and `initial_after_char`.
 #[derive(PartialEq)]
 pub struct Nfa {
     states: Vec<NfaState>,
@@ -273,43 +273,117 @@ impl Nfa {
         ret
     }
 
+    /// Returns the set of all states that can be reached from some initial state.  Predicates must
+    /// be removed before calling this.
+    fn reachable_from(&self, states: &BitSet) -> BitSet {
+        let mut active = states.clone();
+        let mut next_active = BitSet::with_capacity(self.states.len());
+        let mut ret = active.clone();
+
+        while !active.is_empty() {
+            for s in &active {
+                for &t in &self.states[s].transitions.eps {
+                    if !ret.contains(&t) {
+                        ret.insert(t);
+                        next_active.insert(t);
+                    }
+                }
+                for &(_, t) in self.states[s].transitions.consuming.iter() {
+                    if !ret.contains(&t) {
+                        ret.insert(t);
+                        next_active.insert(t);
+                    }
+                }
+            }
+            mem::swap(&mut active, &mut next_active);
+            next_active.clear();
+        }
+
+        ret
+    }
+
+    /// Returns the set of all states that can be reached from an initial state and that can reach
+    /// some accepting state.
+    pub fn reachable_states(&self) -> BitSet {
+        let mut init_states = BitSet::with_capacity(self.states.len());
+        init_states.insert(0);
+        init_states.union_with(&self.initial_at_start);
+        for &(_, ref s) in &self.initial_after_char {
+            init_states.union_with(s);
+        }
+
+        let mut final_states = BitSet::with_capacity(self.states.len());
+        for (idx, s) in self.states.iter().enumerate() {
+            if s.accept != Accept::Never {
+                final_states.insert(idx);
+            }
+        }
+
+        let mut forward = self.reachable_from(&init_states);
+        let backward = self.reversed().reachable_from(&final_states);
+        forward.intersect_with(&backward);
+        forward
+    }
+
     /// Creates a deterministic automaton representing the same language.
     ///
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
     pub fn determinize(&self) -> Dfa {
-        use transition::Accept::*;
-
         let mut ret = Dfa::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
         let mut active_states = Vec::<BitSet>::new();
-        let start_state = self.eps_closure_single(0);
+        let reachable = self.reachable_states();
 
-        // TODO: fix this to use the right predicate
-        ret.add_state(self.accept(&start_state));
-        active_states.push(start_state.clone());
-        state_map.insert(start_state, 0);
+        let add_state = |s: BitSet, dfa: &mut Dfa, active: &mut Vec<_>, map: &mut HashMap<_,_>|
+        -> usize {
+            if map.contains_key(&s) {
+                *map.get(&s).unwrap()
+            } else {
+                dfa.add_state(self.accept(&s));
+                active.push(s.clone());
+                map.insert(s, dfa.num_states() - 1);
+                dfa.num_states() - 1
+            }
+        };
+
+        let mut init_other = self.eps_closure_single(0);
+        init_other.intersect_with(&reachable);
+        if !init_other.is_empty() {
+            let idx = add_state(init_other.clone(), &mut ret, &mut active_states, &mut state_map);
+            ret.initial_otherwise = Some(idx);
+        }
+
+        let mut init_at_start = self.eps_closure(&self.initial_at_start);
+        init_at_start.union_with(&init_other);
+        init_at_start.intersect_with(&reachable);
+        if !init_at_start.is_empty() {
+            let idx = add_state(init_at_start, &mut ret, &mut active_states, &mut state_map);
+            ret.initial_at_start = Some(idx);
+        }
+
+        for &(range, ref states) in &self.initial_after_char {
+            let mut init = self.eps_closure(states);
+            init.union_with(&init_other);
+            init.intersect_with(&reachable);
+            if !init.is_empty() {
+                let idx = add_state(init, &mut ret, &mut active_states, &mut state_map);
+                ret.initial_after_char.push(range, &idx);
+            }
+        }
 
         while active_states.len() > 0 {
             let state = active_states.pop().unwrap();
             let state_idx = *state_map.get(&state).unwrap();
             let trans = self.transitions(&state);
             for (range, target) in trans.into_iter() {
-                let target_idx = if state_map.contains_key(&target) {
-                        *state_map.get(&target).unwrap()
-                    } else {
-                        ret.add_state(self.accept(&target));
-                        active_states.push(target.clone());
-                        state_map.insert(target, ret.num_states() - 1);
-                        ret.num_states() - 1
-                    };
+                let target_idx =
+                    add_state(target.clone(), &mut ret, &mut active_states, &mut state_map);
                 ret.add_transition(state_idx, target_idx, range);
             }
         }
 
         ret.sort_transitions();
-        ret.initial_otherwise = Some(0); // FIXME
-        ret.initial_at_start = Some(0); // FIXME
         ret
     }
 
@@ -317,22 +391,22 @@ impl Nfa {
         let mut ret = states.clone();
         let mut new_states = states.clone();
         let mut next_states = BitSet::with_capacity(self.states.len());
-        loop {
+
+        while !new_states.is_empty() {
             for s in &new_states {
                 for &t in &self.states[s].transitions.eps {
-                    next_states.insert(t);
+                    if !ret.contains(&t) {
+                        next_states.insert(t);
+                        ret.insert(t);
+                    }
                 }
             }
 
-            if next_states.is_subset(&ret) {
-                return ret;
-            } else {
-                next_states.difference_with(&ret);
-                ret.union_with(&next_states);
-                mem::swap(&mut next_states, &mut new_states);
-                next_states.clear();
-            }
+            mem::swap(&mut next_states, &mut new_states);
+            next_states.clear();
         }
+
+        ret
     }
 
     fn eps_closure_single(&self, state: usize) -> BitSet {
