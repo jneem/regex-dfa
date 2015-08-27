@@ -20,8 +20,6 @@ expressions for very simple regexes.
 
 Some regex features don't map well to DFAs. Specifically, this crate does not
 support (nor does it plan to support) lazy repetition or subgroup captures.
-There are also some whose support is planned, but not implemented (e.g. word
-boundaries).
 
 `regex_dfa` currently only works on nightly rust.
 
