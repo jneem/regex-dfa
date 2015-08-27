@@ -15,7 +15,6 @@ use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
-use transition::NfaTransitions;
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -71,12 +70,9 @@ pub struct Dfa {
     /// This gives the initial state if we start trying to match in the middle of the string:
     /// if the previous char in the string matches one of the ranges, we start at the corresponding
     /// state.
-    pub initial_after_char: Vec<(CharRange, usize)>,
+    pub initial_after_char: CharMap<usize>,
 
-    /// This is the initial state in all other situations. Also, if the previous char does match
-    /// something from `initial_after_char`, but the resulting run of the `Dfa` rejected, then we
-    /// will also try starting from the current position in the string with the initial state
-    /// `initial_otherwise`.
+    /// This is the initial state in all other situations.
     pub initial_otherwise: Option<usize>
 }
 
@@ -86,7 +82,7 @@ impl Dfa {
         Dfa {
             states: Vec::new(),
             initial_at_start: None,
-            initial_after_char: Vec::new(),
+            initial_after_char: CharMap::new(),
             initial_otherwise: None,
         }
     }
@@ -150,7 +146,7 @@ impl Dfa {
     /// If we match some prefix of the string, returns the index after the endpoint of the longest
     /// match.
     pub fn longest_match<Iter>(&self, iter: Iter, last_char: Option<char>) -> Option<usize>
-    where Iter: Iterator<Item=(usize, char)> {
+    where Iter: Iterator<Item=(usize, char)> + Clone {
         match last_char {
             None => {
                 if let Some(s) = self.initial_at_start {
@@ -160,8 +156,9 @@ impl Dfa {
                 }
             }
             Some(ch) => {
-                // TODO: build the abstraction over Vec<(CharRange,T)>
-                if let Some(s) = self.initial_otherwise {
+                if let Some(&s) = self.initial_after_char.get(ch as u32) {
+                    self.longest_match_from(iter.clone(), s)
+                } else if let Some(s) = self.initial_otherwise {
                     self.longest_match_from(iter, s)
                 } else {
                     None
@@ -244,20 +241,15 @@ impl Dfa {
 
         while distinguishers.len() > 0 {
             let dist = distinguishers.pop_arbitrary();
-
-            // Find all transitions leading into dist.
-            // TODO: make this a CharMap<usize>
-            let mut trans = NfaTransitions::new();
-            for state in dist.iter() {
-                trans.consuming.extend(reversed.transitions_from(state).iter());
-            }
-
-            let sets = trans.groups();
+            let sets: Vec<BitSet> = reversed.transitions(&dist)
+                                            .into_iter()
+                                            .map(|(_, x)| x)
+                                            .collect();
 
             // For each set in our partition so far, split it if
             // some element of `sets` reveals it to contain more than
             // one equivalence class.
-            for s in sets.iter() {
+            for s in &sets {
                 let mut next_partition = HashSet::<BitSet>::new();
 
                 for y in partition.iter() {
@@ -319,9 +311,8 @@ impl Dfa {
         if let Some(s) = self.initial_otherwise {
             ret.initial_otherwise = Some(old_state_to_new[s])
         }
-        ret.initial_after_char.reserve_exact(self.initial_after_char.len());
-        for &(ref range, state) in &self.initial_after_char {
-            ret.initial_after_char.push((range.clone(), old_state_to_new[state]));
+        for &(ref range, state) in self.initial_after_char.iter() {
+            ret.initial_after_char.push(range.clone(), &old_state_to_new[state]);
         }
 
         ret
@@ -389,7 +380,7 @@ impl Debug for Dfa {
 
 #[cfg(test)]
 mod tests {
-    use char_map::{CharRange, CharSet};
+    use char_map::{CharMap, CharRange, CharSet};
     use dfa::{Accept, Dfa};
     use nfa::Nfa;
     use builder;
@@ -411,6 +402,12 @@ mod tests {
         ret.add_transition(0, 1, CharRange::single('b' as u32));
         ret.add_transition(1, 1, CharRange::single('a' as u32));
         ret.add_transition(1, 0, CharRange::single('b' as u32));
+        ret
+    }
+
+    fn odd_bs_dfa() -> Dfa {
+        let mut ret = even_bs_dfa();
+        ret.initial_at_start = Some(1);
         ret
     }
 
@@ -451,6 +448,45 @@ mod tests {
         assert_eq!(dfa.longest_match("baabaaaa".char_indices(), None), Some(8));
         assert_eq!(dfa.longest_match("baabaaaab".char_indices(), None), Some(9));
         assert_eq!(dfa.longest_match("bbbba".char_indices(), None), Some(5));
+    }
+
+    #[test]
+    fn test_accept_after_char() {
+        // Make a DFA that accepts strings with an even number of b's, or whose next character
+        // is a c.
+        let mut dfa = even_bs_dfa();
+        dfa.states[1].accept = Accept::Conditionally { at_eoi: false,
+                                                       at_char: CharSet::single('c' as u32) };
+        assert_eq!(dfa.longest_match("aaaaaa".char_indices(), None), Some(6));
+        assert_eq!(dfa.longest_match("aaaaaba".char_indices(), None), Some(5));
+        assert_eq!(dfa.longest_match("aaaaaab".char_indices(), None), Some(6));
+        assert_eq!(dfa.longest_match("baaaaaa".char_indices(), None), Some(0));
+        assert_eq!(dfa.longest_match("baaaaca".char_indices(), None), Some(5));
+        assert_eq!(dfa.longest_match("c".char_indices(), None), Some(0));
+        assert_eq!(dfa.longest_match("cbb".char_indices(), None), Some(0));
+    }
+
+    #[test]
+    fn test_unanchored_start() {
+        let mut dfa = odd_bs_dfa();
+        dfa.initial_at_start = None;
+        dfa.initial_otherwise = Some(1);
+
+        assert_eq!(dfa.search("cacbc"), Some((3, 4)));
+        assert_eq!(dfa.search("cacababc"), Some((3, 6)));
+        assert_eq!(dfa.search("ab"), Some((1, 2)));
+        assert_eq!(dfa.search("cacaaca"), None);
+    }
+
+    #[test]
+    fn test_start_after() {
+        let mut dfa = odd_bs_dfa();
+        dfa.initial_at_start = None;
+        dfa.initial_after_char = CharMap::from_vec(vec![(CharRange::single('c' as u32), 1)]);
+
+        assert_eq!(dfa.search("baabbababaa"), None);
+        assert_eq!(dfa.search("baabbacbabaa"), Some((7, 9)));
+        assert_eq!(dfa.search("cbaabbababaa"), Some((1, 12)));
     }
 
     #[test]

@@ -8,7 +8,7 @@
 
 use bit_set::BitSet;
 use builder::NfaBuilder;
-use char_map::{CharMultiMap, CharRange};
+use char_map::{CharMap, CharMultiMap, CharRange};
 use dfa::Dfa;
 use error;
 use regex_syntax;
@@ -316,14 +316,13 @@ impl Nfa {
     ///
     /// Only transitions that consume output are returned. In particular, you
     /// probably want `states` to already be eps-closed.
-    // TODO: can make this return a CharMap
-    fn transitions(&self, states: &BitSet) -> CharMultiMap<BitSet> {
+    pub fn transitions(&self, states: &BitSet) -> CharMap<BitSet> {
         let trans = states.iter()
                           .flat_map(|s| self.states[s].transitions.consuming.iter().cloned())
                           .collect();
-        let trans = NfaTransitions::from_vec(trans).group_consuming();
+        let trans = CharMultiMap::from_vec(trans).group();
 
-        CharMultiMap::from_vec(trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect())
+        CharMap::from_vec(trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect())
     }
 
     /// Finds all predicates transitioning out of the given set of states.

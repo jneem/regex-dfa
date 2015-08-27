@@ -47,15 +47,13 @@ impl Predicate {
         }
     }
 
-    pub fn filter_transitions(&self,
-                              in_trans: &CharMultiMap<BitSet>,
-                              out_trans: &CharMultiMap<BitSet>)
-    -> (CharMultiMap<BitSet>, CharMultiMap<BitSet>) {
+    pub fn filter_transitions(&self, in_trans: &CharMap<BitSet>, out_trans: &CharMap<BitSet>)
+    -> (CharMap<BitSet>, CharMap<BitSet>) {
         use transition::Predicate::*;
         if let &InClasses(ref my_in, ref my_out) = self {
             (in_trans.intersect(my_in), out_trans.intersect(my_out))
         } else {
-            (CharMultiMap::new(), CharMultiMap::new())
+            (CharMap::new(), CharMap::new())
         }
     }
 }
@@ -92,7 +90,7 @@ impl NfaTransitions {
     /// If we map `ch` to `state` then the return value of this method will map `ch` to a set
     /// containing `state`.
     pub fn group_consuming(&self) -> CharMap<BitSet> {
-        self.consuming.collect()
+        self.consuming.group()
     }
 
     /// Like `group_consuming`, but only returns the groups.

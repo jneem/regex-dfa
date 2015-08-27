@@ -83,6 +83,15 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
+    /// Creates a `CharMap` from a `Vec`, which is assumed to contain non-overlapping ranges in
+    /// ascending order.
+    pub fn from_vec(vec: Vec<(CharRange, T)>) -> CharMap<T> {
+        CharMap {
+            elts: vec,
+            sorted: true,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.elts.is_empty()
     }
@@ -131,6 +140,29 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
                 }
             },
         }
+    }
+
+    pub fn intersect(&self, other: &CharSet) -> CharMap<T> {
+        use std::cmp::{max, min};
+        let mut ret = Vec::new();
+        let mut other: &[(CharRange, ())] = &other.map.elts;
+
+        for &(ref r, ref data) in &self.elts {
+            while !other.is_empty() {
+                let (&(ref s, _), tail) = other.split_first().unwrap();
+                if s.end >= r.start && s.start <= r.end {
+                    let new_range = CharRange::new(max(s.start, r.start), min(s.end, r.end));
+                    ret.push((new_range, data.clone()));
+                }
+                if s.end >= r.end {
+                    break;
+                } else {
+                    other = tail;
+                }
+            }
+        }
+
+        CharMap::from_vec(ret)
     }
 }
 
@@ -220,25 +252,7 @@ impl CharSet {
     }
 
     pub fn intersect(&self, other: &CharSet) -> CharSet {
-        use std::cmp::{max, min};
-        let mut ret = Vec::new();
-        let mut other: &[(CharRange, ())] = &other.map.elts;
-
-        for &(ref r, _) in &self.map.elts {
-            while !other.is_empty() {
-                let (&(ref s, _), tail) = other.split_first().unwrap();
-                if s.end >= r.start && s.start <= r.end {
-                    ret.push((CharRange::new(max(s.start, r.start), min(s.end, r.end)), ()));
-                }
-                if s.end >= r.end {
-                    break;
-                } else {
-                    other = tail;
-                }
-            }
-        }
-
-        CharSet::from_vec(ret)
+        CharSet { map: self.map.intersect(other) }
     }
 
     /// Checks if the given character is contained in this set.
@@ -338,7 +352,9 @@ impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
 }
 
 impl CharMultiMap<usize> {
-    pub fn collect(&self) -> CharMap<BitSet> {
+    /// Makes the ranges sorted and non-overlapping. The data associated with each range will
+    /// be a set of `usize`s instead of a single `usize`.
+    pub fn group(&self) -> CharMap<BitSet> {
         let mut map = HashMap::<CharRange, BitSet>::new();
         for (range, state) in self.split().elts.into_iter() {
             map.entry(range).or_insert(BitSet::new()).insert(state);
