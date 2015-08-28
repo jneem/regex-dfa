@@ -102,8 +102,8 @@ impl Dfa {
         }
     }
 
-    /// If the beginning of this DFA matches a literal string, return it.
     /* TODO
+    /// If the beginning of this DFA matches a literal string, return it.
     pub fn prefix(&self) -> String {
         let mut ret = String::new();
         let mut state = self.initial;
@@ -120,7 +120,7 @@ impl Dfa {
     */
 
     /// Tests if the given state is accepting, assuming that `next` is the next char.
-    pub fn accepting(&self, state: usize, next: Option<char>) -> bool {
+    fn accepting(&self, state: usize, next: Option<char>) -> bool {
         use transition::Accept::*;
         match self.states[state].accept {
             Never => false,
@@ -279,7 +279,7 @@ impl Dfa {
     /// Returns an equivalent DFA with a minimal number of states.
     ///
     /// Uses Hopcroft's algorithm.
-    pub fn minimize(&self) -> Dfa {
+    fn minimize(&self) -> Dfa {
         let (never_states, acc_state_partition) = self.accept_partition();
         let mut partition = HashSet::<BitSet>::new();
         let mut distinguishers = HashSet::<BitSet>::new();
