@@ -83,7 +83,8 @@ impl Dfa {
     }
 
     pub fn from_regex(re: &str) -> Result<Dfa, error::Error> {
-        let nfa = try!(Nfa::from_regex(re));
+        let mut nfa = try!(Nfa::from_regex(re));
+        nfa.remove_predicates();
         Ok(nfa.determinize().minimize())
     }
 
@@ -189,10 +190,7 @@ impl Dfa {
     }
 
     /// Returns the index range of the match, if found.
-    // TODO: would prefer to take an iterator, but it seems hard to
-    // produce something of type Iterator<Item=(usize, u32)> + Clone.
     pub fn search(&self, s: &str) -> Option<(usize, usize)> {
-    // where Iter: Iterator<Item=(usize, u32)> + Clone {
         let mut iter = s.char_indices();
 
         match self.longest_match(iter.clone(), None) {
@@ -210,6 +208,46 @@ impl Dfa {
                 }
             }
         }
+    }
+
+    pub fn is_match_from<Iter>(&self, iter: Iter, mut state: usize) -> bool
+    where Iter: Iterator<Item=char> {
+        let mut iter = iter.peekable();
+        loop {
+            if self.accepting(state, iter.peek().map(|x| *x)) {
+                return true;
+            }
+            if let Some(ch) = iter.next() {
+                if let Some(&next_state) = self.states[state].transitions.get(ch as u32) {
+                    state = next_state;
+                } else { return false; }
+            } else { return false; }
+        }
+    }
+
+    pub fn is_match(&self, s: &str) -> bool {
+        if let Some(state) = self.initial_at_start {
+            if self.is_match_from(s.chars(), state) {
+                return true;
+            }
+        }
+        if self.initial_otherwise.is_none() && self.initial_after_char.is_empty() {
+            return false;
+        }
+
+        let mut iter = s.chars();
+        while let Some(ch) = iter.next() {
+            if let Some(&state) = self.initial_after_char.get(ch as u32) {
+                if self.is_match_from(iter.clone(), state) {
+                    return true;
+                }
+            } else if let Some(state) = self.initial_otherwise {
+                if self.is_match_from(iter.clone(), state) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// Returns an equivalent DFA with a minimal number of states.
@@ -230,9 +268,7 @@ impl Dfa {
         }
 
         while distinguishers.len() > 0 {
-            println!("partition: {:?}", partition);
             let dist = distinguishers.pop_arbitrary();
-            println!("distinguisher: {:?}", dist);
             let sets: Vec<BitSet> = reversed.transitions(&dist)
                                             .into_iter()
                                             .map(|(_, x)| x)
@@ -269,7 +305,6 @@ impl Dfa {
                 partition = next_partition;
             }
         }
-        println!("{:?}", partition);
 
         let mut ret = Dfa::new();
 
@@ -308,7 +343,14 @@ impl Dfa {
             ret.initial_after_char.push(range.clone(), &old_state_to_new[state]);
         }
 
+        ret.normalize_transitions();
         ret
+    }
+
+    fn normalize_transitions(&mut self) {
+        for st in &mut self.states {
+            st.transitions.normalize();
+        }
     }
 
     /// Returns a partition of states according to their accept value. The first tuple element is
@@ -382,6 +424,7 @@ mod tests {
     use dfa::Dfa;
     use nfa::Nfa;
     use regex_syntax;
+    use std::iter;
     use transition::Accept;
 
     fn make_dfa(re: &str) -> Dfa {
@@ -560,58 +603,33 @@ mod tests {
         assert_eq!(dfa.states.len(), 2);
     }
 
-    // Benches copied from regex. Everything is anchored so far,
-    // since we don't have any optimizations for non-anchored benchmarks.
-    use test::Bencher;
-    use regex::Regex;
-    use std::iter::repeat;
-    #[bench]
-    fn anchored_literal_short_non_match(b: &mut Bencher) {
-        let re = Regex::new("^zbc(d|e)").unwrap();
+    #[test]
+    fn test_not_literal() {
+        let re = make_dfa(".y").minimize();
+        let text = format!("{}y", iter::repeat("x").take(50).collect::<String>());
+        assert!(re.is_match(&text));
+    }
+
+    #[test]
+    fn test_anchored_literal_short_match() {
+        let re = Dfa::from_regex("^.bc(d|e)").unwrap();
         let text = "abcdefghijklmnopqrstuvwxyz";
-        b.iter(|| re.is_match(text));
+        assert!(re.is_match(text));
     }
 
-    #[bench]
-    fn anchored_literal_short_non_match_dfa(b: &mut Bencher) {
-        let auto = make_dfa("^zbc(d|e)").minimize();
-        let text = "abcdefghijklmnopqrstuvwxyz";
-        b.iter(|| auto.search(text));
+    #[test]
+    fn test_anchored_literal_long_match() {
+        let re = Dfa::from_regex("^.bc(d|e)").unwrap();
+        let text: String = iter::repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
+        assert!(re.is_match(&text));
     }
 
-    #[bench]
-    fn anchored_literal_long_non_match(b: &mut Bencher) {
-        let re = Regex::new("^zbc(d|e)").unwrap();
-        let text: String = repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
-        b.iter(|| re.is_match(&text));
-    }
-
-    #[bench]
-    fn anchored_literal_short_match(b: &mut Bencher) {
-        let re = Regex::new("^.bc(d|e)").unwrap();
-        let text = "abcdefghijklmnopqrstuvwxyz";
-        b.iter(|| re.is_match(text));
-    }
-
-    #[bench]
-    fn anchored_literal_short_match_dfa(b: &mut Bencher) {
-        let auto = make_dfa("^.bc(d|e)").minimize();
-        let text = "abcdefghijklmnopqrstuvwxyz";
-        b.iter(|| auto.search(text));
-    }
-
-    #[bench]
-    fn anchored_literal_long_match(b: &mut Bencher) {
-        let re = Regex::new("^.bc(d|e)").unwrap();
-        let text: String = repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
-        b.iter(|| re.is_match(&text));
-    }
-
-    #[bench]
-    fn anchored_literal_long_match_dfa(b: &mut Bencher) {
-        let auto = make_dfa("^.bc(d|e)").minimize();
-        let text: String = repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
-        b.iter(|| auto.search(&text));
+    #[test]
+    fn test_class_normalized() {
+        let re = Dfa::from_regex("[abcdw]").unwrap();
+        assert_eq!(re.states.len(), 2);
+        assert_eq!(re.states[0].transitions.len(), 2);
+        assert_eq!(re.states[1].transitions.len(), 0);
     }
 
 }

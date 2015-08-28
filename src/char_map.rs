@@ -117,6 +117,22 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         self.elts.is_empty()
     }
 
+    pub fn normalize(&mut self) {
+        let mut vec = Vec::with_capacity(self.elts.len());
+        if let Some((head, rest)) = self.elts.split_first() {
+            vec.push((head.0, head.1.clone()));
+            for elt in rest {
+                if elt.0.start == vec.last().unwrap().0.end + 1
+                        && elt.1 == vec.last().unwrap().1 {
+                    vec.last_mut().unwrap().0.end = elt.0.end;
+                } else {
+                    vec.push((elt.0, elt.1.clone()));
+                }
+            }
+        }
+        self.elts = vec;
+    }
+
     /// Maps the given range of characters to to the given value.
     ///
     /// Panics if the range is empty.
@@ -296,18 +312,31 @@ impl CharSet {
     ///
     /// Panics if `chars` is not sorted or not unique.
     pub fn except(chars: &str) -> CharSet {
+        if chars.is_empty() {
+            return CharSet::full();
+        }
+
         let mut ret = Vec::with_capacity(chars.len());
         let mut next_allowed = 0u32;
+        let mut n = 0u32;
         for c in chars.chars() {
-            let n = c as u32;
+            n = c as u32;
             if n > next_allowed {
                 ret.push((CharRange::new(next_allowed, n - 1), ()));
             } else if n < next_allowed {
                 panic!("input to CharSet::except must be sorted");
             }
-            next_allowed = n + 1;
+
+            if n < std::u32::MAX {
+                next_allowed = n + 1;
+            } else {
+                break;
+            }
         }
 
+        if n < std::u32::MAX {
+            ret.push((CharRange::new(n + 1, std::u32::MAX), ()));
+        }
         CharSet::from_vec(ret)
     }
 
@@ -442,6 +471,7 @@ impl<T: Copy + Debug + Hash + PartialEq + 'static> CharMultiMap<T> {
 #[cfg(test)]
 mod tests {
     use char_map::*;
+    use std::u32::MAX;
 
     #[test]
     fn test_get() {
@@ -473,6 +503,18 @@ mod tests {
         assert!(!cs.contains(0));
         assert!(!cs.contains(4));
         assert!(!cs.contains(8));
+    }
+
+    #[test]
+    fn test_except() {
+        assert_eq!(CharSet::except(""), CharSet::full());
+        assert_eq!(CharSet::except("\0"), CharSet::from_vec(vec![(CharRange::new(1, MAX), ())]));
+
+        let mut cs = CharSet::new();
+        cs.push(CharRange::new(0, 9));
+        cs.push(CharRange::new(11, 12));
+        cs.push(CharRange::new(14, MAX));
+        assert_eq!(CharSet::except("\n\r"), cs);
     }
 
     #[test]
@@ -545,6 +587,45 @@ mod tests {
             (CharRange::new(2, 5), 1),
             (CharRange::new(6, 7), 1),
         ]);
+    }
+
+    #[test]
+    fn test_normalize() {
+        let mut map = CharMap::from_vec(vec![
+            (CharRange::new(0, 3), 0),
+            (CharRange::new(5, 6), 0),
+            (CharRange::new(7, 9), 0),
+            (CharRange::new(15, 16), 0),
+            (CharRange::new(17, 20), 1),
+            (CharRange::new(21, 23), 1),
+        ]);
+        let target = CharMap::from_vec(vec![
+            (CharRange::new(0, 3), 0),
+            (CharRange::new(5, 9), 0),
+            (CharRange::new(15, 16), 0),
+            (CharRange::new(17, 23), 1),
+        ]);
+        map.normalize();
+        assert_eq!(map, target);
+    }
+
+    use test::Bencher;
+    #[bench]
+    fn bench_in_class(b: &mut Bencher) {
+        let map = CharMap::from_vec(vec![
+            (CharRange::new('a' as u32, 'd' as u32), 0),
+            (CharRange::new('w' as u32, 'w' as u32), 1),
+        ]);
+        b.iter(|| assert!(map.get('b' as u32).is_some()));
+    }
+
+    #[bench]
+    fn bench_not_in_class(b: &mut Bencher) {
+        let map = CharMap::from_vec(vec![
+            (CharRange::new('a' as u32, 'd' as u32), 0),
+            (CharRange::new('w' as u32, 'w' as u32), 1),
+        ]);
+        b.iter(|| assert!(map.get('x' as u32).is_none()));
     }
 }
 

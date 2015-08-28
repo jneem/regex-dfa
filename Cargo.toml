@@ -14,4 +14,18 @@ regex = "*"
 regex-syntax = "*"
 bit-set = "*"
 
+[dev-dependencies]
+rand = "0.3"
+
+[[bench]]
+name = "dynamic"
+path = "benches/bench_dynamic.rs"
+test = false
+bench = true
+
+[[bench]]
+name = "dfa"
+path = "benches/bench_dfa.rs"
+test = false
+bench = true
 
