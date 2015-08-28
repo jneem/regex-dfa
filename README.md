@@ -7,6 +7,8 @@ regular expressions.
 
 [![Build status](https://travis-ci.org/jneem/regex-dfa.svg)](https://travis-ci.org/jneem/regex-dfa)
 
+[Documentation](http://jneem.github.io/regex-dfa/regex_dfa/index.html)
+
 # Why
 
 Regular expression implementations (e.g. [rust's regex
