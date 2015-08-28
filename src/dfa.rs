@@ -136,21 +136,21 @@ impl Dfa {
 
     /// If we match some prefix of the string, returns the index after the endpoint of the longest
     /// match.
-    pub fn longest_match<Iter>(&self, iter: Iter, last_char: Option<char>) -> Option<usize>
+    fn longest_match_after<Iter>(&self, iter: Iter, last: Option<(usize, char)>) -> Option<usize>
     where Iter: Iterator<Item=(usize, char)> + Clone {
-        match last_char {
+        match last {
             None => {
                 if let Some(s) = self.initial_at_start {
-                    self.longest_match_from(iter, s)
+                    self.longest_match_from(iter, s, 0)
                 } else {
                     None
                 }
             }
-            Some(ch) => {
+            Some((idx, ch)) => {
                 if let Some(&s) = self.initial_after_char.get(ch as u32) {
-                    self.longest_match_from(iter.clone(), s)
+                    self.longest_match_from(iter, s, idx + ch.len_utf8())
                 } else if let Some(s) = self.initial_otherwise {
-                    self.longest_match_from(iter, s)
+                    self.longest_match_from(iter, s, idx + ch.len_utf8())
                 } else {
                     None
                 }
@@ -160,11 +160,13 @@ impl Dfa {
 
     /// Beginning at the given initial state, if we match some prefix of the string, returns the
     /// index after the endpoint of the longest match.
-    pub fn longest_match_from<Iter>(&self, iter: Iter, mut state: usize) -> Option<usize>
+    ///
+    /// `idx` is the value we should return if the initial state is accepting.
+    fn longest_match_from<Iter>(&self, iter: Iter, mut state: usize, idx: usize) -> Option<usize>
     where Iter: Iterator<Item=(usize, char)> {
         let mut iter = iter.peekable();
         let mut last_match = if self.accepting(state, iter.peek().map(|&(_, x)| x)) {
-            Some(0)
+            Some(idx)
         } else {
             None
         };
@@ -189,11 +191,13 @@ impl Dfa {
         }
     }
 
-    /// Returns the index range of the match, if found.
-    pub fn search(&self, s: &str) -> Option<(usize, usize)> {
+    /// Returns the index range of the first longest match, if there is a match. The indices
+    /// returned are byte indices of the string. The first index is inclusive; the second is
+    /// exclusive, and a little more subtle -- see the crate documentation.
+    pub fn longest_match(&self, s: &str) -> Option<(usize, usize)> {
         let mut iter = s.char_indices();
 
-        match self.longest_match(iter.clone(), None) {
+        match self.longest_match_after(iter.clone(), None) {
             None => (),
             Some(n) => return Some((0, n)),
         }
@@ -201,53 +205,75 @@ impl Dfa {
             match iter.next() {
                 None => return None,
                 Some((m, ch)) => {
-                    match self.longest_match(iter.clone(), Some(ch)) {
+                    let next_idx = m + ch.len_utf8();
+                    match self.longest_match_after(iter.clone(), Some((next_idx, ch))) {
                         None => (),
-                        Some(n) => return Some((m + ch.len_utf8(), n)),
+                        Some(n) => return Some((next_idx, n)),
                     }
                 }
             }
         }
     }
 
-    pub fn is_match_from<Iter>(&self, iter: Iter, mut state: usize) -> bool
-    where Iter: Iterator<Item=char> {
+    fn shortest_match_from<Iter>(&self, iter: Iter, mut state: usize, idx: usize) -> Option<usize>
+    where Iter: Iterator<Item=(usize, char)> {
         let mut iter = iter.peekable();
+        let mut cur_idx = idx;
         loop {
-            if self.accepting(state, iter.peek().map(|x| *x)) {
-                return true;
+            if self.accepting(state, iter.peek().map(|x| x.1)) {
+                return Some(cur_idx);
             }
-            if let Some(ch) = iter.next() {
+            if let Some((idx, ch)) = iter.next() {
                 if let Some(&next_state) = self.states[state].transitions.get(ch as u32) {
                     state = next_state;
-                } else { return false; }
-            } else { return false; }
+                    cur_idx = idx + ch.len_utf8();
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
         }
     }
 
+    /// Checks whether we match the string `s`.
     pub fn is_match(&self, s: &str) -> bool {
+        self.shortest_match(s).is_some()
+    }
+
+    /// Returns the index range of the first shortest match, if there is a match. The indices
+    /// returned are byte indices of the string. The first index is inclusive; the second is
+    /// exclusive, and a little more subtle -- see the crate documentation.
+    pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
         if let Some(state) = self.initial_at_start {
-            if self.is_match_from(s.chars(), state) {
-                return true;
+            if let Some(end) = self.shortest_match_from(s.char_indices(), state, 0) {
+                return Some((0, end));
             }
         }
         if self.initial_otherwise.is_none() && self.initial_after_char.is_empty() {
-            return false;
+            return None;
         }
 
-        let mut iter = s.chars();
-        while let Some(ch) = iter.next() {
-            if let Some(&state) = self.initial_after_char.get(ch as u32) {
-                if self.is_match_from(iter.clone(), state) {
-                    return true;
-                }
-            } else if let Some(state) = self.initial_otherwise {
-                if self.is_match_from(iter.clone(), state) {
-                    return true;
+        let mut iter = s.char_indices();
+        while let Some((idx, ch)) = iter.next() {
+            let next_idx = idx + ch.len_utf8();
+            if let Some(state) = self.state_after(ch as u32) {
+                if let Some(end) = self.shortest_match_from(iter.clone(), state, next_idx) {
+                    return Some((next_idx, end));
                 }
             }
         }
-        return false;
+        return None;
+    }
+
+    fn state_after(&self, ch: u32) -> Option<usize> {
+        if let Some(&state) = self.initial_after_char.get(ch as u32) {
+            Some(state)
+        } else if let Some(state) = self.initial_otherwise {
+            Some(state)
+        } else {
+            None
+        }
     }
 
     /// Returns an equivalent DFA with a minimal number of states.
@@ -485,12 +511,12 @@ mod tests {
         dfa.add_transition(2, 1, CharRange::single('a' as u32));
         dfa.add_transition(2, 0, CharRange::single('b' as u32));
 
-        assert_eq!(dfa.longest_match("aaaaaa".char_indices(), None), Some(6));
-        assert_eq!(dfa.longest_match("aaaaaba".char_indices(), None), Some(5));
-        assert_eq!(dfa.longest_match("aaaaaab".char_indices(), None), Some(7));
-        assert_eq!(dfa.longest_match("baabaaaa".char_indices(), None), Some(8));
-        assert_eq!(dfa.longest_match("baabaaaab".char_indices(), None), Some(9));
-        assert_eq!(dfa.longest_match("bbbba".char_indices(), None), Some(5));
+        assert_eq!(dfa.longest_match("aaaaaa"), Some((0, 6)));
+        assert_eq!(dfa.longest_match("aaaaaba"), Some((0, 5)));
+        assert_eq!(dfa.longest_match("aaaaaab"), Some((0, 7)));
+        assert_eq!(dfa.longest_match("baabaaaa"), Some((0, 8)));
+        assert_eq!(dfa.longest_match("baabaaaab"), Some((0, 9)));
+        assert_eq!(dfa.longest_match("bbbba"), Some((0, 5)));
     }
 
     #[test]
@@ -500,13 +526,13 @@ mod tests {
         let mut dfa = even_bs_dfa();
         dfa.states[1].accept = Accept::Conditionally { at_eoi: false,
                                                        at_char: CharSet::single('c' as u32) };
-        assert_eq!(dfa.longest_match("aaaaaa".char_indices(), None), Some(6));
-        assert_eq!(dfa.longest_match("aaaaaba".char_indices(), None), Some(5));
-        assert_eq!(dfa.longest_match("aaaaaab".char_indices(), None), Some(6));
-        assert_eq!(dfa.longest_match("baaaaaa".char_indices(), None), Some(0));
-        assert_eq!(dfa.longest_match("baaaaca".char_indices(), None), Some(5));
-        assert_eq!(dfa.longest_match("c".char_indices(), None), Some(0));
-        assert_eq!(dfa.longest_match("cbb".char_indices(), None), Some(0));
+        assert_eq!(dfa.longest_match("aaaaaa"), Some((0, 6)));
+        assert_eq!(dfa.longest_match("aaaaaba"), Some((0, 5)));
+        assert_eq!(dfa.longest_match("aaaaaab"), Some((0, 6)));
+        assert_eq!(dfa.longest_match("baaaaaa"), Some((0, 0)));
+        assert_eq!(dfa.longest_match("baaaaca"), Some((0, 5)));
+        assert_eq!(dfa.longest_match("c"), Some((0, 0)));
+        assert_eq!(dfa.longest_match("cbb"), Some((0, 0)));
     }
 
     #[test]
@@ -515,10 +541,10 @@ mod tests {
         dfa.initial_at_start = None;
         dfa.initial_otherwise = Some(1);
 
-        assert_eq!(dfa.search("cacbc"), Some((3, 4)));
-        assert_eq!(dfa.search("cacababc"), Some((3, 6)));
-        assert_eq!(dfa.search("ab"), Some((1, 2)));
-        assert_eq!(dfa.search("cacaaca"), None);
+        assert_eq!(dfa.longest_match("cacbc"), Some((3, 4)));
+        assert_eq!(dfa.longest_match("cacababc"), Some((3, 6)));
+        assert_eq!(dfa.longest_match("ab"), Some((1, 2)));
+        assert_eq!(dfa.longest_match("cacaaca"), None);
     }
 
     #[test]
@@ -527,9 +553,9 @@ mod tests {
         dfa.initial_at_start = None;
         dfa.initial_after_char = CharMap::from_vec(vec![(CharRange::single('c' as u32), 1)]);
 
-        assert_eq!(dfa.search("baabbababaa"), None);
-        assert_eq!(dfa.search("baabbacbabaa"), Some((7, 9)));
-        assert_eq!(dfa.search("cbaabbababaa"), Some((1, 12)));
+        assert_eq!(dfa.longest_match("baabbababaa"), None);
+        assert_eq!(dfa.longest_match("baabbacbabaa"), Some((7, 9)));
+        assert_eq!(dfa.longest_match("cbaabbababaa"), Some((1, 12)));
     }
 
     #[test]
@@ -539,7 +565,7 @@ mod tests {
 
         let test_strings = vec!["aaabbbbbbb", "bbbb", "a", "", "ba", "aba"];
         for s in test_strings {
-            assert_eq!(auto1.search(s), auto2.search(s));
+            assert_eq!(auto1.longest_match(s), auto2.longest_match(s));
         }
         assert_eq!(auto2.states.len(), 2);
 
@@ -549,57 +575,36 @@ mod tests {
 
     #[test]
     fn test_longest_match() {
-        let auto = make_dfa("a*b*");
-
-        assert_eq!(auto.longest_match("aba".char_indices(), None), Some(2));
-        assert_eq!(auto.longest_match("baba".char_indices(), None), Some(1));
-        assert_eq!(auto.longest_match("ac".char_indices(), None), Some(1));
-        assert_eq!(auto.longest_match("ab".char_indices(), None), Some(2));
-        assert_eq!(auto.longest_match("bc".char_indices(), None), Some(1));
-        assert_eq!(auto.longest_match("b".char_indices(), None), Some(1));
-
         let auto = make_dfa("a+b*");
-
-        assert_eq!(auto.longest_match("aba".char_indices(), None), Some(2));
-        assert_eq!(auto.longest_match("baba".char_indices(), None), None);
-        assert_eq!(auto.longest_match("ac".char_indices(), None), Some(1));
-        assert_eq!(auto.longest_match("ab".char_indices(), None), Some(2));
-        assert_eq!(auto.longest_match("bc".char_indices(), None), None);
-        assert_eq!(auto.longest_match("b".char_indices(), None), None);
-    }
-
-    #[test]
-    fn test_search() {
-        let auto = make_dfa("a+b*");
-        assert_eq!(auto.search("cdacd"), Some((2, 3)));
-        assert_eq!(auto.search("cdaabbcd"), Some((2, 6)));
-        assert_eq!(auto.search("aabbcd"), Some((0, 4)));
-        assert_eq!(auto.search("cdb"), None);
-        assert_eq!(auto.search("ab"), Some((0, 2)));
+        assert_eq!(auto.longest_match("cdacd"), Some((2, 3)));
+        assert_eq!(auto.longest_match("cdaabbcd"), Some((2, 6)));
+        assert_eq!(auto.longest_match("aabbcd"), Some((0, 4)));
+        assert_eq!(auto.longest_match("cdb"), None);
+        assert_eq!(auto.longest_match("ab"), Some((0, 2)));
 
         // If the pattern matches the empty string, it will always be found
         // at the beginning.
         let auto = make_dfa("a*b*");
 
-        assert_eq!(auto.search("cdacd"), Some((0, 0)));
-        assert_eq!(auto.search("cdaabbcd"), Some((0, 0)));
-        assert_eq!(auto.search("aabbcd"), Some((0, 4)));
-        assert_eq!(auto.search("cdb"), Some((0, 0)));
-        assert_eq!(auto.search("ab"), Some((0, 2)));
+        assert_eq!(auto.longest_match("cdacd"), Some((0, 0)));
+        assert_eq!(auto.longest_match("cdaabbcd"), Some((0, 0)));
+        assert_eq!(auto.longest_match("aabbcd"), Some((0, 4)));
+        assert_eq!(auto.longest_match("cdb"), Some((0, 0)));
+        assert_eq!(auto.longest_match("ab"), Some((0, 2)));
     }
 
     #[test]
     fn test_make_anchored() {
         let dfa = make_dfa("^a").minimize();
 
-        assert_eq!(dfa.search("abc"), Some((0, 1)));
-        assert_eq!(dfa.search("bac"), None);
+        assert_eq!(dfa.longest_match("abc"), Some((0, 1)));
+        assert_eq!(dfa.longest_match("bac"), None);
         assert_eq!(dfa.states.len(), 2);
 
         let dfa = make_dfa("^a$").minimize();
-        assert_eq!(dfa.search("abc"), None);
-        assert_eq!(dfa.search("bca"), None);
-        assert_eq!(dfa.search("a"), Some((0, 1)));
+        assert_eq!(dfa.longest_match("abc"), None);
+        assert_eq!(dfa.longest_match("bca"), None);
+        assert_eq!(dfa.longest_match("a"), Some((0, 1)));
         assert_eq!(dfa.states.len(), 2);
     }
 
@@ -628,8 +633,9 @@ mod tests {
     fn test_class_normalized() {
         let re = Dfa::from_regex("[abcdw]").unwrap();
         assert_eq!(re.states.len(), 2);
-        assert_eq!(re.states[0].transitions.len(), 2);
-        assert_eq!(re.states[1].transitions.len(), 0);
+        // The order of the states is arbitrary, but one should have two transitions and
+        // the other should have zero.
+        assert_eq!(re.states[0].transitions.len() + re.states[1].transitions.len(), 2);
     }
 
 }

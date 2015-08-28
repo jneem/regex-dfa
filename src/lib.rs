@@ -17,8 +17,19 @@ executing NFAs; they are only used for constructing DFAs.
 ```rust
 use regex_dfa::Dfa;
 let dfa = Dfa::from_regex(r"\d{4}-\d{2}-\d{2}").unwrap();
-assert_eq!(dfa.search("My birthday is 1986-08-22!"), Some((15, 25)));
+assert_eq!(dfa.shortest_match("My birthday is 1986-08-22!"), Some((15, 25)));
 ```
+
+# Caveats
+
+The main useful functions in this crate are `Dfa::shortest_match` and `Dfa::longest_match`, which
+look for substrings of the given string that match the language of the `Dfa`. For both of these
+functions, the starting index of the return value is fairly self-explanatory but the ending index
+should be used with caution because it is only a bound on the ending index you will get from
+running a standard regex engine based on an NFA. This is because a regex specifies not only a
+language, but also a preferred execution order (for example, by specifying lazy or greedy
+repetition operators). This information is lost when moving to a DFA, so we cannot necessarily find
+the exact same match that a standard regex engine will.
 */
 
 #![feature(slice_splits, test)]
