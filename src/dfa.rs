@@ -7,8 +7,9 @@
 // except according to those terms.
 
 use bit_set::BitSet;
-use char_map::{CharMap, CharRange};
+use char_map::{CharMap, CharSet, CharRange};
 use error;
+use memchr::memchr;
 use nfa::Nfa;
 use std;
 use std::collections::{HashSet, HashMap};
@@ -417,6 +418,163 @@ impl Dfa {
 
         ret
     }
+
+    fn first_byte(&self) -> Option<u8> {
+        if let Some(state) = self.initial_at_start {
+            if self.initial_otherwise == Some(state) && self.initial_after_char.is_empty() {
+                if let Some(ch) = Dfa::single_char(self.states[state].transitions.iter()) {
+                    if let Some(c) = std::char::from_u32(ch) {
+                        if c.len_utf8() == 1 {
+                            return Some(ch as u8);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn to_program(&self) -> Program {
+        let (mut chains, state_map, lengths) = self.chains();
+        let map_state = |s| lengths[*state_map.get(&s).unwrap()];
+
+        // Fix up the indices to refer to the new instructions. Note that only the last instruction
+        // in each chain can be a Branch, so we only need to look at those.
+        for ch in &mut chains {
+            if let Some(inst) = ch.last_mut() {
+                if let &mut Inst::Branch(ref mut cm) = inst {
+                    cm.map_values(&map_state);
+                }
+            }
+        }
+
+        let insts = chains.into_iter().flat_map(|c| c.into_iter()).collect::<Vec<_>>();
+        let mut ret = Program::new();
+        ret.insts = insts;
+        ret.initial_after_char = self.initial_after_char.clone();
+        ret.initial_after_char.map_values(&map_state);
+        ret.initial_at_start = self.initial_at_start.map(&map_state);
+        ret.initial_otherwise = self.initial_otherwise.map(&map_state);
+        ret.first_byte = self.first_byte();
+        ret
+    }
+
+    /// Looks for transitions that only have one possible target state and groups them.
+    /// The second return value is a map from the old state index to the element in the first
+    /// return value that represents the same state. The third return value is the accumulated
+    /// lengths of the chains.
+    fn chains(&self) -> (Vec<Vec<Inst>>, HashMap<usize, usize>, Vec<usize>) {
+        let mut chains = Vec::<Vec<Inst>>::new();
+        let mut map = HashMap::<usize, usize>::new();
+        let mut lengths = Vec::new();
+        let mut cur_length = 0;
+        let rev = self.reversed();
+
+        for st_idx in 0..self.states.len() {
+            if self.is_chain_head(st_idx, &rev) {
+                let new_chain = self.build_chain(st_idx, &rev);
+                map.insert(st_idx, chains.len());
+                lengths.push(cur_length);
+                cur_length += new_chain.len();
+                chains.push(new_chain);
+            }
+        }
+
+        (chains, map, lengths)
+    }
+
+    fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
+    where Iter: Iterator<Item = &'a (CharRange, usize)> {
+        if let Some(&(_, target)) = iter.next() {
+            while let Some(&(_, next_target)) = iter.next() {
+                if target != next_target {
+                    return None;
+                }
+            }
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    fn single_char<'a, Iter>(mut iter: Iter) -> Option<u32>
+    where Iter: Iterator<Item = &'a (CharRange, usize)> {
+        if let Some(&(range, _)) = iter.next() {
+            if range.start == range.end && iter.next().is_none() {
+                Some(range.start)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Returns true if this state has only one target state, and that target state's only source
+    /// state is this state.
+    fn is_chain_link(&self, st_idx: usize, reversed: &Nfa) -> bool {
+        if let Some(tgt) = Dfa::single_target(self.states[st_idx].transitions.iter()) {
+            Dfa::single_target(reversed.transitions_from(tgt).iter()).is_some()
+        } else {
+            false
+        }
+    }
+
+    fn is_chain_head(&self, st_idx: usize, rev: &Nfa) -> bool {
+        // We're at the head of a chain if either we don't have a parent that is a chain link, or
+        // if we are a starting state.
+        let has_p = if let Some(p) = Dfa::single_target(rev.transitions_from(st_idx).iter()) {
+            self.is_chain_link(p, rev)
+        } else {
+            false
+        };
+        self.is_starting(st_idx) || !has_p
+    }
+
+    fn is_starting(&self, st_idx: usize) -> bool {
+        self.initial_at_start == Some(st_idx)
+            || self.initial_otherwise == Some(st_idx)
+            || (&self.initial_after_char).into_iter().any(|x| x.1 == st_idx)
+    }
+
+    fn build_chain(&self, mut st_idx: usize, rev: &Nfa) -> Vec<Inst> {
+        let mut ret = Vec::new();
+        let mut lit_in_progress = String::new();
+        while self.is_chain_link(st_idx, rev) {
+            let st = &self.states[st_idx];
+            if st.accept != Accept::Never {
+                ret.push(Inst::Acc(st.accept.clone()));
+            }
+            if let Some(ch) = Dfa::single_char(st.transitions.iter()) {
+                lit_in_progress.push(std::char::from_u32(ch).unwrap());
+            } else {
+                if !lit_in_progress.is_empty() {
+                    ret.push(Inst::Literal(lit_in_progress));
+                    lit_in_progress = String::new();
+                }
+                ret.push(Inst::Char(st.transitions.to_char_set()));
+            }
+
+            // This unwrap is OK because self.is_chain_link(st_idx, rev).
+            st_idx = Dfa::single_target(self.states[st_idx].transitions.iter()).unwrap();
+        }
+
+        if !lit_in_progress.is_empty() {
+            ret.push(Inst::Literal(lit_in_progress));
+        }
+
+        let st = &self.states[st_idx];
+        if st.accept != Accept::Never {
+            ret.push(Inst::Acc(st.accept.clone()));
+        }
+        if !st.transitions.is_empty() {
+            ret.push(Inst::Branch(st.transitions.clone()));
+        } else if ret.last() != Some(&Inst::Acc(Accept::Always)) {
+            ret.push(Inst::Reject);
+        }
+
+        ret
+    }
 }
 
 impl Debug for Dfa {
@@ -442,6 +600,147 @@ impl Debug for Dfa {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Inst {
+    Literal(String),
+    Char(CharSet),
+    Acc(Accept),
+    Branch(CharMap<usize>),
+    Reject,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Program {
+    insts: Vec<Inst>,
+    initial_at_start: Option<usize>,
+    initial_after_char: CharMap<usize>,
+    initial_otherwise: Option<usize>,
+
+    /// If this is `Some` then initial_after_char must be empty and initial_at_start must
+    /// be the same as initial_otherwise.
+    first_byte: Option<u8>,
+}
+
+impl Program {
+    pub fn new() -> Program {
+        Program {
+            insts: Vec::new(),
+            initial_at_start: None,
+            initial_after_char: CharMap::new(),
+            initial_otherwise: None,
+            first_byte: None,
+        }
+    }
+
+    fn shortest_match_from(&self, mut s: &str, mut state: usize, idx: usize) -> Option<usize> {
+        use dfa::Inst::*;
+
+        let mut cur_idx = idx;
+        loop {
+            match self.insts[state] {
+                Reject => { return None; },
+                Acc(Accept::Always) => { return Some(cur_idx); }
+                Acc(Accept::Never) => {},
+                Acc(Accept::Conditionally { at_eoi, ref at_char }) => {
+                    if at_eoi && s.is_empty() {
+                        return Some(cur_idx);
+                    } else if let Some(next_ch) = s.chars().next() {
+                        if at_char.contains(next_ch as u32) {
+                            return Some(cur_idx);
+                        }
+                    }
+                    state += 1;
+                },
+                Char(ref cs) => {
+                    if let Some((next_ch, rest)) = s.slice_shift_char() {
+                        if cs.contains(next_ch as u32) {
+                            state += 1;
+                            cur_idx += next_ch.len_utf8();
+                            s = rest;
+                            continue;
+                        }
+                    }
+                    return None;
+                },
+                Literal(ref lit) => {
+                    if s.starts_with(lit) {
+                        state += 1;
+                        cur_idx += lit.len();
+                        s = &s[lit.len()..];
+                    } else {
+                        return None;
+                    }
+                },
+                Branch(ref cm) => {
+                    if let Some((next_ch, rest)) = s.slice_shift_char() {
+                        if let Some(&next_state) = cm.get(next_ch as u32) {
+                            state = next_state;
+                            cur_idx += next_ch.len_utf8();
+                            s = rest;
+                            continue;
+                        }
+                    }
+                    return None;
+                },
+            }
+        }
+    }
+
+    // A fast path, using memchr to find the candidates for matching.
+    fn shortest_match_memchr(&self, mut s: &str, first_ch: u8, state: usize)
+    -> Option<(usize, usize)> {
+        while let Some(pos) = memchr(first_ch, s.as_bytes()) {
+            s = &s[pos..];
+            if let Some(end) = self.shortest_match_from(s, state, pos) {
+                return Some((pos, end));
+            }
+            if let Some((_, rest)) = s.slice_shift_char() {
+                s = rest;
+            }
+        }
+        return None;
+    }
+
+    pub fn shortest_match(&self, mut s: &str) -> Option<(usize, usize)> {
+        if let Some(first) = self.first_byte {
+            return self.shortest_match_memchr(s, first, self.initial_otherwise.unwrap());
+        }
+
+        if let Some(state) = self.initial_at_start {
+            if let Some(end) = self.shortest_match_from(s, state, 0) {
+                return Some((0, end));
+            }
+        }
+
+        // Skip looping through the string if we know that the match has to start
+        // at the beginning.
+        if self.initial_otherwise.is_none() && self.initial_after_char.is_empty() {
+            return None;
+        }
+
+        let mut idx = 0;
+        while let Some((ch, rest)) = s.slice_shift_char() {
+            s = rest;
+            idx += ch.len_utf8();
+
+            if let Some(&state) = self.initial_after_char.get(ch as u32) {
+                if let Some(end) = self.shortest_match_from(s, state, idx) {
+                    return Some((idx, end));
+                }
+            } else if let Some(state) = self.initial_otherwise {
+                if let Some(end) = self.shortest_match_from(s, state, idx) {
+                    return Some((idx, end));
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn is_match(&self, s: &str) -> bool {
+        self.shortest_match(s).is_some()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -630,6 +929,14 @@ mod tests {
     }
 
     #[test]
+    fn test_to_program() {
+        let re = Dfa::from_regex("^.bc(d|e)").unwrap();
+        let prog = re.to_program();
+        let text: String = iter::repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
+        assert_eq!(prog.shortest_match(&text), Some((0, 4)));
+    }
+
+   #[test]
     fn test_class_normalized() {
         let re = Dfa::from_regex("[abcdw]").unwrap();
         assert_eq!(re.states.len(), 2);
@@ -637,6 +944,5 @@ mod tests {
         // the other should have zero.
         assert_eq!(re.states[0].transitions.len() + re.states[1].transitions.len(), 2);
     }
-
 }
 

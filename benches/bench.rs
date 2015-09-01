@@ -156,7 +156,6 @@ fn gen_text(n: usize) -> String {
     String::from_utf8(bytes).unwrap()
 }
 
-/*
 throughput!(easy0_32, easy0(), 32);
 throughput!(easy0_1K, easy0(), 1<<10);
 throughput!(easy0_32K, easy0(), 32<<10);
@@ -176,5 +175,4 @@ throughput!(hard_32, hard(), 32);
 throughput!(hard_1K, hard(), 1<<10);
 throughput!(hard_32K,hard(), 32<<10);
 throughput!(hard_1MB, hard(), 1<<20);
-*/
 

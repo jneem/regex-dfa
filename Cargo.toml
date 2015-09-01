@@ -12,6 +12,7 @@ license = "MIT/Apache-2.0"
 [dependencies]
 regex = "0.1.41"
 regex-syntax = "0.2.1"
+memchr = "0.1.5"
 bit-set = "*"
 
 [dev-dependencies]
@@ -26,6 +27,12 @@ bench = true
 [[bench]]
 name = "dfa"
 path = "benches/bench_dfa.rs"
+test = false
+bench = true
+
+[[bench]]
+name = "dfa-prog"
+path = "benches/bench_dfa_prog.rs"
 test = false
 bench = true
 

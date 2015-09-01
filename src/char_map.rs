@@ -201,6 +201,18 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 
         CharMap::from_vec(ret)
     }
+
+    /// Returns the set of mapped chars, forgetting what they are mapped to.
+    pub fn to_char_set(&self) -> CharSet {
+        CharSet::from_vec(self.elts.iter().map(|x| (x.0, ())).collect())
+    }
+
+    /// Modifies the values in place.
+    pub fn map_values<F>(&mut self, mut f: F) where F: FnMut(T) -> T {
+        for &mut (_, ref mut data) in &mut self.elts {
+            *data = f(data.clone());
+        }
+    }
 }
 
 impl<T: Copy + Debug + PartialEq + 'static> CharMap<T> {
