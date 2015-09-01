@@ -73,6 +73,23 @@ impl PartialOrd for CharRange {
     }
 }
 
+impl PartialEq<u32> for CharRange {
+    fn eq(&self, ch: &u32) -> bool {
+        self.contains(*ch)
+    }
+}
+
+impl PartialOrd<u32> for CharRange {
+    fn partial_cmp(&self, ch: &u32) -> Option<Ordering> {
+        if self.end < *ch {
+            Some(Ordering::Less)
+        } else if self.start > *ch {
+            Some(Ordering::Greater)
+        } else {
+            Some(Ordering::Equal)
+        }
+    }
+}
 /// A set of characters. Optionally, each character in the set may be associated with some data.
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub struct CharMap<T: Clone + Debug + PartialEq> {
@@ -153,15 +170,9 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
     /// Returns the data corresponding to a char. This `CharMap` must be sorted before calling
     /// `get`.
     pub fn get(&self, ch: u32) -> Option<&T> {
-        match self.elts[..].binary_search_by(|&(r, _)| r.start.cmp(&ch)) {
+        match self.elts[..].binary_search_by(|&(r, _)| r.partial_cmp(&ch).unwrap()) {
             Ok(idx) => { Some(&self.elts[idx].1) },
-            Err(idx) => {
-                if idx > 0 && self.elts[idx-1].0.contains(ch) {
-                    Some(&self.elts[idx - 1].1)
-                } else {
-                    None
-                }
-            },
+            Err(_) => { None },
         }
     }
 

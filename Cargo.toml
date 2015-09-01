@@ -18,6 +18,9 @@ bit-set = "*"
 [dev-dependencies]
 rand = "0.3"
 
+[profile.release]
+debug = true
+
 [[bench]]
 name = "dynamic"
 path = "benches/bench_dynamic.rs"
