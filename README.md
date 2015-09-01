@@ -20,10 +20,10 @@ expressions for very simple regexes.
 
 For a favorable example, compare the results of `regex_dfa::Dfa`:
 ```
-test bench::anchored_literal_long_match      ... bench:         104 ns/iter (+/- 7)
-test bench::anchored_literal_long_non_match  ... bench:          45 ns/iter (+/- 3)
-test bench::anchored_literal_short_match     ... bench:         103 ns/iter (+/- 7)
-test bench::anchored_literal_short_non_match ... bench:          44 ns/iter (+/- 2)
+test bench::anchored_literal_long_match      ... bench:          51 ns/iter (+/- 2)
+test bench::anchored_literal_long_non_match  ... bench:          31 ns/iter (+/- 1)
+test bench::anchored_literal_short_match     ... bench:          51 ns/iter (+/- 1)
+test bench::anchored_literal_short_non_match ... bench:          31 ns/iter (+/- 1)
 ```
 to the same results for `regex::Regex`:
 ```
@@ -33,18 +33,18 @@ test bench::anchored_literal_short_match     ... bench:         329 ns/iter (+/-
 test bench::anchored_literal_short_non_match ... bench:         206 ns/iter (+/- 9)
 ```
 
-There are also less favorable examples, however: `bench::literal` takes 1,745 ns
-with `regex_dfa::Dfa` but only 30 ns with `regex::Regex`. Read on for the reason.
+There are also less favorable examples, however: `bench::medium_1K` has a throughput of
+38 MB/s with `regex_dfa`, but 325 MB/s with `regex`.
 
 # Limitations
 
 Some regex features don't map well to DFAs. Specifically, this crate does not
 support (nor does it plan to support) lazy repetition or subgroup captures.
 
-`regex_dfa` is currently missing some optimizations that exist in the `regex` crate. Most
-dramatically, `regex` has a fast path for matching long literal strings but `regex_dfa`
-doesn't (yet). The character matching code is also faster in `regex` than `regex_dfa`
-(see `bench::match_class_unicode`) for an example.
+`regex_dfa` is not universally faster than the implementation in the `regex` crate.
+For example, the character matching code is faster in `regex` than `regex_dfa`
+(see `bench::match_class_unicode`) for an example. The various throughput benchmarks are
+also (currently) substantially faster in `regex`.
 
 `regex_dfa` currently only works on nightly rust.
 

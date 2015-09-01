@@ -77,7 +77,6 @@ impl PartialOrd for CharRange {
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub struct CharMap<T: Clone + Debug + PartialEq> {
     elts: Vec<(CharRange, T)>,
-    sorted: bool,
 }
 
 impl<T: Clone + Debug + PartialEq> IntoIterator for CharMap<T> {
@@ -100,7 +99,6 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
     pub fn new() -> CharMap<T> {
         CharMap {
             elts: Vec::new(),
-            sorted: true,
         }
     }
 
@@ -109,7 +107,6 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
     pub fn from_vec(vec: Vec<(CharRange, T)>) -> CharMap<T> {
         CharMap {
             elts: vec,
-            sorted: true,
         }
     }
 
@@ -140,18 +137,12 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         if range.is_empty() {
             panic!("ranges must be non-empty");
         }
-        if let Some(&(ref last_range, _)) = self.elts.last() {
-            if last_range.end >= range.start {
-                self.sorted = false;
-            }
-        }
         self.elts.push((range, t.clone()));
     }
 
     /// Sorts the ranges. Panics if any ranges overlap.
     pub fn sort(&mut self) {
         self.elts.sort_by(|&(r1, _), &(r2, _)| r1.start.cmp(&r2.start));
-        self.sorted = true;
         for win in self.elts.windows(2) {
             if win[0].0.end >= win[1].0.start {
                 panic!("overlapping ranges");
@@ -161,12 +152,7 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 
     /// Returns the data corresponding to a char. This `CharMap` must be sorted before calling
     /// `get`.
-    ///
-    /// Panics if we are not sorted.
     pub fn get(&self, ch: u32) -> Option<&T> {
-        if !self.sorted {
-            panic!("tried to get something from an unsorted CharMap");
-        }
         match self.elts[..].binary_search_by(|&(r, _)| r.start.cmp(&ch)) {
             Ok(idx) => { Some(&self.elts[idx].1) },
             Err(idx) => {
@@ -257,7 +243,7 @@ impl CharSet {
     }
 
     fn from_vec(vec: Vec<(CharRange, ())>) -> CharSet {
-        let mut ret = CharSet { map: CharMap { elts: vec, sorted: false } };
+        let mut ret = CharSet { map: CharMap { elts: vec } };
         ret.sort();
         ret
     }
@@ -463,7 +449,7 @@ impl CharMultiMap<usize> {
 
         let mut vec: Vec<(CharRange, BitSet)> = map.into_iter().collect();
         vec.sort_by(|&(r1, _), &(r2, _)| r1.start.cmp(&r2.start));
-        CharMap { elts: vec, sorted: true }
+        CharMap { elts: vec }
     }
 }
 
