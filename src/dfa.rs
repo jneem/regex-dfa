@@ -9,9 +9,10 @@
 use bit_set::BitSet;
 use char_map::{CharMap, CharSet, CharRange};
 use error;
-use memchr::memchr;
 use nfa::Nfa;
+use searcher::{AsciiTableSearcher, Searcher, MemchrAsciiTableSearcher, MemchrSearcher};
 use std;
+use std::ascii::AsciiExt;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
@@ -56,15 +57,15 @@ pub struct Dfa {
     states: Vec<DfaState>,
 
     /// This is the initial state if we start trying to match at the beginning of the string.
-    pub initial_at_start: Option<usize>,
+    pub init_at_start: Option<usize>,
 
     /// This gives the initial state if we start trying to match in the middle of the string:
     /// if the previous char in the string matches one of the ranges, we start at the corresponding
     /// state.
-    pub initial_after_char: CharMap<usize>,
+    pub init_after_char: CharMap<usize>,
 
     /// This is the initial state in all other situations.
-    pub initial_otherwise: Option<usize>
+    pub init_otherwise: Option<usize>
 }
 
 impl Dfa {
@@ -72,9 +73,9 @@ impl Dfa {
     pub fn new() -> Dfa {
         Dfa {
             states: Vec::new(),
-            initial_at_start: None,
-            initial_after_char: CharMap::new(),
-            initial_otherwise: None,
+            init_at_start: None,
+            init_after_char: CharMap::new(),
+            init_otherwise: None,
         }
     }
 
@@ -103,23 +104,6 @@ impl Dfa {
         }
     }
 
-    /* TODO
-    /// If the beginning of this DFA matches a literal string, return it.
-    pub fn prefix(&self) -> String {
-        let mut ret = String::new();
-        let mut state = self.initial;
-
-        let accepts_one_char = |st| {
-            self.states[st].transitions.len() == 1
-                && self.states[st].transitions.
-        };
-
-        loop {
-
-        }
-    }
-    */
-
     /// Tests if the given state is accepting, assuming that `next` is the next char.
     fn accepting(&self, state: usize, next: Option<char>) -> bool {
         use transition::Accept::*;
@@ -141,16 +125,16 @@ impl Dfa {
     where Iter: Iterator<Item=(usize, char)> + Clone {
         match last {
             None => {
-                if let Some(s) = self.initial_at_start {
+                if let Some(s) = self.init_at_start {
                     self.longest_match_from(iter, s, 0)
                 } else {
                     None
                 }
             }
             Some((idx, ch)) => {
-                if let Some(&s) = self.initial_after_char.get(ch as u32) {
+                if let Some(&s) = self.init_after_char.get(ch as u32) {
                     self.longest_match_from(iter, s, idx + ch.len_utf8())
-                } else if let Some(s) = self.initial_otherwise {
+                } else if let Some(s) = self.init_otherwise {
                     self.longest_match_from(iter, s, idx + ch.len_utf8())
                 } else {
                     None
@@ -246,12 +230,12 @@ impl Dfa {
     /// returned are byte indices of the string. The first index is inclusive; the second is
     /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        if let Some(state) = self.initial_at_start {
+        if let Some(state) = self.init_at_start {
             if let Some(end) = self.shortest_match_from(s.char_indices(), state, 0) {
                 return Some((0, end));
             }
         }
-        if self.initial_otherwise.is_none() && self.initial_after_char.is_empty() {
+        if self.init_otherwise.is_none() && self.init_after_char.is_empty() {
             return None;
         }
 
@@ -268,9 +252,9 @@ impl Dfa {
     }
 
     fn state_after(&self, ch: u32) -> Option<usize> {
-        if let Some(&state) = self.initial_after_char.get(ch as u32) {
+        if let Some(&state) = self.init_after_char.get(ch as u32) {
             Some(state)
-        } else if let Some(state) = self.initial_otherwise {
+        } else if let Some(state) = self.init_otherwise {
             Some(state)
         } else {
             None
@@ -360,14 +344,14 @@ impl Dfa {
         }
 
         // Fix the initial states to refer to the new numbering.
-        if let Some(s) = self.initial_at_start {
-            ret.initial_at_start = Some(old_state_to_new[s])
+        if let Some(s) = self.init_at_start {
+            ret.init_at_start = Some(old_state_to_new[s])
         }
-        if let Some(s) = self.initial_otherwise {
-            ret.initial_otherwise = Some(old_state_to_new[s])
+        if let Some(s) = self.init_otherwise {
+            ret.init_otherwise = Some(old_state_to_new[s])
         }
-        for &(ref range, state) in self.initial_after_char.iter() {
-            ret.initial_after_char.push(range.clone(), &old_state_to_new[state]);
+        for &(ref range, state) in self.init_after_char.iter() {
+            ret.init_after_char.push(range.clone(), &old_state_to_new[state]);
         }
 
         ret.normalize_transitions();
@@ -419,21 +403,6 @@ impl Dfa {
         ret
     }
 
-    fn first_byte(&self) -> Option<u8> {
-        if let Some(state) = self.initial_at_start {
-            if self.initial_otherwise == Some(state) && self.initial_after_char.is_empty() {
-                if let Some(ch) = Dfa::single_char(self.states[state].transitions.iter()) {
-                    if let Some(c) = std::char::from_u32(ch) {
-                        if c.len_utf8() == 1 {
-                            return Some(ch as u8);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
     pub fn to_program(&self) -> Program {
         let (mut chains, state_map, lengths) = self.chains();
         let map_state = |s| lengths[*state_map.get(&s).unwrap()];
@@ -451,11 +420,10 @@ impl Dfa {
         let insts = chains.into_iter().flat_map(|c| c.into_iter()).collect::<Vec<_>>();
         let mut ret = Program::new();
         ret.insts = insts;
-        ret.initial_after_char = self.initial_after_char.clone();
-        ret.initial_after_char.map_values(&map_state);
-        ret.initial_at_start = self.initial_at_start.map(&map_state);
-        ret.initial_otherwise = self.initial_otherwise.map(&map_state);
-        ret.first_byte = self.first_byte();
+        ret.init_after_char = self.init_after_char.clone();
+        ret.init_after_char.map_values(&map_state);
+        ret.init_at_start = self.init_at_start.map(&map_state);
+        ret.init_otherwise = self.init_otherwise.map(&map_state);
         ret
     }
 
@@ -532,9 +500,9 @@ impl Dfa {
     }
 
     fn is_starting(&self, st_idx: usize) -> bool {
-        self.initial_at_start == Some(st_idx)
-            || self.initial_otherwise == Some(st_idx)
-            || (&self.initial_after_char).into_iter().any(|x| x.1 == st_idx)
+        self.init_at_start == Some(st_idx)
+            || self.init_otherwise == Some(st_idx)
+            || (&self.init_after_char).into_iter().any(|x| x.1 == st_idx)
     }
 
     fn build_chain(&self, mut st_idx: usize, rev: &Nfa) -> Vec<Inst> {
@@ -581,9 +549,9 @@ impl Debug for Dfa {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Dfa ({} states):\n", self.states.len())));
 
-        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.initial_at_start)));
-        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.initial_after_char)));
-        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.initial_otherwise)));
+        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init_at_start)));
+        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init_after_char)));
+        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init_otherwise)));
 
         for (st_idx, st) in self.states.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tState {} (accepting: {:?}):\n", st_idx, st.accept)));
@@ -612,41 +580,38 @@ pub enum Inst {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     insts: Vec<Inst>,
-    initial_at_start: Option<usize>,
-    initial_after_char: CharMap<usize>,
-    initial_otherwise: Option<usize>,
-
-    /// If this is `Some` then initial_after_char must be empty and initial_at_start must
-    /// be the same as initial_otherwise.
-    first_byte: Option<u8>,
+    init_at_start: Option<usize>,
+    init_after_char: CharMap<usize>,
+    init_otherwise: Option<usize>,
 }
 
 impl Program {
     pub fn new() -> Program {
         Program {
             insts: Vec::new(),
-            initial_at_start: None,
-            initial_after_char: CharMap::new(),
-            initial_otherwise: None,
-            first_byte: None,
+            init_at_start: None,
+            init_after_char: CharMap::new(),
+            init_otherwise: None,
         }
     }
 
-    fn shortest_match_from(&self, mut s: &str, mut state: usize, idx: usize) -> Option<usize> {
+    // On a successful match, returns `Some(rest)` where `rest` is the part of the string following
+    // the match.
+    fn shortest_match_from<'a>(&self, mut s: &'a str, mut state: usize)
+    -> Option<&'a str> {
         use dfa::Inst::*;
 
-        let mut cur_idx = idx;
         loop {
             match self.insts[state] {
                 Reject => { return None; },
-                Acc(Accept::Always) => { return Some(cur_idx); }
+                Acc(Accept::Always) => { return Some(s); }
                 Acc(Accept::Never) => {},
                 Acc(Accept::Conditionally { at_eoi, ref at_char }) => {
                     if at_eoi && s.is_empty() {
-                        return Some(cur_idx);
+                        return Some(s);
                     } else if let Some(next_ch) = s.chars().next() {
                         if at_char.contains(next_ch as u32) {
-                            return Some(cur_idx);
+                            return Some(s);
                         }
                     }
                     state += 1;
@@ -655,7 +620,6 @@ impl Program {
                     if let Some((next_ch, rest)) = s.slice_shift_char() {
                         if cs.contains(next_ch as u32) {
                             state += 1;
-                            cur_idx += next_ch.len_utf8();
                             s = rest;
                             continue;
                         }
@@ -665,7 +629,6 @@ impl Program {
                 Literal(ref lit) => {
                     if s.starts_with(lit) {
                         state += 1;
-                        cur_idx += lit.len();
                         s = &s[lit.len()..];
                     } else {
                         return None;
@@ -675,7 +638,6 @@ impl Program {
                     if let Some((next_ch, rest)) = s.slice_shift_char() {
                         if let Some(&next_state) = cm.get(next_ch as u32) {
                             state = next_state;
-                            cur_idx += next_ch.len_utf8();
                             s = rest;
                             continue;
                         }
@@ -686,55 +648,128 @@ impl Program {
         }
     }
 
-    // A fast path, using memchr to find the candidates for matching.
-    fn shortest_match_memchr(&self, mut s: &str, first_ch: u8, state: usize)
-    -> Option<(usize, usize)> {
-        while let Some(pos) = memchr(first_ch, s.as_bytes()) {
-            s = &s[pos..];
-            if let Some(end) = self.shortest_match_from(s, state, pos) {
-                return Some((pos, end));
-            }
-            if let Some((_, rest)) = s.slice_shift_char() {
-                s = rest;
+    fn memchr_searcher(&self, state: usize) -> Option<MemchrSearcher> {
+        if let Inst::Literal(ref lit) = self.insts[state] {
+            if lit.len() == 1 {
+                return Some(MemchrSearcher { byte: lit.as_bytes()[0] });
             }
         }
-        return None;
+        None
     }
 
-    pub fn shortest_match(&self, mut s: &str) -> Option<(usize, usize)> {
-        if let Some(first) = self.first_byte {
-            return self.shortest_match_memchr(s, first, self.initial_otherwise.unwrap());
+    fn ascii_table_searcher(&self, state: usize) -> Option<AsciiTableSearcher> {
+        if let Inst::Char(ref cs) = self.insts[state] {
+            if cs.is_ascii() {
+                return Some(AsciiTableSearcher { table: cs.to_ascii_table() });
+            }
+        }
+        None
+    }
+
+    // If the set of allowed chars at the given state are all ASCII, build a boolean table of the
+    // allowed chars.
+    fn ascii_table(&self, state: usize) -> Option<[bool; 256]> {
+        match self.insts[state] {
+            Inst::Char(ref cs) =>
+                if cs.is_ascii() {
+                    Some(cs.to_ascii_table())
+                } else {
+                    None
+                },
+            Inst::Branch(ref cm) => {
+                let cs = cm.to_char_set();
+                if cs.is_ascii() {
+                    Some(cs.to_ascii_table())
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+
+    fn memchr_ascii_searcher(&self, state: usize) -> Option<MemchrAsciiTableSearcher> {
+        if let Inst::Literal(ref lit) = self.insts[state] {
+            if lit.len() == 1 {
+                if let Some(table) = self.ascii_table(state + 1) {
+                    return Some(MemchrAsciiTableSearcher {
+                        byte: lit.as_bytes()[0],
+                        table: table,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    // A fast path for a regex that starts with something for which we can search quickly.
+    fn shortest_match_fast<S>(&self, s: &str, searcher: S, state: usize)
+    -> Option<(usize, usize)>
+    where S: Searcher {
+        let s_start = s.as_bytes().as_ptr() as usize;
+        for s in searcher.iter_str(s) {
+            if let Some(rest) = self.shortest_match_from(s, state) {
+                let match_start = s.as_bytes().as_ptr() as usize;
+                let rest_start = rest.as_bytes().as_ptr() as usize;
+                return Some((match_start - s_start, rest_start - s_start));
+            }
+        }
+        None
+    }
+
+    pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
+        if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
+            if let Some(state) = self.init_at_start {
+                if let Some(searcher) = self.memchr_ascii_searcher(state) {
+                    return self.shortest_match_fast(s, searcher, state);
+                }
+                if let Some(searcher) = self.memchr_searcher(state) {
+                    return self.shortest_match_fast(s, searcher, state);
+                }
+                if let Inst::Literal(ref lit) = self.insts[state] {
+                    return self.shortest_match_fast(s, |x: &str| x.find(lit), state);
+                }
+                if let Some(searcher) = self.ascii_table_searcher(state) {
+                    return self.shortest_match_fast(s, searcher, state);
+                }
+            }
         }
 
-        if let Some(state) = self.initial_at_start {
-            if let Some(end) = self.shortest_match_from(s, state, 0) {
-                return Some((0, end));
+        self.shortest_match_slow(s)
+    }
+
+    fn shortest_match_slow(&self, mut s: &str) -> Option<(usize, usize)> {
+        let s_start = s.as_bytes().as_ptr() as usize;
+        if let Some(state) = self.init_at_start {
+            if let Some(rest) = self.shortest_match_from(s, state) {
+                let rest_start = rest.as_bytes().as_ptr() as usize;
+                return Some((0, rest_start - s_start));
             }
         }
 
         // Skip looping through the string if we know that the match has to start
         // at the beginning.
-        if self.initial_otherwise.is_none() && self.initial_after_char.is_empty() {
+        if self.init_otherwise.is_none() && self.init_after_char.is_empty() {
             return None;
         }
 
-        let mut idx = 0;
         while let Some((ch, rest)) = s.slice_shift_char() {
             s = rest;
-            idx += ch.len_utf8();
 
-            if let Some(&state) = self.initial_after_char.get(ch as u32) {
-                if let Some(end) = self.shortest_match_from(s, state, idx) {
-                    return Some((idx, end));
-                }
-            } else if let Some(state) = self.initial_otherwise {
-                if let Some(end) = self.shortest_match_from(s, state, idx) {
-                    return Some((idx, end));
+            if let Some(state) = self.state_after(ch as u32) {
+                if let Some(rest) = self.shortest_match_from(s, state) {
+                    let match_start = s.as_bytes().as_ptr() as usize;
+                    let rest_start = rest.as_bytes().as_ptr() as usize;
+                    return Some((match_start - s_start, rest_start - s_start));
                 }
             }
         }
 
         None
+    }
+
+    fn state_after(&self, ch: u32) -> Option<usize> {
+        self.init_after_char.get(ch).cloned().or(self.init_otherwise)
     }
 
     pub fn is_match(&self, s: &str) -> bool {
@@ -763,7 +798,7 @@ mod tests {
     fn even_bs_dfa() -> Dfa {
         let mut ret = Dfa::new();
 
-        ret.initial_at_start = Some(0);
+        ret.init_at_start = Some(0);
         ret.add_state(Accept::Always);
         ret.add_state(Accept::Never);
         ret.add_transition(0, 0, CharRange::single('a' as u32));
@@ -775,7 +810,7 @@ mod tests {
 
     fn odd_bs_dfa() -> Dfa {
         let mut ret = even_bs_dfa();
-        ret.initial_at_start = Some(1);
+        ret.init_at_start = Some(1);
         ret
     }
 
@@ -799,7 +834,7 @@ mod tests {
         // Make a DFA that accepts strings with an even number of b's, or strings
         // whose last character is a b.
         let mut dfa = Dfa::new();
-        dfa.initial_at_start = Some(0);
+        dfa.init_at_start = Some(0);
         dfa.add_state(Accept::Always);
         dfa.add_state(Accept::Never);
         dfa.add_state(Accept::Conditionally { at_eoi: true, at_char: CharSet::new() });
@@ -837,8 +872,8 @@ mod tests {
     #[test]
     fn test_unanchored_start() {
         let mut dfa = odd_bs_dfa();
-        dfa.initial_at_start = None;
-        dfa.initial_otherwise = Some(1);
+        dfa.init_at_start = None;
+        dfa.init_otherwise = Some(1);
 
         assert_eq!(dfa.longest_match("cacbc"), Some((3, 4)));
         assert_eq!(dfa.longest_match("cacababc"), Some((3, 6)));
@@ -849,8 +884,8 @@ mod tests {
     #[test]
     fn test_start_after() {
         let mut dfa = odd_bs_dfa();
-        dfa.initial_at_start = None;
-        dfa.initial_after_char = CharMap::from_vec(vec![(CharRange::single('c' as u32), 1)]);
+        dfa.init_at_start = None;
+        dfa.init_after_char = CharMap::from_vec(vec![(CharRange::single('c' as u32), 1)]);
 
         assert_eq!(dfa.longest_match("baabbababaa"), None);
         assert_eq!(dfa.longest_match("baabbacbabaa"), Some((7, 9)));

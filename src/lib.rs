@@ -32,7 +32,7 @@ repetition operators). This information is lost when moving to a DFA, so we cann
 the exact same match that a standard regex engine will.
 */
 
-#![feature(slice_splits, str_char, test)]
+#![feature(range_inclusive, slice_splits, str_char, test)]
 #![allow(dead_code)]
 
 extern crate bit_set;
@@ -46,6 +46,7 @@ mod char_map;
 mod dfa;
 mod error;
 mod nfa;
+mod searcher;
 mod transition;
 
 pub use dfa::{Dfa, Program};

@@ -12,6 +12,7 @@ use std;
 use std::collections::HashMap;
 use std::cmp::Ordering;
 use std::hash::Hash;
+use std::iter::range_inclusive;
 use std::fmt::Debug;
 use std::ops::Deref;
 
@@ -355,7 +356,7 @@ impl CharSet {
 
     /// Checks if the given character is contained in this set.
     pub fn contains(&self, ch: u32) -> bool {
-        self.map.get(ch) == Some(&())
+        self.map.get(ch).is_some()
     }
 
     /// Adds the given range of characters to this set. The range must be non-empty.
@@ -363,6 +364,36 @@ impl CharSet {
     /// Panics if the range is empty.
     pub fn push(&mut self, r: CharRange) {
         self.map.push(r, &());
+    }
+
+    /// Counts the number of chars in this set.
+    pub fn char_count(&self) -> u32 {
+        self.map.iter().fold(0, |acc, range| acc + (range.0.end - range.0.start + 1))
+    }
+
+    /// Produces a vector consisting of all characters in this set.
+    pub fn to_array(&self) -> Vec<char> {
+        self.map.iter()
+            .flat_map(|r| std::iter::range_inclusive(r.0.start, r.0.end))
+            .flat_map(|c| std::char::from_u32(c).into_iter())
+            .collect()
+    }
+
+    /// Checks if all the chars in this set belong to the ASCII range.
+    pub fn is_ascii(&self) -> bool {
+        self.map.is_empty() || self.map.elts.last().unwrap().0.end <= 127
+    }
+
+    pub fn to_ascii_table(&self) -> [bool; 256] {
+        let mut ret = [false; 256];
+        for &(range, _) in &self.map.elts {
+            for i in std::iter::range_inclusive(range.start, range.end) {
+                if i <= 127 {
+                    ret[i as usize] = true;
+                }
+            }
+        }
+        ret
     }
 }
 

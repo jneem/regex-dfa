@@ -10,8 +10,8 @@
 #![allow(non_snake_case)]
 
 use std::iter::repeat;
-use test::Bencher;
 use rand::{Rng, thread_rng};
+use test::Bencher;
 
 fn bench_assert_non_match(b: &mut Bencher, re: ::Regex, text: &str) {
     b.iter(|| if re.is_match(text) { panic!("match") });

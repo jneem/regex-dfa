@@ -44,37 +44,37 @@ impl NfaState {
 /// the beginning. In terms of regexes, it's like having an implicit ".*" at the start.
 ///
 /// The initial state of an `Nfa` always includes state zero, but see also the documentation for
-/// `initial_at_start` and `initial_after_char`.
+/// `init_at_start` and `init_after_char`.
 #[derive(PartialEq)]
 pub struct Nfa {
     states: Vec<NfaState>,
 
     /// Sometimes we want to only match at the beginning of the text; we can represent this
-    /// using `initial_at_start`, which is a set of states that are all valid as starting states,
+    /// using `init_at_start`, which is a set of states that are all valid as starting states,
     /// but only if we start matching at the beginning of the input.
     ///
     /// Note that `transition::Predicate` provides another, higher-level, way to represent the same
     /// information. Before turning this `Nfa` into a `Dfa`, we will lower the
     /// `transition::Predicate` representation into this one.
-    initial_at_start: BitSet,
+    init_at_start: BitSet,
 
     /// Sometimes we want to begin in a particular state only if the char before the substring we
     /// are trying to match is in a particular class. (For example, this is used to implement word
-    /// boundaries.) This is represented by `initial_after_char`: if the char before the current
-    /// position (call it `ch`) is in `initial_after_char` then we start in all the states in
-    /// `initial_after_char.get(ch)`.
-    initial_after_char: CharMap<BitSet>,
+    /// boundaries.) This is represented by `init_after_char`: if the char before the current
+    /// position (call it `ch`) is in `init_after_char` then we start in all the states in
+    /// `init_after_char.get(ch)`.
+    init_after_char: CharMap<BitSet>,
 }
 
 impl Debug for Nfa {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
-        if !self.initial_at_start.is_empty() {
-            try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.initial_at_start)));
+        if !self.init_at_start.is_empty() {
+            try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init_at_start)));
         }
 
-        if !self.initial_after_char.is_empty() {
-            try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.initial_after_char)));
+        if !self.init_after_char.is_empty() {
+            try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init_after_char)));
         }
 
         for (st_idx, st) in self.states.iter().enumerate() {
@@ -104,8 +104,8 @@ impl Nfa {
     pub fn new() -> Nfa {
         Nfa {
             states: Vec::new(),
-            initial_at_start: BitSet::new(),
-            initial_after_char: CharMap::new(),
+            init_at_start: BitSet::new(),
+            init_after_char: CharMap::new(),
         }
     }
 
@@ -121,8 +121,8 @@ impl Nfa {
     pub fn with_capacity(n: usize) -> Nfa {
         Nfa {
             states: Vec::with_capacity(n),
-            initial_at_start: BitSet::with_capacity(n),
-            initial_after_char: CharMap::new(),
+            init_at_start: BitSet::with_capacity(n),
+            init_after_char: CharMap::new(),
         }
     }
 
@@ -157,7 +157,7 @@ impl Nfa {
             changed = next_changed;
             initial_preds.extend(next_preds.iter());
         }
-        self.initial_after_char = initial_preds.group();
+        self.init_after_char = initial_preds.group();
     }
 
     // This is the algorithm for removing predicates, which we run repeatedly until
@@ -205,7 +205,7 @@ impl Nfa {
 
                 if in_states.contains(&0) {
                     if pred.0.at_boundary {
-                        self.initial_at_start.insert(new_idx);
+                        self.init_at_start.insert(new_idx);
                     }
                     for &range in &pred.0.chars {
                         initial_preds.push(range, &new_idx);
@@ -307,8 +307,8 @@ impl Nfa {
     pub fn reachable_states(&self) -> BitSet {
         let mut init_states = BitSet::with_capacity(self.states.len());
         init_states.insert(0);
-        init_states.union_with(&self.initial_at_start);
-        for &(_, ref s) in &self.initial_after_char {
+        init_states.union_with(&self.init_at_start);
+        for &(_, ref s) in &self.init_after_char {
             init_states.union_with(s);
         }
 
@@ -351,24 +351,24 @@ impl Nfa {
         init_other.intersect_with(&reachable);
         if !init_other.is_empty() {
             let idx = add_state(init_other.clone(), &mut ret, &mut active_states, &mut state_map);
-            ret.initial_otherwise = Some(idx);
+            ret.init_otherwise = Some(idx);
         }
 
-        let mut init_at_start = self.eps_closure(&self.initial_at_start);
+        let mut init_at_start = self.eps_closure(&self.init_at_start);
         init_at_start.union_with(&init_other);
         init_at_start.intersect_with(&reachable);
         if !init_at_start.is_empty() {
             let idx = add_state(init_at_start, &mut ret, &mut active_states, &mut state_map);
-            ret.initial_at_start = Some(idx);
+            ret.init_at_start = Some(idx);
         }
 
-        for &(range, ref states) in &self.initial_after_char {
+        for &(range, ref states) in &self.init_after_char {
             let mut init = self.eps_closure(states);
             init.union_with(&init_other);
             init.intersect_with(&reachable);
             if !init.is_empty() {
                 let idx = add_state(init, &mut ret, &mut active_states, &mut state_map);
-                ret.initial_after_char.push(range, &idx);
+                ret.init_after_char.push(range, &idx);
             }
         }
 
@@ -465,7 +465,7 @@ mod tests {
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(4, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
-        target.initial_at_start.insert(4);
+        target.init_at_start.insert(4);
         assert_eq!(nfa, target)
     }
 
@@ -511,8 +511,8 @@ mod tests {
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(5, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
-        target.initial_at_start.insert(5);
-        target.initial_after_char = word_char_map(4, 5);
+        target.init_at_start.insert(5);
+        target.init_after_char = word_char_map(4, 5);
         assert_eq!(nfa, target)
     }
 
