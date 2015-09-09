@@ -536,7 +536,16 @@ impl Dfa {
             ret.push(Inst::Acc(st.accept.clone()));
         }
         if !st.transitions.is_empty() {
-            ret.push(Inst::Branch(st.transitions.clone()));
+            if ret.is_empty() {
+                if let Some((table, transitions)) = loop_optimization(&st.transitions, st_idx) {
+                    ret.push(Inst::LoopUntil(table));
+                    ret.push(Inst::Branch(transitions));
+                } else {
+                    ret.push(Inst::Branch(st.transitions.clone()));
+                }
+            } else {
+                ret.push(Inst::Branch(st.transitions.clone()));
+            }
         } else if ret.last() != Some(&Inst::Acc(Accept::Always)) {
             ret.push(Inst::Reject);
         }
@@ -574,6 +583,10 @@ pub enum Inst {
     Char(CharSet),
     Acc(Accept),
     Branch(CharMap<usize>),
+
+    // This could really be [bool; 256], but then we run into the fact that PartialEq and Debug
+    // aren't derived for it.
+    LoopUntil(Vec<bool>),
     Reject,
 }
 
@@ -583,6 +596,33 @@ pub struct Program {
     init_at_start: Option<usize>,
     init_after_char: CharMap<usize>,
     init_otherwise: Option<usize>,
+}
+
+// Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopUntil`
+// instruction. If so, returns the lookup table and also the remaining transitions.
+fn loop_optimization(cm: &CharMap<usize>, st_idx: usize)
+-> Option<(Vec<bool>, CharMap<usize>)> {
+    let loop_cs = cm.filter_values(|st| *st == st_idx).to_char_set();
+    if loop_cs.is_ascii() || loop_cs.contains_non_ascii() {
+        let table = loop_cs.to_complement_table().to_vec();
+        Some((table, cm.filter_values(|st| *st != st_idx)))
+    } else {
+        None
+    }
+}
+
+// The `LoopUntil` instruction is an optimization only: if we see a `Branch` instruction for which
+// "most" inputs lead back to the same instruction then we will add a `LoopUntil` instruction that
+// can be executed efficiently with a `Searcher`. This function determines what counts as "most"
+// inputs for this purpose.
+fn is_common(cs: &CharSet) -> bool {
+    let mut common_chars = CharSet::new();
+    common_chars.push(CharRange::new('0' as u32, '9' as u32));
+    common_chars.push(CharRange::new('A' as u32, 'Z' as u32));
+    common_chars.push(CharRange::new('a' as u32, 'z' as u32));
+    let common_chars_count = 10 + 26 + 26;
+
+    cs.intersect(&common_chars).char_count() >= (common_chars_count * 3 / 4)
 }
 
 impl Program {
@@ -644,6 +684,14 @@ impl Program {
                     }
                     return None;
                 },
+                LoopUntil(ref table) => {
+                    if let Some(pos) = s.as_bytes().iter().position(|x| table[*x as usize]) {
+                        state += 1;
+                        s = &s[pos..];
+                    } else {
+                        return None;
+                    }
+                },
             }
         }
     }
@@ -658,12 +706,7 @@ impl Program {
     }
 
     fn ascii_table_searcher(&self, state: usize) -> Option<AsciiTableSearcher> {
-        if let Inst::Char(ref cs) = self.insts[state] {
-            if cs.is_ascii() {
-                return Some(AsciiTableSearcher { table: cs.to_ascii_table() });
-            }
-        }
-        None
+        self.ascii_table(state).map(|table| AsciiTableSearcher { table: table })
     }
 
     // If the set of allowed chars at the given state are all ASCII, build a boolean table of the

@@ -211,6 +211,12 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
             *data = f(data.clone());
         }
     }
+
+    pub fn filter_values<F>(&self, mut f: F) -> CharMap<T> where F: FnMut(&T) -> bool {
+        CharMap {
+            elts: self.elts.iter().cloned().filter(|x| f(&x.1)).collect()
+        }
+    }
 }
 
 impl<T: Copy + Debug + PartialEq + 'static> CharMap<T> {
@@ -384,6 +390,15 @@ impl CharSet {
         self.map.is_empty() || self.map.elts.last().unwrap().0.end <= 127
     }
 
+    /// Returns true if all non-ASCII chars are contained in this set.
+    pub fn contains_non_ascii(&self) -> bool {
+        let mut non_ascii = CharSet::new();
+        non_ascii.push(CharRange::new(0x80, 0xD7FF));
+        non_ascii.push(CharRange::new(0xE000,0x10FFFF));
+
+        non_ascii == self.intersect(&non_ascii)
+    }
+
     pub fn to_ascii_table(&self) -> [bool; 256] {
         let mut ret = [false; 256];
         for &(range, _) in &self.map.elts {
@@ -392,6 +407,21 @@ impl CharSet {
                     ret[i as usize] = true;
                 }
             }
+        }
+        ret
+    }
+
+    pub fn to_complement_table(&self) -> [bool; 256] {
+        let mut ret = self.to_ascii_table();
+        for i in std::iter::range_inclusive(0, 127) {
+            ret[i] = !ret[i];
+        }
+        if self.is_ascii() {
+            for i in std::iter::range_inclusive(128, 255) {
+                ret[i] = true;
+            }
+        } else if !self.contains_non_ascii() {
+            panic!("this set must either be ASCII or contain everything non-ASCII");
         }
         ret
     }
