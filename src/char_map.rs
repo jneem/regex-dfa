@@ -18,7 +18,7 @@ use std::ops::Deref;
 
 /// A range of code points, including the endpoints.
 ///
-/// If `from` is strictly larger than `to` then this represents an empty range.
+/// If `start` is strictly larger than `end` then this represents an empty range.
 #[derive(PartialEq, Debug, Copy, Clone, Hash)]
 pub struct CharRange {
     pub start: u32,
@@ -28,22 +28,27 @@ pub struct CharRange {
 impl Eq for CharRange {}
 
 impl CharRange {
+    /// Creates a new `CharRange` with the given start and endpoints (inclusive).
     pub fn new(start: u32, end: u32) -> CharRange {
         CharRange { start: start, end: end }
     }
 
+    /// Creates a new `CharRange` containing a single character.
     pub fn single(ch: u32) -> CharRange {
         CharRange::new(ch, ch)
     }
 
+    /// Tests whether a given char belongs to this range.
     pub fn contains(&self, ch: u32) -> bool {
         self.start <= ch && ch <= self.end
     }
 
+    /// Computes the intersection between two ranges.
     pub fn intersection(&self, other: &CharRange) -> CharRange {
         CharRange::new(std::cmp::max(self.start, other.start), std::cmp::min(self.end, other.end))
     }
 
+    /// Tests whether this range is empty.
     pub fn is_empty(&self) -> bool {
         self.start > self.end
     }
@@ -58,18 +63,6 @@ impl CharRange {
             self.clone()
         } else {
             CharRange::new(min(self.start, other.start), max(self.end, other.end))
-        }
-    }
-}
-
-impl PartialOrd for CharRange {
-    fn partial_cmp(&self, other: &CharRange) -> Option<Ordering> {
-        if self.start < other.start {
-            Some(Ordering::Less)
-        } else if self.start > other.start {
-            Some(Ordering::Greater)
-        } else {
-            self.end.partial_cmp(&other.end)
         }
     }
 }
@@ -91,6 +84,7 @@ impl PartialOrd<u32> for CharRange {
         }
     }
 }
+
 /// A set of characters. Optionally, each character in the set may be associated with some data.
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub struct CharMap<T: Clone + Debug + PartialEq> {
@@ -114,6 +108,7 @@ impl<'a, T: Clone + Debug + PartialEq> IntoIterator for &'a CharMap<T> {
 }
 
 impl<T: Clone + Debug + PartialEq> CharMap<T> {
+    /// Creates a new empty `CharMap`.
     pub fn new() -> CharMap<T> {
         CharMap {
             elts: Vec::new(),
@@ -128,10 +123,26 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
+    /// Returns the number of intervals in this `CharMap`.
+    ///
+    /// Note that this is not usually the same as the number of mapped characters.
+    pub fn len(&self) -> usize {
+        self.elts.len()
+    }
+
+    /// Tests whether this `CharMap` is empty.
     pub fn is_empty(&self) -> bool {
         self.elts.is_empty()
     }
 
+    /// Iterates over all the mapped ranges and values.
+    pub fn iter<'a>(&'a self) -> std::slice::Iter<'a, (CharRange, T)> {
+        self.elts.iter()
+    }
+
+    /// Minimizes the number of ranges in this `CharMap`.
+    ///
+    /// If there are any adjacent ranges that map to the same data, merges them.
     pub fn normalize(&mut self) {
         let mut vec = Vec::with_capacity(self.elts.len());
         if let Some((head, rest)) = self.elts.split_first() {
@@ -150,7 +161,12 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 
     /// Maps the given range of characters to to the given value.
     ///
-    /// Panics if the range is empty.
+    /// This function must maintain an (unenforced) invariant: all the ranges must be
+    /// non-overlapping. Moreover, if they are added in any order other than increasing order, then
+    /// `sort()` must be called before any other methods are.
+    ///
+    /// # Panics
+    ///  - if the range is empty.
     pub fn push(&mut self, range: CharRange, t: &T) {
         if range.is_empty() {
             panic!("ranges must be non-empty");
@@ -158,7 +174,13 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         self.elts.push((range, t.clone()));
     }
 
-    /// Sorts the ranges. Panics if any ranges overlap.
+    /// Sorts the ranges.
+    ///
+    /// If you have `push()`ed ranges out of order, then you must call this method before doing
+    /// anything else.
+    ///
+    /// # Panics
+    ///  - if there are any overlapping ranges.
     pub fn sort(&mut self) {
         self.elts.sort_by(|&(r1, _), &(r2, _)| r1.start.cmp(&r2.start));
         for win in self.elts.windows(2) {
@@ -168,8 +190,7 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
-    /// Returns the data corresponding to a char. This `CharMap` must be sorted before calling
-    /// `get`.
+    /// Looks up a character in the map.
     pub fn get(&self, ch: u32) -> Option<&T> {
         match self.elts[..].binary_search_by(|&(r, _)| r.partial_cmp(&ch).unwrap()) {
             Ok(idx) => { Some(&self.elts[idx].1) },
@@ -177,6 +198,7 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
+    /// Intersects this map with another set of characters.
     pub fn intersect(&self, other: &CharSet) -> CharMap<T> {
         use std::cmp::{max, min};
         let mut ret = Vec::new();
@@ -212,6 +234,7 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
+    /// Returns a new `CharMap`, containing only those mappings with values `v` satisfying `f(v)`.
     pub fn filter_values<F>(&self, mut f: F) -> CharMap<T> where F: FnMut(&T) -> bool {
         CharMap {
             elts: self.elts.iter().cloned().filter(|x| f(&x.1)).collect()
@@ -220,15 +243,12 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 }
 
 impl<T: Copy + Debug + PartialEq + 'static> CharMap<T> {
+    /// Adds a sequence of elements to this `CharMap`.
+    ///
+    /// If after adding these elements the `CharMap` is out of order, then you must call `sort()`
+    /// before doing anything else.
     pub fn extend<'a, I>(&mut self, iter: I) where I: IntoIterator<Item=&'a (CharRange, T)> {
         self.elts.extend(iter)
-    }
-}
-
-impl<T: Clone + Debug + PartialEq> Deref for CharMap<T> {
-    type Target = Vec<(CharRange, T)>;
-    fn deref(&self) -> &Self::Target {
-        &self.elts
     }
 }
 
