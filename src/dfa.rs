@@ -590,7 +590,7 @@ pub enum Inst {
     Reject,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Program {
     insts: Vec<Inst>,
     init_at_start: Option<usize>,
@@ -817,6 +817,21 @@ impl Program {
 
     pub fn is_match(&self, s: &str) -> bool {
         self.shortest_match(s).is_some()
+    }
+}
+
+impl Debug for Program {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        try!(f.write_fmt(format_args!("Program ({} instructions):\n", self.insts.len())));
+
+        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init_at_start)));
+        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init_after_char)));
+        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init_otherwise)));
+
+        for (idx, inst) in self.insts.iter().enumerate() {
+            try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
+        }
+        Ok(())
     }
 }
 
