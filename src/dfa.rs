@@ -640,6 +640,7 @@ pub enum Inst {
     Reject,
 }
 
+/// A deterministic finite automaton, ready for fast searching.
 #[derive(Clone, PartialEq)]
 pub struct Program {
     insts: Vec<Inst>,
@@ -676,13 +677,18 @@ fn is_common(cs: &CharSet) -> bool {
 }
 
 impl Program {
-    pub fn new() -> Program {
+    fn new() -> Program {
         Program {
             insts: Vec::new(),
             init_at_start: None,
             init_after_char: CharMap::new(),
             init_otherwise: None,
         }
+    }
+
+    pub fn from_regex(re: &str) -> Result<Program, error::Error> {
+        let dfa = try!(Dfa::from_regex(re));
+        Ok(dfa.to_program())
     }
 
     // On a successful match, returns `Some(rest)` where `rest` is the part of the string following
@@ -810,6 +816,9 @@ impl Program {
         None
     }
 
+    /// Returns the index range of the first shortest match, if there is a match. The indices
+    /// returned are byte indices of the string. The first index is inclusive; the second is
+    /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
         if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
             if let Some(state) = self.init_at_start {
@@ -865,6 +874,7 @@ impl Program {
         self.init_after_char.get(ch).cloned().or(self.init_otherwise)
     }
 
+    /// Checks whether this DFA matches anywhere in the string `s`.
     pub fn is_match(&self, s: &str) -> bool {
         self.shortest_match(s).is_some()
     }

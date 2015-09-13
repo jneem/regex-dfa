@@ -20,10 +20,7 @@ extern crate test;
 // native and dynamic regexes.
 macro_rules! regex(
     ($re:expr) => (
-        match ::regex_dfa::Dfa::from_regex($re) {
-            Ok(re) => re.to_program(),
-            Err(err) => panic!("{}", err),
-        }
+        ::regex_dfa::Program::from_regex($re).unwrap()
     );
 );
 

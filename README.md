@@ -34,7 +34,7 @@ test bench::anchored_literal_short_non_match ... bench:         206 ns/iter (+/-
 ```
 
 There are also less favorable examples, however: `bench::medium_1K` has a throughput of
-38 MB/s with `regex_dfa`, but 325 MB/s with `regex`.
+271 MB/s with `regex_dfa`, but 325 MB/s with `regex`.
 
 # Limitations
 
@@ -43,8 +43,7 @@ support (nor does it plan to support) lazy repetition or subgroup captures.
 
 `regex_dfa` is not universally faster than the implementation in the `regex` crate.
 For example, the character matching code is faster in `regex` than `regex_dfa`
-(see `bench::match_class_unicode`) for an example. The various throughput benchmarks are
-also (currently) substantially faster in `regex`.
+(see `bench::match_class_unicode`) for an example. Moreover, `regex` has a much more sophisticated optimization for regexes that begin with one of a small set of strings (e.g. the regex-dna benchmark in the benchmark shootout game).
 
 `regex_dfa` currently only works on nightly rust.
 
