@@ -8,7 +8,7 @@
 
 use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
-use std;
+use unicode::PERLW;
 
 /// A predicate is a transition that doesn't consume any input, but that can only be traversed if
 /// the previous char and the next char satisfy some condition.
@@ -68,25 +68,20 @@ impl PredicatePart {
         }
     }
 
-    // TODO: support unicode.
-    // Probably the best way is to make `mod unicode` in regex::syntax public.
     fn word_chars() -> CharSet {
         let mut ret = CharSet::new();
-        ret.push(CharRange::new('0' as u32, '9' as u32));
-        ret.push(CharRange::new('A' as u32, 'Z' as u32));
-        ret.push(CharRange::new('_' as u32, '_' as u32));
-        ret.push(CharRange::new('a' as u32, 'z' as u32));
+        for &(start, end) in PERLW {
+            ret.push(CharRange::new(start as u32, end as u32));
+        }
         ret
     }
 
     fn not_word_chars() -> CharSet {
         let mut ret = CharSet::new();
-        ret.push(CharRange::new(0, '/' as u32));
-        ret.push(CharRange::new(':' as u32, '@' as u32));
-        ret.push(CharRange::new('[' as u32, '^' as u32));
-        ret.push(CharRange::new('`' as u32, '`' as u32));
-        ret.push(CharRange::new('{' as u32, std::u32::MAX));
-        ret
+        for &(start, end) in PERLW {
+            ret.push(CharRange::new(start as u32, end as u32));
+        }
+        ret.negated()
     }
 
     pub fn word_char() -> PredicatePart {

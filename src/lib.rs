@@ -50,6 +50,7 @@ mod error;
 mod nfa;
 mod searcher;
 mod transition;
+mod unicode;
 
 pub use dfa::{Dfa, Program};
 pub use nfa::Nfa;

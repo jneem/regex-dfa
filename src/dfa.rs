@@ -899,7 +899,7 @@ impl Debug for Program {
 mod tests {
     use builder;
     use char_map::{CharMap, CharRange, CharSet};
-    use dfa::Dfa;
+    use dfa::{Dfa, Program};
     use nfa::Nfa;
     use regex_syntax;
     use std::iter;
@@ -1104,6 +1104,14 @@ mod tests {
         // The order of the states is arbitrary, but one should have two transitions and
         // the other should have zero.
         assert_eq!(re.states[0].transitions.len() + re.states[1].transitions.len(), 2);
+    }
+
+    #[test]
+    fn test_word_boundary() {
+        let re = Program::from_regex(r"\btest\b").unwrap();
+        assert_eq!(re.shortest_match("This is a test."), Some((10, 14)));
+        let re = Program::from_regex(r"\bהחומוס\b").unwrap();
+        assert_eq!(re.shortest_match("למי יש את החומוס הכי טוב בארץ?"), Some((17, 29)));
     }
 }
 
