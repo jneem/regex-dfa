@@ -115,6 +115,14 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
+    /// Creates a new empty `CharMap` for which `push` can be called `n` times without
+    /// reallocation.
+    pub fn with_capacity(n: usize) -> CharMap<T> {
+        CharMap {
+            elts: Vec::with_capacity(n),
+        }
+    }
+
     /// Creates a `CharMap` from a `Vec`, which is assumed to contain non-overlapping ranges in
     /// ascending order.
     pub fn from_vec(vec: Vec<(CharRange, T)>) -> CharMap<T> {
@@ -272,6 +280,10 @@ impl CharSet {
         CharSet { map: CharMap::new() }
     }
 
+    pub fn with_capacity(n: usize) -> CharSet {
+        CharSet { map: CharMap::with_capacity(n) }
+    }
+
     pub fn sort(&mut self) {
         self.map.sort();
     }
@@ -284,6 +296,17 @@ impl CharSet {
         let mut ret = CharSet { map: CharMap { elts: vec } };
         ret.sort();
         ret
+    }
+
+    /// Iterates over all the included ranges of chars.
+    pub fn iter<'a>(&'a self) -> Box<Iterator<Item=&'a CharRange> + 'a> {
+        Box::new(self.map.iter().map(|x| &x.0))
+    }
+
+    /// Converts this set to a `CharMap` that maps all of the contained characters to a the same
+    /// data.
+    pub fn to_char_map<T: Clone + Debug + PartialEq>(&self, data: T) -> CharMap<T> {
+        CharMap::from_vec(self.iter().map(|r| (*r, data.clone())).collect())
     }
 
     /// Returns the union between `self` and `other`.
@@ -443,6 +466,23 @@ impl CharSet {
         } else if !self.contains_non_ascii() {
             panic!("this set must either be ASCII or contain everything non-ASCII");
         }
+        ret
+    }
+
+    pub fn negated(&self) -> CharSet {
+        let mut ret = CharSet::with_capacity(self.map.len() + 1);
+        let mut last_end = 0u32;
+
+        for range in self {
+            if range.start > last_end {
+                ret.push(CharRange::new(last_end, range.start - 1u32));
+            }
+            last_end = range.end.saturating_add(1u32);
+        }
+        if last_end < std::u32::MAX {
+            ret.push(CharRange::new(last_end, std::u32::MAX));
+        }
+
         ret
     }
 }

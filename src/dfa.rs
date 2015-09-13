@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use bit_set::BitSet;
-use char_map::{CharMap, CharSet, CharRange};
+use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
 use searcher::{AsciiTableSearcher, Searcher, MemchrAsciiTableSearcher, MemchrSearcher};
@@ -31,6 +31,22 @@ impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
         let elt = self.iter().next().unwrap().clone();
         self.remove(&elt);
         elt
+    }
+}
+
+trait SplitSet: Sized {
+    /// If this set has a non-trivial intersection with the other set, returns the intersetion and
+    /// the difference.
+    fn split(&self, other: &Self) -> Option<(Self, Self)>;
+}
+
+impl SplitSet for BitSet {
+    fn split(&self, other: &BitSet) -> Option<(BitSet, BitSet)> {
+        if !self.is_disjoint(other) && !self.is_subset(other) {
+            Some((self.intersection(other).collect(), self.difference(other).collect()))
+        } else {
+            None
+        }
     }
 }
 
@@ -252,13 +268,47 @@ impl Dfa {
     }
 
     fn state_after(&self, ch: u32) -> Option<usize> {
-        if let Some(&state) = self.init_after_char.get(ch as u32) {
-            Some(state)
-        } else if let Some(state) = self.init_otherwise {
-            Some(state)
-        } else {
-            None
+        self.init_after_char.get(ch).cloned().or(self.init_otherwise)
+    }
+
+    /// Partitions the given states according to what characters they accept.
+    fn reject_partition(&self, states: &BitSet) -> Vec<BitSet> {
+        if states.is_empty() {
+            // Return the empty partition instead of a partition consisting of the empty set.
+            return Vec::new();
         }
+
+        // Gets the set of chars rejected from a given state.
+        let rejects = |idx: usize| -> CharMap<usize> {
+            self.states[idx].transitions.to_char_set().negated().to_char_map(idx)
+        };
+
+        // If state `i` rejects char `c` then this will map `c` to `i`.
+        let all_rejects = CharMultiMap::from_vec(
+            states.iter()
+                .flat_map(|idx| rejects(idx).into_iter())
+                .collect()
+        );
+
+        // This is the collection of sets whose refinement forms the partition we're looking for.
+        let sets = all_rejects.group().into_iter().map(|x| x.1);
+
+        // Now build the refinement.
+        let mut ret = vec![states.clone()];
+        for s in sets {
+            let mut next_ret = Vec::new();
+            for part in ret {
+                if let Some((p1, p2)) = part.split(&s) {
+                    next_ret.push(p1);
+                    next_ret.push(p2);
+                } else {
+                    next_ret.push(part);
+                }
+            }
+            ret = next_ret;
+        }
+
+        ret
     }
 
     /// Returns an equivalent DFA with a minimal number of states.
@@ -266,16 +316,17 @@ impl Dfa {
     /// Uses Hopcroft's algorithm.
     fn minimize(&self) -> Dfa {
         let (never_states, acc_state_partition) = self.accept_partition();
-        let mut partition = HashSet::<BitSet>::new();
+        let reject_partition = self.reject_partition(&never_states);
+        let mut partition = Vec::<BitSet>::new();
         let mut distinguishers = HashSet::<BitSet>::new();
         let reversed = self.reversed();
 
-        for state_set in acc_state_partition {
-            partition.insert(state_set.clone());
+        // This is a little conservative -- we don't actually have to add everything to the set of
+        // distinguishers.  But it won't affect the running time much, since the extra
+        // distinguishers will just cause a few more no-op loops.
+        for state_set in acc_state_partition.into_iter().chain(reject_partition.into_iter()) {
+            partition.push(state_set.clone());
             distinguishers.insert(state_set);
-        }
-        if !never_states.is_empty() {
-            partition.insert(never_states);
         }
 
         while distinguishers.len() > 0 {
@@ -289,15 +340,10 @@ impl Dfa {
             // some element of `sets` reveals it to contain more than
             // one equivalence class.
             for s in &sets {
-                let mut next_partition = HashSet::<BitSet>::new();
+                let mut next_partition = Vec::<BitSet>::new();
 
                 for y in partition.iter() {
-                    let y0: BitSet = y.intersection(s).collect();
-                    let y1: BitSet = y.difference(s).collect();
-
-                    if y0.is_empty() || y1.is_empty() {
-                        next_partition.insert(y.clone());
-                    } else {
+                    if let Some((y0, y1)) = y.split(s) {
                         if distinguishers.contains(y) {
                             distinguishers.remove(y);
                             distinguishers.insert(y0.clone());
@@ -308,8 +354,10 @@ impl Dfa {
                             distinguishers.insert(y1.clone());
                         }
 
-                        next_partition.insert(y0);
-                        next_partition.insert(y1);
+                        next_partition.push(y0);
+                        next_partition.push(y1);
+                    } else {
+                        next_partition.push(y.clone());
                     }
                 }
 
@@ -323,6 +371,7 @@ impl Dfa {
         // new indices.
         let mut old_state_to_new = vec![0; self.states.len()];
         for part in partition.iter() {
+            // This unwrap is safe because we don't allow any empty sets into the partition.
             let rep_idx = part.iter().next().unwrap();
             let rep = &self.states[rep_idx];
             ret.states.push(DfaState::new(rep.accept.clone()));
@@ -334,6 +383,7 @@ impl Dfa {
 
         // Fix the indices in all transitions to refer to the new state numbering.
         for part in partition.iter() {
+            // This unwrap is safe because we don't allow any empty sets into the partition.
             let old_src_idx = part.iter().next().unwrap();
             let new_src_idx = old_state_to_new[old_src_idx];
 
@@ -963,6 +1013,14 @@ mod tests {
 
         let auto1 = make_dfa(r"^a").minimize();
         assert_eq!(auto1.states.len(), 2);
+
+        let mut auto = make_dfa("[cgt]gggtaaa|tttaccc[acg]");
+        // Since `minimize` is non-deterministic (involving random hashes), run this a bunch of
+        // times.
+        for _ in 0..100 {
+            auto = auto.minimize();
+            assert_eq!(auto.states.len(), 16);
+        }
     }
 
     #[test]
