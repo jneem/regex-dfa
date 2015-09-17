@@ -6,11 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use ascii_set::AsciiSet;
 use bit_set::BitSet;
 use regex_syntax;
 use std;
-use std::collections::HashMap;
+use std::char;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::iter::range_inclusive;
 use std::fmt::Debug;
@@ -424,7 +426,7 @@ impl CharSet {
     pub fn to_array(&self) -> Vec<char> {
         self.map.iter()
             .flat_map(|r| std::iter::range_inclusive(r.0.start, r.0.end))
-            .flat_map(|c| std::char::from_u32(c).into_iter())
+            .flat_map(|c| char::from_u32(c).into_iter())
             .collect()
     }
 
@@ -442,31 +444,10 @@ impl CharSet {
         non_ascii == self.intersect(&non_ascii)
     }
 
-    pub fn to_ascii_table(&self) -> [bool; 256] {
-        let mut ret = [false; 256];
-        for &(range, _) in &self.map.elts {
-            for i in std::iter::range_inclusive(range.start, range.end) {
-                if i <= 127 {
-                    ret[i as usize] = true;
-                }
-            }
-        }
-        ret
-    }
-
-    pub fn to_complement_table(&self) -> [bool; 256] {
-        let mut ret = self.to_ascii_table();
-        for i in std::iter::range_inclusive(0, 127) {
-            ret[i] = !ret[i];
-        }
-        if self.is_ascii() {
-            for i in std::iter::range_inclusive(128, 255) {
-                ret[i] = true;
-            }
-        } else if !self.contains_non_ascii() {
-            panic!("this set must either be ASCII or contain everything non-ASCII");
-        }
-        ret
+    pub fn to_ascii_set(&self) -> AsciiSet {
+        AsciiSet::from_ranges(
+            self.iter().map(|r| (char::from_u32(r.start).unwrap(), char::from_u32(r.end).unwrap()))
+        )
     }
 
     pub fn negated(&self) -> CharSet {

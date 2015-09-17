@@ -6,11 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use ascii_set::AsciiSet;
 use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
-use searcher::{AsciiTableSearcher, Searcher, MemchrAsciiTableSearcher, MemchrSearcher};
+use searcher::{Searcher, MemchrAsciiSetSearcher, MemchrSearcher};
 use std;
 use std::ascii::AsciiExt;
 use std::collections::{HashSet, HashMap};
@@ -587,8 +588,8 @@ impl Dfa {
         }
         if !st.transitions.is_empty() {
             if ret.is_empty() {
-                if let Some((table, transitions)) = loop_optimization(&st.transitions, st_idx) {
-                    ret.push(Inst::LoopUntil(table));
+                if let Some((set, na, transitions)) = loop_optimization(&st.transitions, st_idx) {
+                    ret.push(Inst::LoopWhile(set, na));
                     ret.push(Inst::Branch(transitions));
                 } else {
                     ret.push(Inst::Branch(st.transitions.clone()));
@@ -634,9 +635,11 @@ pub enum Inst {
     Acc(Accept),
     Branch(CharMap<usize>),
 
-    // This could really be [bool; 256], but then we run into the fact that PartialEq and Debug
-    // aren't derived for it.
-    LoopUntil(Vec<bool>),
+    /// Consumes characters that belong to a set.
+    ///
+    /// If the `bool` is true, the set of characters to consume contains all non-ASCII characters.
+    /// Otherwise, the set contains no non-ASCII characters.
+    LoopWhile(AsciiSet, bool),
     Reject,
 }
 
@@ -649,21 +652,21 @@ pub struct Program {
     init_otherwise: Option<usize>,
 }
 
-// Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopUntil`
+// Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopWhile`
 // instruction. If so, returns the lookup table and also the remaining transitions.
 fn loop_optimization(cm: &CharMap<usize>, st_idx: usize)
--> Option<(Vec<bool>, CharMap<usize>)> {
+-> Option<(AsciiSet, bool, CharMap<usize>)> {
     let loop_cs = cm.filter_values(|st| *st == st_idx).to_char_set();
     if loop_cs.is_ascii() || loop_cs.contains_non_ascii() {
-        let table = loop_cs.to_complement_table().to_vec();
-        Some((table, cm.filter_values(|st| *st != st_idx)))
+        let set = loop_cs.to_ascii_set();
+        Some((set, loop_cs.contains_non_ascii(), cm.filter_values(|st| *st != st_idx)))
     } else {
         None
     }
 }
 
-// The `LoopUntil` instruction is an optimization only: if we see a `Branch` instruction for which
-// "most" inputs lead back to the same instruction then we will add a `LoopUntil` instruction that
+// The `LoopWhile` instruction is an optimization only: if we see a `Branch` instruction for which
+// "most" inputs lead back to the same instruction then we will add a `LoopWhile` instruction that
 // can be executed efficiently with a `Searcher`. This function determines what counts as "most"
 // inputs for this purpose.
 fn is_common(cs: &CharSet) -> bool {
@@ -740,8 +743,13 @@ impl Program {
                     }
                     return None;
                 },
-                LoopUntil(ref table) => {
-                    if let Some(pos) = s.as_bytes().iter().position(|x| table[*x as usize]) {
+                LoopWhile(ref set, allow_non_ascii) => {
+                    let maybe_pos = if allow_non_ascii {
+                        s.as_bytes().iter().position(|x| !set.contains_byte(*x))
+                    } else {
+                        s.as_bytes().iter().position(|x| *x >= 128 || !set.contains_byte(*x))
+                    };
+                    if let Some(pos) = maybe_pos {
                         state += 1;
                         s = &s[pos..];
                     } else {
@@ -761,24 +769,20 @@ impl Program {
         None
     }
 
-    fn ascii_table_searcher(&self, state: usize) -> Option<AsciiTableSearcher> {
-        self.ascii_table(state).map(|table| AsciiTableSearcher { table: table })
-    }
-
-    // If the set of allowed chars at the given state are all ASCII, build a boolean table of the
-    // allowed chars.
-    fn ascii_table(&self, state: usize) -> Option<[bool; 256]> {
+    // If the set of allowed chars at the given state are all ASCII, build an optimized
+    // representation of the allowed chars.
+    fn ascii_set(&self, state: usize) -> Option<AsciiSet> {
         match self.insts[state] {
             Inst::Char(ref cs) =>
                 if cs.is_ascii() {
-                    Some(cs.to_ascii_table())
+                    Some(cs.to_ascii_set())
                 } else {
                     None
                 },
             Inst::Branch(ref cm) => {
                 let cs = cm.to_char_set();
                 if cs.is_ascii() {
-                    Some(cs.to_ascii_table())
+                    Some(cs.to_ascii_set())
                 } else {
                     None
                 }
@@ -787,13 +791,13 @@ impl Program {
         }
     }
 
-    fn memchr_ascii_searcher(&self, state: usize) -> Option<MemchrAsciiTableSearcher> {
+    fn memchr_ascii_searcher(&self, state: usize) -> Option<MemchrAsciiSetSearcher> {
         if let Inst::Literal(ref lit) = self.insts[state] {
             if lit.len() == 1 {
-                if let Some(table) = self.ascii_table(state + 1) {
-                    return Some(MemchrAsciiTableSearcher {
+                if let Some(set) = self.ascii_set(state + 1) {
+                    return Some(MemchrAsciiSetSearcher {
                         byte: lit.as_bytes()[0],
-                        table: table,
+                        set: set,
                     });
                 }
             }
@@ -831,7 +835,7 @@ impl Program {
                 if let Inst::Literal(ref lit) = self.insts[state] {
                     return self.shortest_match_fast(s, |x: &str| x.find(lit), state);
                 }
-                if let Some(searcher) = self.ascii_table_searcher(state) {
+                if let Some(searcher) = self.ascii_set(state) {
                     return self.shortest_match_fast(s, searcher, state);
                 }
             }

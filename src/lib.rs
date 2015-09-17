@@ -37,6 +37,7 @@ necessarily find the exact same match that a standard regex engine will.
 #![feature(range_inclusive, slice_splits, str_char, test)]
 #![allow(dead_code)]
 
+extern crate ascii_set;
 extern crate bit_set;
 extern crate memchr;
 extern crate regex;

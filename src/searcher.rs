@@ -1,3 +1,4 @@
+use ascii_set::AsciiSet;
 use memchr::memchr;
 
 pub trait Searcher: Sized {
@@ -49,27 +50,23 @@ impl Searcher for MemchrSearcher {
     }
 }
 
-pub struct AsciiTableSearcher {
-    pub table: [bool; 256],
-}
-
-impl Searcher for AsciiTableSearcher {
+impl Searcher for AsciiSet {
     fn search(&mut self, s: &str) -> Option<usize> {
-        s.as_bytes().iter().position(|b| self.table[*b as usize])
+        s.as_bytes().iter().position(|b| self.contains_byte(*b))
     }
 }
 
-pub struct MemchrAsciiTableSearcher {
+pub struct MemchrAsciiSetSearcher {
     pub byte: u8,
-    pub table: [bool; 256],
+    pub set: AsciiSet,
 }
 
-impl Searcher for MemchrAsciiTableSearcher {
+impl Searcher for MemchrAsciiSetSearcher {
     fn search(&mut self, mut s: &str) -> Option<usize> {
         let start_pos = s.as_bytes().as_ptr() as usize;
         while let Some(offset) = memchr(self.byte, s.as_bytes()) {
             if offset + 1 < s.len() {
-                if self.table[s.as_bytes()[offset + 1] as usize] {
+                if self.set.contains_byte(s.as_bytes()[offset + 1]) {
                     let match_pos = s.as_bytes().as_ptr() as usize + offset;
                     return Some(match_pos - start_pos);
                 }
