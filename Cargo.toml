@@ -18,6 +18,7 @@ memchr = "0.1.5"
 
 [dev-dependencies]
 rand = "0.3"
+serde_json = "0.6"
 
 [profile.release]
 debug = true

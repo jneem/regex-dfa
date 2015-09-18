@@ -1,0 +1,5656 @@
+[
+    {
+        "pattern": "(?P<foo_123",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<1>a)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<!>a)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<foo!>a)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<foo_123>a)(?P=foo_123",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<foo_123>a)(?P=1)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<foo_123>a)(?P=!)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?P<foo_123>a)(?P=foo_124",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?P<foo_123>a)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "a"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?P<foo_123>a)(?P=foo_123)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aa"
+    },
+    {
+        "pattern": "\\1",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "[\\1]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u0001"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "\\09",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u00009"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\141",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            14
+        ],
+        "pattern": "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)\\119",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                2
+            ],
+            [
+                2,
+                3
+            ],
+            [
+                3,
+                4
+            ],
+            [
+                4,
+                5
+            ],
+            [
+                5,
+                6
+            ],
+            [
+                6,
+                7
+            ],
+            [
+                7,
+                8
+            ],
+            [
+                8,
+                9
+            ],
+            [
+                9,
+                10
+            ],
+            [
+                10,
+                11
+            ],
+            [
+                11,
+                12
+            ]
+        ],
+        "text": "abcdefghijklk9"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\0",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u0000"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "[\\0a]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u0000"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "[a\\0]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u0000"
+    },
+    {
+        "pattern": "[^a\\0]",
+        "status": "NO_MATCH",
+        "text": "\u0000"
+    },
+    {
+	"ignore": "we don't support all these escapes",
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "\\a[\\b]\\f\\n\\r\\t\\v",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u0007\b\f\n\r\t\u000b"
+    },
+    {
+	"ignore": "we don't support all these escapes",
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "[\\a][\\b][\\f][\\n][\\r][\\t][\\v]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u0007\b\f\n\r\t\u000b"
+    },
+    {
+	"ignore": "we don't support all these escapes",
+        "full_match": [
+            0,
+            13
+        ],
+        "pattern": "\\c\\e\\g\\h\\i\\j\\k\\m\\o\\p\\q\\y\\z",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ceghijkmopqyz"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\xff",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u00ff"
+    },
+    {
+        "pattern": "\\x00ffffffffffffff",
+        "status": "NO_MATCH",
+        "text": "\u00ff"
+    },
+    {
+        "pattern": "\\x00f",
+        "status": "NO_MATCH",
+        "text": "\u000f"
+    },
+    {
+        "pattern": "\\x00fe",
+        "status": "NO_MATCH",
+        "text": "\u00fe"
+    },
+    {
+	"ignore": "FIXME",
+        "full_match": [
+            0,
+            32
+        ],
+        "pattern": "^\\w+=(\\\\[\\000-\\277]|[^\\n\\\\])*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                30,
+                32
+            ]
+        ],
+        "text": "SRC=eval.c g.c blah blah blah \\\\\n\tapes.c"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "acb"
+    },
+    {
+        "pattern": "a.b",
+        "status": "NO_MATCH",
+        "text": "a\nb"
+    },
+    {
+        "pattern": "a.*b",
+        "status": "NO_MATCH",
+        "text": "acc\nccb"
+    },
+    {
+        "pattern": "a.{4,5}b",
+        "status": "NO_MATCH",
+        "text": "acc\nccb"
+    },
+    {
+	"ignore": "by default, regex doesn't let . match \\r",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a\rb"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?s)a.b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a\nb"
+    },
+    {
+	"ignore": "FIXME",
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "(?s)a.*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "acc\nccb"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "(?s)a.{4,5}b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "acc\nccb"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?s)a.b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a\nb"
+    },
+    {
+        "pattern": ")",
+        "status": "ERROR"
+    },
+    {
+	"ignore": "FIXME: support empty regex",
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": "xbc"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": "axc"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": "abx"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xabcy"
+    },
+    {
+        "full_match": [
+            2,
+            5
+        ],
+        "pattern": "abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ababc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab*c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbc"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "ab+bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbc"
+    },
+    {
+        "pattern": "ab+bc",
+        "status": "NO_MATCH",
+        "text": "abc"
+    },
+    {
+        "pattern": "ab+bc",
+        "status": "NO_MATCH",
+        "text": "abq"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab+bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "ab?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "pattern": "ab?bc",
+        "status": "NO_MATCH",
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "pattern": "^abc$",
+        "status": "NO_MATCH",
+        "text": "abcc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcc"
+    },
+    {
+        "pattern": "^abc$",
+        "status": "NO_MATCH",
+        "text": "aabc"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aabc"
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "^",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            3,
+            3
+        ],
+        "pattern": "$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "axc"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "a.*c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "axyzc"
+    },
+    {
+        "pattern": "a.*c",
+        "status": "NO_MATCH",
+        "text": "axyzd"
+    },
+    {
+        "pattern": "a[bc]d",
+        "status": "NO_MATCH",
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[bc]d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abd"
+    },
+    {
+        "pattern": "a[b-d]e",
+        "status": "NO_MATCH",
+        "text": "abd"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[b-d]e",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ace"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "a[b-d]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aac"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a[-b]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a-"
+    },
+    {
+	"ignore": "regex_syntax error",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a[\\-b]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a-"
+    },
+    {
+        "pattern": "a[]b",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "a[",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "a\\",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "abc)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(abc",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a]"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[]]b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a]b"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[\\]]b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a]b"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[^bc]d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aed"
+    },
+    {
+        "pattern": "a[^bc]d",
+        "status": "NO_MATCH",
+        "text": "abd"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[^-b]c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "adc"
+    },
+    {
+        "pattern": "a[^-b]c",
+        "status": "NO_MATCH",
+        "text": "a-c"
+    },
+    {
+        "pattern": "a[^]b]c",
+        "status": "NO_MATCH",
+        "text": "a]c"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[^]b]c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "adc"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\ba\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a-"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "\\ba\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "-a"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "\\ba\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "-a-"
+    },
+    {
+        "pattern": "\\by\\b",
+        "status": "NO_MATCH",
+        "text": "xy"
+    },
+    {
+        "pattern": "\\by\\b",
+        "status": "NO_MATCH",
+        "text": "yz"
+    },
+    {
+        "pattern": "\\by\\b",
+        "status": "NO_MATCH",
+        "text": "xyz"
+    },
+    {
+        "pattern": "x\\b",
+        "status": "NO_MATCH",
+        "text": "xyz"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "x\\B",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xyz"
+    },
+    {
+        "full_match": [
+            2,
+            3
+        ],
+        "pattern": "\\Bz",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xyz"
+    },
+    {
+        "pattern": "z\\B",
+        "status": "NO_MATCH",
+        "text": "xyz"
+    },
+    {
+        "pattern": "\\Bx",
+        "status": "NO_MATCH",
+        "text": "xyz"
+    },
+    {
+        "pattern": "\\Ba\\B",
+        "status": "NO_MATCH",
+        "text": "a-"
+    },
+    {
+        "pattern": "\\Ba\\B",
+        "status": "NO_MATCH",
+        "text": "-a"
+    },
+    {
+        "pattern": "\\Ba\\B",
+        "status": "NO_MATCH",
+        "text": "-a-"
+    },
+    {
+        "pattern": "\\By\\B",
+        "status": "NO_MATCH",
+        "text": "xy"
+    },
+    {
+        "pattern": "\\By\\B",
+        "status": "NO_MATCH",
+        "text": "yz"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "\\By\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xy"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\by\\B",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "yz"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "\\By\\B",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xyz"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "ab|cd",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "ab|cd",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcd"
+    },
+    {
+	"ignore": "regex_syntax doesn't support empty groups",
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "()ef",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                1
+            ]
+        ],
+        "text": "def"
+    },
+    {
+        "pattern": "$b",
+        "status": "NO_MATCH",
+        "text": "b"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a\\(b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a(b"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a\\(*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a\\(*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a((b"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a\\\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a\\b"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "((a))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a)b(c)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "a+b+c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aabbabc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+|b)*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+|b)+",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(a+|b)?",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "pattern": ")(",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "[^ab]*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "cde"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "a*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "a|b|c|d|e",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "e"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a|b|c|d|e)f",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ef"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "abcd*efg",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcdefg"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "ab*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xabyabbbz"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "ab*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xayabbbz"
+    },
+    {
+        "full_match": [
+            2,
+            5
+        ],
+        "pattern": "(ab|cd)e",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                4
+            ]
+        ],
+        "text": "abcde"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "[abhgefdc]ij",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "hij"
+    },
+    {
+        "pattern": "^(ab|cd)e",
+        "status": "NO_MATCH",
+        "text": "abcde"
+    },
+    {
+	"ignore": "regex_syntax doesn't allow empty alternatives",
+        "full_match": [
+            4,
+            6
+        ],
+        "pattern": "(abc|)ef",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                4
+            ]
+        ],
+        "text": "abcdef"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "(a|b)c*d",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(ab|ab*)bc",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a([bc]*)c*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a([bc]*)(c*d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a([bc]+)(c*d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a([bc]*)(c+d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                2,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "a[bcd]*dcdcde",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "adcdcde"
+    },
+    {
+        "pattern": "a[bcd]+dcdcde",
+        "status": "NO_MATCH",
+        "text": "adcdcde"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(ab|a)b*c",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "((a)(b)c)(d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                2
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "[a-zA-Z_][a-zA-Z0-9_]*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "alpha"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "^a(bc+|b[eh])g|.h$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "abh"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                5
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "effgz"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ij"
+    },
+    {
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "NO_MATCH",
+        "text": "effg"
+    },
+    {
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "NO_MATCH",
+        "text": "bcdd"
+    },
+    {
+        "full_match": [
+            1,
+            6
+        ],
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                6
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "reffgz"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(((((((((a)))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "a"
+    },
+    {
+        "pattern": "multiple words of text",
+        "status": "NO_MATCH",
+        "text": "uh-uh"
+    },
+    {
+        "full_match": [
+            0,
+            14
+        ],
+        "pattern": "multiple words",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "multiple words, yeah"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(.*)c(.*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                3,
+                5
+            ]
+        ],
+        "text": "abcde"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "\\((.*), (.*)\\)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                4,
+                5
+            ]
+        ],
+        "text": "(a, b)"
+    },
+    {
+        "pattern": "[k]",
+        "status": "NO_MATCH",
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a[-]?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ac"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(abc)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "([a-c]*)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "^(.+)?B",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(a+).\\1$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ]
+        ],
+        "text": "aaaaa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "pattern": "^(a+).\\1$",
+        "status": "NO_MATCH",
+        "text": "aaaa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(abc)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "([a-c]+)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+)+\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a).+\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aba"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a)ba*\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aba"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(aa|a)a\\1$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aaa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a|aa)a\\1$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aaa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a+)a\\1$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aaa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "([abc]*)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a)(b)c|ab",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(a)+x",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "aaax"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "([ac])+x",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "aacx"
+    },
+    {
+        "full_match": [
+            0,
+            17
+        ],
+        "pattern": "([^/]*/)*sub1/",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                7,
+                12
+            ]
+        ],
+        "text": "d:msgs/tdir/sub1/trial/away.cpp"
+    },
+    {
+        "full_match": [
+            0,
+            28
+        ],
+        "pattern": "([^.]*)\\.([^:]*):[T ]+(.*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                6
+            ],
+            [
+                7,
+                12
+            ],
+            [
+                14,
+                28
+            ]
+        ],
+        "text": "track1.title:TBlah blah blah"
+    },
+    {
+        "full_match": [
+            0,
+            8
+        ],
+        "pattern": "([^N]*N)+",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                8
+            ]
+        ],
+        "text": "abNNxyzN"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "([^N]*N)+",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abNNxyz"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "([abc]*)x",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcx"
+    },
+    {
+        "pattern": "([abc]*)x",
+        "status": "NO_MATCH",
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            3,
+            4
+        ],
+        "pattern": "([xyz]*)x",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                3,
+                3
+            ]
+        ],
+        "text": "abcx"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a)+b|aac",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "aac"
+    },
+    {
+        "pattern": "(?P<i d>aaa)a",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?P<id>aaa)a",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "aaaa"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?P<id>aa)(?P=id)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ]
+        ],
+        "text": "aaaa"
+    },
+    {
+        "pattern": "(?P<id>aa)(?P=xd)",
+        "status": "ERROR"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "pattern": "\\1",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "\\09",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u00009"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\141",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            14
+        ],
+        "pattern": "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)\\119",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                2
+            ],
+            [
+                2,
+                3
+            ],
+            [
+                3,
+                4
+            ],
+            [
+                4,
+                5
+            ],
+            [
+                5,
+                6
+            ],
+            [
+                6,
+                7
+            ],
+            [
+                7,
+                8
+            ],
+            [
+                8,
+                9
+            ],
+            [
+                9,
+                10
+            ],
+            [
+                10,
+                11
+            ],
+            [
+                11,
+                12
+            ]
+        ],
+        "text": "abcdefghijklk9"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": "xbc"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": "axc"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": "abx"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xabcy"
+    },
+    {
+        "full_match": [
+            2,
+            5
+        ],
+        "pattern": "abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ababc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab*c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbc"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab{0,}bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "ab+bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbc"
+    },
+    {
+        "pattern": "ab+bc",
+        "status": "NO_MATCH",
+        "text": "abc"
+    },
+    {
+        "pattern": "ab+bc",
+        "status": "NO_MATCH",
+        "text": "abq"
+    },
+    {
+        "pattern": "ab{1,}bc",
+        "status": "NO_MATCH",
+        "text": "abq"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab+bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab{1,}bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab{1,3}bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "ab{3,4}bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbbbc"
+    },
+    {
+        "pattern": "ab{4,5}bc",
+        "status": "NO_MATCH",
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "ab?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abbc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab{0,1}bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "pattern": "ab?bc",
+        "status": "NO_MATCH",
+        "text": "abbbbc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "ab{0,1}c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "pattern": "^abc$",
+        "status": "NO_MATCH",
+        "text": "abcc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcc"
+    },
+    {
+        "pattern": "^abc$",
+        "status": "NO_MATCH",
+        "text": "aabc"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aabc"
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "^",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            3,
+            3
+        ],
+        "pattern": "$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "axc"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "a.*c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "axyzc"
+    },
+    {
+        "pattern": "a.*c",
+        "status": "NO_MATCH",
+        "text": "axyzd"
+    },
+    {
+        "pattern": "a[bc]d",
+        "status": "NO_MATCH",
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[bc]d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abd"
+    },
+    {
+        "pattern": "a[b-d]e",
+        "status": "NO_MATCH",
+        "text": "abd"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[b-d]e",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ace"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "a[b-d]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aac"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a[-b]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a-"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a[b-]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a-"
+    },
+    {
+        "pattern": "a[b-a]",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "a[]b",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "a[",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a]"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[]]b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a]b"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[^bc]d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aed"
+    },
+    {
+        "pattern": "a[^bc]d",
+        "status": "NO_MATCH",
+        "text": "abd"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[^-b]c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "adc"
+    },
+    {
+        "pattern": "a[^-b]c",
+        "status": "NO_MATCH",
+        "text": "a-c"
+    },
+    {
+        "pattern": "a[^]b]c",
+        "status": "NO_MATCH",
+        "text": "a]c"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a[^]b]c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "adc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "ab|cd",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "ab|cd",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcd"
+    },
+    {
+	"ignore": "regex_syntax doesn't support empty groups",
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "()ef",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                1
+            ]
+        ],
+        "text": "def"
+    },
+    {
+        "pattern": "*a",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(*)b",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "$b",
+        "status": "NO_MATCH",
+        "text": "b"
+    },
+    {
+        "pattern": "a\\",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a\\(b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a(b"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a\\(*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a\\(*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a((b"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a\\\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a\\b"
+    },
+    {
+        "pattern": "abc)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(abc",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "((a))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(a)b(c)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "a+b+c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aabbabc"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "a{1,}b{1,}c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "aabbabc"
+    },
+    {
+        "pattern": "a**",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a.+?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcabc"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+|b)*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+|b){0,}",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+|b)+",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a+|b){1,}",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(a+|b)?",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(a+|b){0,1}",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+        "pattern": ")(",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "[^ab]*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "cde"
+    },
+    {
+        "pattern": "abc",
+        "status": "NO_MATCH",
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "a*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "([abc])*d",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                5
+            ]
+        ],
+        "text": "abbbcd"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "([abc])*bcd",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "a|b|c|d|e",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "e"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(a|b|c|d|e)f",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ef"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "abcd*efg",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abcdefg"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "ab*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xabyabbbz"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "ab*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xayabbbz"
+    },
+    {
+        "full_match": [
+            2,
+            5
+        ],
+        "pattern": "(ab|cd)e",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                4
+            ]
+        ],
+        "text": "abcde"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "[abhgefdc]ij",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "hij"
+    },
+    {
+        "pattern": "^(ab|cd)e",
+        "status": "NO_MATCH",
+        "text": "abcde"
+    },
+    {
+	"ignore": "regex_syntax doesn't allow empty alternatives",
+        "full_match": [
+            4,
+            6
+        ],
+        "pattern": "(abc|)ef",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                4
+            ]
+        ],
+        "text": "abcdef"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "(a|b)c*d",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(ab|ab*)bc",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a([bc]*)c*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a([bc]*)(c*d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a([bc]+)(c*d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "a([bc]*)(c+d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                2,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "a[bcd]*dcdcde",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "adcdcde"
+    },
+    {
+        "pattern": "a[bcd]+dcdcde",
+        "status": "NO_MATCH",
+        "text": "adcdcde"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(ab|a)b*c",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "((a)(b)c)(d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                2
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "abcd"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "[a-zA-Z_][a-zA-Z0-9_]*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "alpha"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "^a(bc+|b[eh])g|.h$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "abh"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                5
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "effgz"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ij"
+    },
+    {
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "NO_MATCH",
+        "text": "effg"
+    },
+    {
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "NO_MATCH",
+        "text": "bcdd"
+    },
+    {
+        "full_match": [
+            1,
+            6
+        ],
+        "pattern": "(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                6
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "reffgz"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "((((((((((a))))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "a"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "((((((((((a))))))))))\\10",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "aa"
+    },
+    {
+        "pattern": "((((((((((a))))))))))\\41",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?i)((((((((((a))))))))))\\41",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(((((((((a)))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "a"
+    },
+    {
+        "pattern": "multiple words of text",
+        "status": "NO_MATCH",
+        "text": "uh-uh"
+    },
+    {
+        "full_match": [
+            0,
+            14
+        ],
+        "pattern": "multiple words",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "multiple words, yeah"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(.*)c(.*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                3,
+                5
+            ]
+        ],
+        "text": "abcde"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "\\((.*), (.*)\\)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                4,
+                5
+            ]
+        ],
+        "text": "(a, b)"
+    },
+    {
+        "pattern": "[k]",
+        "status": "NO_MATCH",
+        "text": "ab"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "a[-]?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ac"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(abc)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "([a-c]*)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "abcabc"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "pattern": "(?i)abc",
+        "status": "NO_MATCH",
+        "text": "XBC"
+    },
+    {
+        "pattern": "(?i)abc",
+        "status": "NO_MATCH",
+        "text": "AXC"
+    },
+    {
+        "pattern": "(?i)abc",
+        "status": "NO_MATCH",
+        "text": "ABX"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "(?i)abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "XABCY"
+    },
+    {
+        "full_match": [
+            2,
+            5
+        ],
+        "pattern": "(?i)abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)ab*c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)ab*bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBC"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)ab*?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)ab{0,}?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)ab+?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBC"
+    },
+    {
+        "pattern": "(?i)ab+bc",
+        "status": "NO_MATCH",
+        "text": "ABC"
+    },
+    {
+        "pattern": "(?i)ab+bc",
+        "status": "NO_MATCH",
+        "text": "ABQ"
+    },
+    {
+        "pattern": "(?i)ab{1,}bc",
+        "status": "NO_MATCH",
+        "text": "ABQ"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)ab+bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)ab{1,}?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)ab{1,3}?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)ab{3,4}?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBBBC"
+    },
+    {
+        "pattern": "(?i)ab{4,5}?bc",
+        "status": "NO_MATCH",
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)ab??bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABBC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)ab??bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)ab{0,1}?bc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "pattern": "(?i)ab??bc",
+        "status": "NO_MATCH",
+        "text": "ABBBBC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)ab??c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)ab{0,1}?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)^abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "pattern": "(?i)^abc$",
+        "status": "NO_MATCH",
+        "text": "ABCC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)^abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABCC"
+    },
+    {
+        "pattern": "(?i)^abc$",
+        "status": "NO_MATCH",
+        "text": "AABC"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "(?i)abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AABC"
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "(?i)^",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            3,
+            3
+        ],
+        "pattern": "(?i)$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a.c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a.c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AXC"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(?i)a.*?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AXYZC"
+    },
+    {
+        "pattern": "(?i)a.*c",
+        "status": "NO_MATCH",
+        "text": "AXYZD"
+    },
+    {
+        "pattern": "(?i)a[bc]d",
+        "status": "NO_MATCH",
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a[bc]d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABD"
+    },
+    {
+        "pattern": "(?i)a[b-d]e",
+        "status": "NO_MATCH",
+        "text": "ABD"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a[b-d]e",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ACE"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "(?i)a[b-d]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AAC"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)a[-b]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A-"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)a[b-]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A-"
+    },
+    {
+        "pattern": "(?i)a[b-a]",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?i)a[]b",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?i)a[",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)a]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A]"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a[]]b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A]B"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a[^bc]d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AED"
+    },
+    {
+        "pattern": "(?i)a[^bc]d",
+        "status": "NO_MATCH",
+        "text": "ABD"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a[^-b]c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ADC"
+    },
+    {
+        "pattern": "(?i)a[^-b]c",
+        "status": "NO_MATCH",
+        "text": "A-C"
+    },
+    {
+        "pattern": "(?i)a[^]b]c",
+        "status": "NO_MATCH",
+        "text": "A]C"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a[^]b]c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ADC"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)ab|cd",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)ab|cd",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABCD"
+    },
+    {
+	"ignore": "regex_syntax doesn't support empty groups",
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "(?i)()ef",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                1
+            ]
+        ],
+        "text": "DEF"
+    },
+    {
+        "pattern": "(?i)*a",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?i)(*)b",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?i)$b",
+        "status": "NO_MATCH",
+        "text": "B"
+    },
+    {
+        "pattern": "(?i)a\\",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a\\(b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A(B"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)a\\(*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)a\\(*b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A((B"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a\\\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "A\\B"
+    },
+    {
+        "pattern": "(?i)abc)",
+        "status": "ERROR"
+    },
+    {
+        "pattern": "(?i)(abc",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)((a))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)(a)b(c)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "(?i)a+b+c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AABBABC"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "(?i)a{1,}b{1,}c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AABBABC"
+    },
+    {
+        "pattern": "(?i)a**",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a.+?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABCABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a.*?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABCABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a.{0,5}?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABCABC"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)(a+|b)*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)(a+|b){0,}",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)(a+|b)+",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)(a+|b){1,}",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)(a+|b)?",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)(a+|b){0,1}",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "(?i)(a+|b){0,1}?",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+        "pattern": "(?i))(",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)[^ab]*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "CDE"
+    },
+    {
+        "pattern": "(?i)abc",
+        "status": "NO_MATCH",
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            0
+        ],
+        "pattern": "(?i)a*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": ""
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)([abc])*d",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                5
+            ]
+        ],
+        "text": "ABBBCD"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)([abc])*bcd",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ABCD"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)a|b|c|d|e",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "E"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)(a|b|c|d|e)f",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "EF"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "(?i)abcd*efg",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ABCDEFG"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "(?i)ab*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "XABYABBBZ"
+    },
+    {
+        "full_match": [
+            1,
+            2
+        ],
+        "pattern": "(?i)ab*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "XAYABBBZ"
+    },
+    {
+        "full_match": [
+            2,
+            5
+        ],
+        "pattern": "(?i)(ab|cd)e",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                4
+            ]
+        ],
+        "text": "ABCDE"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)[abhgefdc]ij",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "HIJ"
+    },
+    {
+        "pattern": "(?i)^(ab|cd)e",
+        "status": "NO_MATCH",
+        "text": "ABCDE"
+    },
+    {
+	"ignore": "regex_syntax doesn't allow empty alternatives",
+        "full_match": [
+            4,
+            6
+        ],
+        "pattern": "(?i)(abc|)ef",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                4
+            ]
+        ],
+        "text": "ABCDEF"
+    },
+    {
+        "full_match": [
+            1,
+            4
+        ],
+        "pattern": "(?i)(a|b)c*d",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "ABCD"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)(ab|ab*)bc",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)a([bc]*)c*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ]
+        ],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)a([bc]*)(c*d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "ABCD"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)a([bc]+)(c*d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                3
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "ABCD"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)a([bc]*)(c+d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                2,
+                4
+            ]
+        ],
+        "text": "ABCD"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "(?i)a[bcd]*dcdcde",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ADCDCDE"
+    },
+    {
+        "pattern": "(?i)a[bcd]+dcdcde",
+        "status": "NO_MATCH",
+        "text": "ADCDCDE"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)(ab|a)b*c",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ]
+        ],
+        "text": "ABC"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?i)((a)(b)c)(d)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                2
+            ],
+            [
+                3,
+                4
+            ]
+        ],
+        "text": "ABCD"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(?i)[a-zA-Z_][a-zA-Z0-9_]*",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "ALPHA"
+    },
+    {
+        "full_match": [
+            1,
+            3
+        ],
+        "pattern": "(?i)^a(bc+|b[eh])g|.h$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "ABH"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(?i)(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                5
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "EFFGZ"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                1,
+                2
+            ]
+        ],
+        "text": "IJ"
+    },
+    {
+        "pattern": "(?i)(bc+d$|ef*g.|h?i(j|k))",
+        "status": "NO_MATCH",
+        "text": "EFFG"
+    },
+    {
+        "pattern": "(?i)(bc+d$|ef*g.|h?i(j|k))",
+        "status": "NO_MATCH",
+        "text": "BCDD"
+    },
+    {
+        "full_match": [
+            1,
+            6
+        ],
+        "pattern": "(?i)(bc+d$|ef*g.|h?i(j|k))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                6
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "REFFGZ"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)((((((((((a))))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "A"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)((((((((((a))))))))))\\10",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "AA"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)(((((((((a)))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ],
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "A"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)(?:(?:(?:(?:(?:(?:(?:(?:(?:(a))))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "A"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(?i)(?:(?:(?:(?:(?:(?:(?:(?:(?:(a|b|c))))))))))",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "C"
+    },
+    {
+        "pattern": "(?i)multiple words of text",
+        "status": "NO_MATCH",
+        "text": "UH-UH"
+    },
+    {
+        "full_match": [
+            0,
+            14
+        ],
+        "pattern": "(?i)multiple words",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "MULTIPLE WORDS, YEAH"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(?i)(.*)c(.*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                3,
+                5
+            ]
+        ],
+        "text": "ABCDE"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)\\((.*), (.*)\\)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                4,
+                5
+            ]
+        ],
+        "text": "(A, B)"
+    },
+    {
+        "pattern": "(?i)[k]",
+        "status": "NO_MATCH",
+        "text": "AB"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "(?i)a[-]?c",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "AC"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)(abc)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "ABCABC"
+    },
+    {
+	"ignore": "we don't support backreferences",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "(?i)([a-c]*)\\1",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                3
+            ]
+        ],
+        "text": "ABCABC"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            2,
+            4
+        ],
+        "pattern": "a(?!b).",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abad"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            2,
+            4
+        ],
+        "pattern": "a(?=d).",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abad"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            2,
+            4
+        ],
+        "pattern": "a(?=c|d).",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abad"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a(?:b|c|d)(.)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "ace"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a(?:b|c|d)*(.)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "ace"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a(?:b|c|d)+?(.)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "ace"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "a(?:b|(c|e){1,2}?|d)+?(.)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                1,
+                2
+            ],
+            [
+                2,
+                3
+            ]
+        ],
+        "text": "ace"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "^(.+)?B",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "AB"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            1,
+            9
+        ],
+        "pattern": "(?<!-):(.*?)(?<!-):",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                8
+            ]
+        ],
+        "text": "a:bc-:de:f"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            1,
+            9
+        ],
+        "pattern": "(?<!\\\\):(.*?)(?<!\\\\):",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                8
+            ]
+        ],
+        "text": "a:bc\\:de:f"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            1,
+            9
+        ],
+        "pattern": "(?<!\\?)'(.*?)(?<!\\?)'",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                2,
+                8
+            ]
+        ],
+        "text": "a'bc?'de'f"
+    },
+    {
+        "pattern": "w(?# comment",
+        "status": "ERROR"
+    },
+    {
+	"ignore": "we don't support comments",
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "w(?# comment 1)xy(?# comment 2)z",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "wxyz"
+    },
+    {
+	"ignore": "unlike python, flags only affect part of the regex",
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "w(?i)",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "W"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(?x)w# comment 1\n        x y\n        # comment 2\n        z",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "wxyz"
+    },
+    {
+        "pattern": "^abc",
+        "status": "NO_MATCH",
+        "text": "jkl\nabc\nxyz"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "(?m)^abc",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "jkl\nabc\nxyz"
+    },
+    {
+        "full_match": [
+            7,
+            10
+        ],
+        "pattern": "(?m)abc$",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "jkl\nxyzabc\n123"
+    },
+    {
+        "pattern": "a.b",
+        "status": "NO_MATCH",
+        "text": "a\nb"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?s)a.b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a\nb"
+    },
+    {
+        "full_match": [
+            2,
+            11
+        ],
+        "pattern": "\\w+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "--ab_cd0123--"
+    },
+    {
+        "full_match": [
+            2,
+            11
+        ],
+        "pattern": "[\\w]+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "--ab_cd0123--"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "\\D+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "1234abc5678"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": "[\\D]+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "1234abc5678"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "[\\da-fA-F]+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "123abc"
+    },
+    {
+        "full_match": [
+            0,
+            13
+        ],
+        "pattern": "([\\s]*)([\\S]*)([\\s]*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                13
+            ],
+            [
+                13,
+                13
+            ]
+        ],
+        "text": " testing!1972"
+    },
+    {
+        "full_match": [
+            0,
+            13
+        ],
+        "pattern": "(\\s*)(\\S*)(\\s*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ],
+            [
+                1,
+                13
+            ],
+            [
+                13,
+                13
+            ]
+        ],
+        "text": " testing!1972"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\xff",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u00ff"
+    },
+    {
+        "pattern": "\\x00ff",
+        "status": "NO_MATCH",
+        "text": "\u00ff"
+    },
+    {
+	"ignore": "we don't support all these escapes",
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "\\t\\n\\v\\r\\f\\a\\g",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\t\n\u000b\r\f\u0007g"
+    },
+    {
+	"ignore": "we don't support all these escapes",
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "\t\n\u000b\r\f\u0007\\g",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\t\n\u000b\r\f\u0007g"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "\\t\\n\\v\\r\\f\\a",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\t\n\u000b\r\f\u0007"
+    },
+    {
+	"ignore": "we don't support word boundaries in a charset",
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "[\\t][\\n][\\v][\\r][\\f][\\b]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\t\n\u000b\r\f\b"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "(([a-z]+):)?([a-z]+)$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ],
+            [
+                -1,
+                -1
+            ],
+            [
+                0,
+                4
+            ]
+        ],
+        "text": "smil"
+    },
+    {
+        "pattern": "((.)\\1+)",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            4,
+            7
+        ],
+        "pattern": ".*d",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "abc\nabd"
+    },
+    {
+        "pattern": "(",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "[\\41]",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "!"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "(x?)?",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                1
+            ]
+        ],
+        "text": "x"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?x) foo ",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "foo"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            6,
+            9
+        ],
+        "pattern": "(?<!abc)(d.f)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                6,
+                9
+            ]
+        ],
+        "text": "abcdefdof"
+    },
+    {
+        "full_match": [
+            0,
+            10
+        ],
+        "pattern": "[\\w-]+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "laser_beam"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": ".*?\\S *:",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "xx:"
+    },
+    {
+        "full_match": [
+            0,
+            6
+        ],
+        "pattern": "a[ ]*? (\\d+).*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                4,
+                6
+            ]
+        ],
+        "text": "a   10"
+    },
+    {
+        "full_match": [
+            0,
+            7
+        ],
+        "pattern": "a[ ]*? (\\d+).*",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                5,
+                7
+            ]
+        ],
+        "text": "a    10"
+    },
+    {
+        "full_match": [
+            0,
+            5
+        ],
+        "pattern": "(?ms).*?x\\s*\\z(.*)",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                5,
+                5
+            ]
+        ],
+        "text": "xx\nx\n"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)M+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "MMM"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)m+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "MMM"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)[M]+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "MMM"
+    },
+    {
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "(?i)[m]+",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "MMM"
+    },
+    {
+        "pattern": "^*",
+        "status": "ERROR"
+    },
+    {
+        "full_match": [
+            0,
+            4
+        ],
+        "pattern": "\"(?:\\\\\"|[^\"])*?\"",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\"\\\"\""
+    },
+    {
+        "pattern": "^.*?$",
+        "status": "NO_MATCH",
+        "text": "one\ntwo\nthree\n"
+    },
+    {
+        "pattern": "a[^>]*?b",
+        "status": "NO_MATCH",
+        "text": "a>b"
+    },
+    {
+        "pattern": "^a*?$",
+        "status": "NO_MATCH",
+        "text": "foo"
+    },
+    {
+        "full_match": [
+            0,
+            2
+        ],
+        "pattern": "^((a)c)?(ab)$",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                -1,
+                -1
+            ],
+            [
+                -1,
+                -1
+            ],
+            [
+                0,
+                2
+            ]
+        ],
+        "text": "ab"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^([ab]*?)(?=(b)?)c",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^([ab]*?)(?!(b))c",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+	"ignore": "we don't support lookahead",
+        "full_match": [
+            0,
+            3
+        ],
+        "pattern": "^([ab]*?)(?<!(a))c",
+        "status": "MATCH",
+        "sub_matches": [
+            [
+                0,
+                2
+            ],
+            [
+                -1,
+                -1
+            ]
+        ],
+        "text": "abc"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\b.\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "a"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\b.\\b",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u00c4"
+    },
+    {
+        "full_match": [
+            0,
+            1
+        ],
+        "pattern": "\\w",
+        "status": "MATCH",
+        "sub_matches": [],
+        "text": "\u00c4"
+    }
+]

@@ -158,7 +158,8 @@ impl NfaBuilder {
     }
 
     fn add_repeat_min_max(&mut self, expr: &Expr, min: u32, maybe_max: Option<u32>) {
-        let mut cur_init_idx = 0;
+        // The starting index of the repetition that we are currently working on.
+        let mut cur_init_idx = self.states.len();
         if min > 0 {
             self.add_expr(expr);
             for _ in 1..min {

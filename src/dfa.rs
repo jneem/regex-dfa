@@ -529,11 +529,16 @@ impl Dfa {
         }
     }
 
-    /// Returns true if this state has only one target state, and that target state's only source
-    /// state is this state.
+    /// Returns true if this state can be merged into its only target.
+    ///
+    /// For this to be true, first this state must have only one target state (and that target
+    /// cannot be this state itself). Moreover, the target cannot be a starting state, and it must
+    /// have only one source state.
     fn is_chain_link(&self, st_idx: usize, reversed: &Nfa) -> bool {
         if let Some(tgt) = Dfa::single_target(self.states[st_idx].transitions.iter()) {
-            Dfa::single_target(reversed.transitions_from(tgt).iter()).is_some()
+            tgt != st_idx
+                && !self.is_starting(tgt)
+                && Dfa::single_target(reversed.transitions_from(tgt).iter()).is_some()
         } else {
             false
         }
@@ -657,7 +662,7 @@ pub struct Program {
 fn loop_optimization(cm: &CharMap<usize>, st_idx: usize)
 -> Option<(AsciiSet, bool, CharMap<usize>)> {
     let loop_cs = cm.filter_values(|st| *st == st_idx).to_char_set();
-    if loop_cs.is_ascii() || loop_cs.contains_non_ascii() {
+    if is_common(&loop_cs) && (loop_cs.is_ascii() || loop_cs.contains_non_ascii()) {
         let set = loop_cs.to_ascii_set();
         Some((set, loop_cs.contains_non_ascii(), cm.filter_values(|st| *st != st_idx)))
     } else {
@@ -1116,6 +1121,19 @@ mod tests {
         assert_eq!(re.shortest_match("This is a test."), Some((10, 14)));
         let re = Program::from_regex(r"\bהחומוס\b").unwrap();
         assert_eq!(re.shortest_match("למי יש את החומוס הכי טוב בארץ?"), Some((17, 29)));
+    }
+
+    #[test]
+    fn test_bug() {
+        let re_str = "(a+|b)*";
+        let text = "ab";
+        let expr = regex_syntax::Expr::parse(re_str).unwrap();
+        println!("expr: {:?}", expr);
+        let builder = builder::NfaBuilder::from_expr(&expr);
+        println!("builder: {:?}", builder);
+        let re = Program::from_regex(re_str).unwrap();
+        println!("{:?}", re);
+        assert!(re.shortest_match(text).is_some());
     }
 }
 

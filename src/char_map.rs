@@ -11,7 +11,7 @@ use bit_set::BitSet;
 use regex_syntax;
 use std;
 use std::char;
-use std::cmp::Ordering;
+use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::iter::range_inclusive;
@@ -47,7 +47,7 @@ impl CharRange {
 
     /// Computes the intersection between two ranges.
     pub fn intersection(&self, other: &CharRange) -> CharRange {
-        CharRange::new(std::cmp::max(self.start, other.start), std::cmp::min(self.end, other.end))
+        CharRange::new(max(self.start, other.start), min(self.end, other.end))
     }
 
     /// Tests whether this range is empty.
@@ -57,8 +57,6 @@ impl CharRange {
 
     /// Returns the smallest range that covers `self` and `other`.
     pub fn cover(&self, other: &CharRange) -> CharRange {
-        use std::cmp::{max, min};
-
         if self.is_empty() {
             other.clone()
         } else if other.is_empty() {
@@ -210,7 +208,6 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 
     /// Intersects this map with another set of characters.
     pub fn intersect(&self, other: &CharSet) -> CharMap<T> {
-        use std::cmp::{max, min};
         let mut ret = Vec::new();
         let mut other: &[(CharRange, ())] = &other.map.elts;
 
@@ -329,7 +326,7 @@ impl CharSet {
         while r1.is_some() || r2.is_some() {
             let r1_start = if let Some(&(r, _)) = r1 { r.start } else { std::u32::MAX };
             let r2_start = if let Some(&(r, _)) = r2 { r.start } else { std::u32::MAX };
-            if !cur_range.is_empty() && std::cmp::min(r1_start, r2_start) > cur_range.end {
+            if !cur_range.is_empty() && min(r1_start, r2_start) > cur_range.end {
                 ret.push((cur_range, ()));
                 cur_range = CharRange::new(1, 0);
             }
@@ -444,9 +441,20 @@ impl CharSet {
         non_ascii == self.intersect(&non_ascii)
     }
 
+    /// Creates an `AsciiSet` containing all of the ASCII characters in this set.
+    ///
+    /// Non-ASCII characters are silently ignored.
     pub fn to_ascii_set(&self) -> AsciiSet {
         AsciiSet::from_ranges(
-            self.iter().map(|r| (char::from_u32(r.start).unwrap(), char::from_u32(r.end).unwrap()))
+            self.iter().filter_map(|r|
+                if r.start < 128 {
+                    let start = char::from_u32(r.start).unwrap();
+                    let end = char::from_u32(min(127, r.end)).unwrap();
+                    Some((start, end))
+                } else {
+                    None
+                }
+            )
         )
     }
 
@@ -581,6 +589,7 @@ impl<T: Copy + Debug + Hash + PartialEq + 'static> CharMultiMap<T> {
 
 #[cfg(test)]
 mod tests {
+    use ascii_set::AsciiSet;
     use char_map::*;
     use std::u32::MAX;
 
@@ -718,6 +727,19 @@ mod tests {
         ]);
         map.normalize();
         assert_eq!(map, target);
+    }
+
+    #[test]
+    fn test_to_ascii_set() {
+        let map = CharSet::from_vec(vec![(CharRange::new('a' as u32, 'z' as u32), ())]);
+        assert_eq!(map.to_ascii_set(), AsciiSet::lower_case_letters());
+
+        // No panics if the range extends over non-ASCII characters.
+        let map = CharSet::from_vec(vec![
+            (CharRange::new('a' as u32, 'z' as u32), ()),
+            (CharRange::new(900, 1000), ()),
+        ]);
+        assert_eq!(map.to_ascii_set(), AsciiSet::lower_case_letters());
     }
 
     use test::Bencher;
