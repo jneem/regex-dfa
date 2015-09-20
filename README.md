@@ -11,8 +11,8 @@ regular expressions.
 
 # Why
 
-Regular expression implementations (e.g. [rust's regex
-library](http://github.com/rust-lang/regex)) are usually based on
+Some regular expression implementations (e.g. [rust's regex
+library](http://github.com/rust-lang/regex)) are based on
 non-deterministic finite automata (NFAs). By turning NFAs into DFAs, we can
 sometimes get a speed boost, at the cost of some compilation time. Preliminary
 benchmarks show that we can get a 5x improvement over rust's built-in regular
@@ -46,6 +46,20 @@ For example, the character matching code is faster in `regex` than `regex_dfa`
 (see `bench::match_class_unicode`) for an example. Moreover, `regex` has a much more sophisticated optimization for regexes that begin with one of a small set of strings (e.g. the regex-dna benchmark in the benchmark shootout game).
 
 `regex_dfa` currently only works on nightly rust.
+
+# Status/TODO
+
+- The internals have more-or-less converged, but need to be documented and more
+thoroughly tested.
+- For good regex performance, it is very important to quickly scan the text for
+plausible starting points. We currently have a fairly half-hearted
+implementation of this, which overlaps somewhat with the implementation in the
+`regex` crate. We should split off a better implementation into a separate
+crate.
+- Evaluate the usefulness of this crate as part of a full regex implementation
+(e.g. using `regex-dfa` to find matches and then running `regex` on those
+matches in order to extract groups).
+- Implement a compiler plugin, and see if it improves performance.
 
 # License
 
