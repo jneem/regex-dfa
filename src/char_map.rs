@@ -14,7 +14,6 @@ use std::char;
 use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::iter::range_inclusive;
 use std::fmt::Debug;
 use std::ops::Deref;
 
@@ -259,6 +258,7 @@ impl<T: Copy + Debug + PartialEq + 'static> CharMap<T> {
     }
 }
 
+/// A set of characters, implemented as a sorted list of (inclusive) ranges.
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub struct CharSet {
     map: CharMap<()>,
@@ -267,7 +267,6 @@ pub struct CharSet {
 impl<'a> IntoIterator for &'a CharSet {
     type Item = &'a CharRange;
 
-    // TODO: change this, if we get abstract return types
     type IntoIter = Box<std::iter::Iterator<Item=&'a CharRange> + 'a>;
     fn into_iter(self) -> Self::IntoIter {
         Box::new(self.map.elts.iter().map(|x| &x.0))
@@ -275,18 +274,26 @@ impl<'a> IntoIterator for &'a CharSet {
 }
 
 impl CharSet {
+    /// Creates a new empty `CharSet`.
     pub fn new() -> CharSet {
         CharSet { map: CharMap::new() }
     }
 
+    /// Creates a new empty `CharSet` for which `push` can be called `n` times without
+    /// reallocation.
     pub fn with_capacity(n: usize) -> CharSet {
         CharSet { map: CharMap::with_capacity(n) }
     }
 
+    /// Sorts the ranges in this set. See `CharMap::sort` for more details.
+    ///
+    /// # Panics
+    ///  - if any ranges overlap.
     pub fn sort(&mut self) {
         self.map.sort();
     }
 
+    /// Tests if this set is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -302,7 +309,7 @@ impl CharSet {
         Box::new(self.map.iter().map(|x| &x.0))
     }
 
-    /// Converts this set to a `CharMap` that maps all of the contained characters to a the same
+    /// Converts this set to a `CharMap` that maps all of the contained characters to the same
     /// data.
     pub fn to_char_map<T: Clone + Debug + PartialEq>(&self, data: T) -> CharMap<T> {
         CharMap::from_vec(self.iter().map(|r| (*r, data.clone())).collect())
@@ -368,7 +375,8 @@ impl CharSet {
 
     /// Creates a `CharSet` containing all codepoints except the given ones.
     ///
-    /// Panics if `chars` is not sorted or not unique.
+    /// # Panics
+    ///  - if `chars` is not sorted or not unique.
     pub fn except(chars: &str) -> CharSet {
         if chars.is_empty() {
             return CharSet::full();
@@ -398,6 +406,7 @@ impl CharSet {
         CharSet::from_vec(ret)
     }
 
+    /// Finds the intersection between this set and `other`.
     pub fn intersect(&self, other: &CharSet) -> CharSet {
         CharSet { map: self.map.intersect(other) }
     }
@@ -409,7 +418,10 @@ impl CharSet {
 
     /// Adds the given range of characters to this set. The range must be non-empty.
     ///
-    /// Panics if the range is empty.
+    /// See `CharMap::push` for more details.
+    ///
+    /// # Panics
+    ///  - if the range is empty.
     pub fn push(&mut self, r: CharRange) {
         self.map.push(r, &());
     }
@@ -417,14 +429,6 @@ impl CharSet {
     /// Counts the number of chars in this set.
     pub fn char_count(&self) -> u32 {
         self.map.iter().fold(0, |acc, range| acc + (range.0.end - range.0.start + 1))
-    }
-
-    /// Produces a vector consisting of all characters in this set.
-    pub fn to_array(&self) -> Vec<char> {
-        self.map.iter()
-            .flat_map(|r| std::iter::range_inclusive(r.0.start, r.0.end))
-            .flat_map(|c| char::from_u32(c).into_iter())
-            .collect()
     }
 
     /// Checks if all the chars in this set belong to the ASCII range.
@@ -458,6 +462,7 @@ impl CharSet {
         )
     }
 
+    /// Returns the set of all characters that are not in this set.
     pub fn negated(&self) -> CharSet {
         let mut ret = CharSet::with_capacity(self.map.len() + 1);
         let mut last_end = 0u32;
@@ -476,6 +481,7 @@ impl CharSet {
     }
 }
 
+/// A multi-valued mapping from chars to other data.
 #[derive(Debug, Hash, PartialEq)]
 pub struct CharMultiMap<T: Clone + Debug + Hash + PartialEq> {
     elts: Vec<(CharRange, T)>,
@@ -490,14 +496,17 @@ impl<T: Clone + Debug + Hash + PartialEq> IntoIterator for CharMultiMap<T> {
 }
 
 impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
+    /// Creates a new empty `CharMultiMap`.
     pub fn new() -> CharMultiMap<T> {
         CharMultiMap { elts: Vec::new() }
     }
 
+    /// Adds a new mapping from a range of characters to `data`.
     pub fn push(&mut self, range: CharRange, data: &T) {
         self.elts.push((range, data.clone()));
     }
 
+    /// Creates a `CharMultiMap` from a vector of pairs.
     pub fn from_vec(vec: Vec<(CharRange, T)>) -> CharMultiMap<T> {
         CharMultiMap { elts: vec }
     }
@@ -507,8 +516,10 @@ impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
     pub fn intersect(&self, other: &CharSet) -> CharMultiMap<T> {
         let mut ret = Vec::new();
         for &(ref my_range, ref data) in &self.elts {
-            // TODO: use binary search to get the starting range.
-            for &(ref other_range, _) in &other.map.elts {
+            let start_idx = other.map.elts
+                .binary_search_by(|r| r.0.end.cmp(&my_range.start))
+                .unwrap_or_else(|x| x);
+            for &(ref other_range, _) in &other.map.elts[start_idx..] {
                 if my_range.start > other_range.end {
                     break;
                 } else if my_range.end >= other_range.start {
@@ -694,22 +705,6 @@ mod tests {
     }
 
     #[test]
-    fn test_split() {
-        let trans = CharMultiMap::<usize>::from_vec(vec![
-            (CharRange::new(0, 5), 0),
-            (CharRange::new(2, 7), 1),
-        ]);
-
-        let trans = trans.split();
-        assert_eq!(trans.elts, vec![
-            (CharRange::new(0, 1), 0),
-            (CharRange::new(2, 5), 0),
-            (CharRange::new(2, 5), 1),
-            (CharRange::new(6, 7), 1),
-        ]);
-    }
-
-    #[test]
     fn test_normalize() {
         let mut map = CharMap::from_vec(vec![
             (CharRange::new(0, 3), 0),
@@ -740,6 +735,51 @@ mod tests {
             (CharRange::new(900, 1000), ()),
         ]);
         assert_eq!(map.to_ascii_set(), AsciiSet::lower_case_letters());
+    }
+
+    fn make_mm(xs: &[(u32, u32, usize)]) -> CharMultiMap<usize> {
+        CharMultiMap::from_vec(xs.iter().map(|x| (CharRange::new(x.0, x.1), x.2)).collect())
+    }
+
+    #[test]
+    fn test_multimap_intersect() {
+        let mm = make_mm(&[
+            (1, 5, 1),
+            (2, 6, 2),
+            (3, 6, 3),
+            (7, 10, 1),
+            (4, 9, 4),
+        ]);
+        let mut cs = CharSet::new();
+
+        assert_eq!(mm.intersect(&cs), CharMultiMap::new());
+        cs.push(CharRange::new(11, 100));
+        assert_eq!(mm.intersect(&cs), CharMultiMap::new());
+        cs.push(CharRange::new(7, 8));
+        cs.sort();
+        assert_eq!(mm.intersect(&cs), make_mm(&[(7, 8, 1), (7, 8, 4)]));
+        cs.push(CharRange::new(2, 3));
+        cs.sort();
+        assert_eq!(mm.intersect(&cs),
+            make_mm(&[(2, 3, 1), (2, 3, 2), (3, 3, 3), (7, 8, 1), (7, 8, 4)]));
+        cs.push(CharRange::new(0, 1));
+        cs.sort();
+        assert_eq!(mm.intersect(&cs),
+            make_mm(&[(1, 1, 1), (2, 3, 1), (2, 3, 2), (3, 3, 3), (7, 8, 1), (7, 8, 4)]));
+    }
+
+
+    #[test]
+    fn test_split() {
+        assert_eq!(
+            make_mm(&[(1, 5, 1), (6, 8, 2), (9, 10, 3)]).split(),
+            make_mm(&[(1, 5, 1), (6, 8, 2), (9, 10, 3)]));
+        assert_eq!(
+            make_mm(&[(1, 5, 1), (3, 4, 2)]).split(),
+            make_mm(&[(1, 2, 1), (3, 4, 1), (5, 5, 1), (3, 4, 2)]));
+        assert_eq!(
+            make_mm(&[(1, 5, 1), (3, 4, 2), (0, 1, 3)]).split(),
+            make_mm(&[(1, 1, 1), (2, 2, 1), (3, 4, 1), (5, 5, 1), (3, 4, 2), (0, 0, 3), (1, 1, 3)]));
     }
 
     use test::Bencher;
