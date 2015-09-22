@@ -12,10 +12,10 @@ use transition::{Accept, Predicate, PredicatePart};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std::ops::Deref;
 
-// When constructing an Nfa from a regex, the states have special structure: if the transition
-// accepts any input or matches a predicate, then it always moves to the next state. Therefore,
-// there is no need to store the target state of a transition or predicate.  Also, the last state
-// is always the accepting state, so there is no need to store whether a state is accepting.
+/// When constructing an Nfa from a regex, the states have special structure: if the transition
+/// accepts any input or matches a predicate, then it always moves to the next state. Therefore,
+/// there is no need to store the target state of a transition or predicate.  Also, the last state
+/// is always the accepting state, so there is no need to store whether a state is accepting.
 #[derive(Debug, PartialEq)]
 struct BuilderState {
     chars: CharSet,
@@ -41,16 +41,19 @@ impl BuilderState {
     }
 }
 
+/// Builds an `Nfa` from a `regex_syntax::Expr`.
 #[derive(Debug, PartialEq)]
 pub struct NfaBuilder {
     states: Vec<BuilderState>,
 }
 
 impl NfaBuilder {
+    /// Returns the number of states.
     pub fn len(&self) -> usize {
         self.states.len()
     }
 
+    /// Converts this `NfaBuilder` into an `Nfa`.
     pub fn to_automaton(&self) -> Nfa {
         let mut ret = Nfa::with_capacity(self.len());
         let mut ret_len: usize = 0;
@@ -72,31 +75,31 @@ impl NfaBuilder {
         ret
     }
 
+    /// Creates an `NfaBuilder` from an `Expr`.
     pub fn from_expr(expr: &Expr) -> NfaBuilder {
         let mut ret = NfaBuilder { states: Vec::new() };
         ret.add_expr(expr);
         ret
     }
 
+    /// Adds an eps transition between the given states.
     fn add_eps(&mut self, from: usize, to: usize) {
         self.states[from].eps.push(to);
     }
 
-    // Appends two states, with a given transition between them.
+    /// Appends two states, with a given transition between them.
     fn add_single_transition(&mut self, chars: CharSet) {
         self.states.push(BuilderState::from_chars(chars));
         self.states.push(BuilderState::new());
      }
 
-    // Adds a sequence of states, and a sequence of transitions between them.
+    /// Appends a sequence of states that recognizes a literal.
     fn add_literal<C, I>(&mut self, chars: I, case_insensitive: bool)
         where C: Deref<Target=char>,
               I: Iterator<Item=C>
     {
         for ch in chars {
             let ranges = if case_insensitive {
-                // NOTE: it isn't really necessary to create a new CharClass here, but
-                // regex_syntax doesn't expose case_fold (or new) on ClassRange.
                 let cc = CharClass::new(vec![ClassRange { start: *ch, end: *ch }]);
                 CharSet::from_char_class(&cc.case_fold())
             } else {
@@ -107,6 +110,7 @@ impl NfaBuilder {
         self.states.push(BuilderState::new());
     }
 
+    /// Appends a sequence of states that recognizes the concatenation of `exprs`.
     fn add_concat_exprs(&mut self, exprs: &Vec<Expr>) {
         if let Some((expr, rest)) = exprs.split_first() {
             self.add_expr(expr);
@@ -119,6 +123,7 @@ impl NfaBuilder {
         }
     }
 
+    /// Appends a sequence of states that recognizes one of the expressions in `alts`.
     fn add_alternate_exprs(&mut self, alts: &Vec<Expr>) {
         // Add the new initial state that feeds into the alternate.
         let init_idx = self.states.len();
@@ -140,6 +145,7 @@ impl NfaBuilder {
         }
     }
 
+    /// Appends new states, representing multiple copies of `expr`.
     fn add_repeat(&mut self, expr: &Expr, rep: Repeater) {
         match rep {
             Repeater::ZeroOrOne => {
@@ -157,6 +163,10 @@ impl NfaBuilder {
         }
     }
 
+    /// Appends new states, representing multiple copies of `expr`.
+    ///
+    /// The new states represent a language that accepts at least `min` and at most `maybe_max`
+    /// copies of `expr`. (If `maybe_max` is `None`, there is no upper bound.)
     fn add_repeat_min_max(&mut self, expr: &Expr, min: u32, maybe_max: Option<u32>) {
         // The starting index of the repetition that we are currently working on.
         let mut cur_init_idx = self.states.len();
@@ -197,18 +207,20 @@ impl NfaBuilder {
         }
     }
 
+    /// Adds two new states, with a predicate connecting them.
     fn add_predicate(&mut self, part1: PredicatePart, part2: PredicatePart) {
         self.states.push(BuilderState::new());
         self.states.last_mut().unwrap().predicates.push(Predicate(part1, part2));
         self.states.push(BuilderState::new());
     }
 
-    // Adds an extra predicate between the last two states (there must be at least two states).
+    /// Adds an extra predicate between the last two states (there must be at least two states).
     fn extra_predicate(&mut self, part1: PredicatePart, part2: PredicatePart) {
         let len = self.states.len();
         self.states[len-2].predicates.push(Predicate(part1, part2));
     }
 
+    /// Appends a bunch of new states, representing `expr`.
     fn add_expr(&mut self, expr: &Expr) {
         use regex_syntax::Expr::*;
 
@@ -296,14 +308,16 @@ mod tests {
 
     #[test]
     fn test_repeat_zero_or_more() {
-        let builder = parse("a*z").unwrap();
-        let builder2 = parse("a{0,}z").unwrap();
-        let mut target = make_builder(4);
+        let builder = parse("ab*z").unwrap();
+        let builder2 = parse("ab{0,}z").unwrap();
+        let mut target = make_builder(6);
         target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('z' as u32));
-        target.add_eps(0, 1);
-        target.add_eps(1, 0);
+        target.states[2].chars.push(CharRange::single('b' as u32));
+        target.states[4].chars.push(CharRange::single('z' as u32));
         target.add_eps(1, 2);
+        target.add_eps(2, 3);
+        target.add_eps(3, 2);
+        target.add_eps(3, 4);
 
         assert_eq!(builder, target);
         assert_eq!(builder2, target);
@@ -311,13 +325,15 @@ mod tests {
 
     #[test]
     fn test_repeat_one_or_more() {
-        let builder = parse("a+z").unwrap();
-        let builder2 = parse("a{1,}z").unwrap();
-        let mut target = make_builder(4);
+        let builder = parse("ab+z").unwrap();
+        let builder2 = parse("ab{1,}z").unwrap();
+        let mut target = make_builder(6);
         target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('z' as u32));
-        target.add_eps(1, 0);
+        target.states[2].chars.push(CharRange::single('b' as u32));
+        target.states[4].chars.push(CharRange::single('z' as u32));
         target.add_eps(1, 2);
+        target.add_eps(3, 2);
+        target.add_eps(3, 4);
 
         assert_eq!(builder, target);
         assert_eq!(builder2, target);
@@ -325,13 +341,15 @@ mod tests {
 
     #[test]
     fn test_repeat_zero_or_one() {
-        let builder = parse("a?z").unwrap();
-        let builder2 = parse("a{0,1}z").unwrap();
-        let mut target = make_builder(4);
+        let builder = parse("ab?z").unwrap();
+        let builder2 = parse("ab{0,1}z").unwrap();
+        let mut target = make_builder(6);
         target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('z' as u32));
-        target.add_eps(0, 1);
+        target.states[2].chars.push(CharRange::single('b' as u32));
+        target.states[4].chars.push(CharRange::single('z' as u32));
         target.add_eps(1, 2);
+        target.add_eps(2, 3);
+        target.add_eps(3, 4);
 
         assert_eq!(builder, target);
         assert_eq!(builder2, target);
@@ -339,15 +357,17 @@ mod tests {
 
     #[test]
     fn test_repeat_exact() {
-        let builder = parse("a{3}z").unwrap();
-        let mut target = make_builder(8);
+        let builder = parse("ab{3}z").unwrap();
+        let mut target = make_builder(10);
         target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('a' as u32));
-        target.states[4].chars.push(CharRange::single('a' as u32));
-        target.states[6].chars.push(CharRange::single('z' as u32));
+        target.states[2].chars.push(CharRange::single('b' as u32));
+        target.states[4].chars.push(CharRange::single('b' as u32));
+        target.states[6].chars.push(CharRange::single('b' as u32));
+        target.states[8].chars.push(CharRange::single('z' as u32));
         target.add_eps(1, 2);
         target.add_eps(3, 4);
         target.add_eps(5, 6);
+        target.add_eps(7, 8);
 
         assert_eq!(builder, target);
     }
