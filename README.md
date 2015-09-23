@@ -41,24 +41,31 @@ There are also less favorable examples, however: `bench::medium_1K` has a throug
 Some regex features don't map well to DFAs. Specifically, this crate does not
 support (nor does it plan to support) lazy repetition or subgroup captures.
 
-`regex_dfa` is not universally faster than the implementation in the `regex` crate.
-For example, the character matching code is faster in `regex` than `regex_dfa`
-(see `bench::match_class_unicode`) for an example. Moreover, `regex` has a much more sophisticated optimization for regexes that begin with one of a small set of strings (e.g. the regex-dna benchmark in the benchmark shootout game).
+`regex_dfa` is not universally faster than the implementation in the `regex`
+crate. For example, the character matching code is faster in `regex` than
+`regex_dfa` (see `bench::match_class_unicode`) for an example. Moreover,
+`regex` has a much more sophisticated optimization for regexes that begin with
+one of a small set of strings (e.g. the regex-dna benchmark in the benchmark
+shootout game).
 
 `regex_dfa` currently only works on nightly rust.
 
 # Status/TODO
 
 - The internals have more-or-less converged, but need to be documented and more
-thoroughly tested.
+  thoroughly tested.
 - For good regex performance, it is very important to quickly scan the text for
-plausible starting points. We currently have a fairly half-hearted
-implementation of this, which overlaps somewhat with the implementation in the
-`regex` crate. We should split off a better implementation into a separate
-crate.
+  plausible starting points. We currently have a fairly half-hearted
+  implementation of this, which overlaps somewhat with the implementation in
+  the `regex` crate. We should split off a better implementation into a
+  separate crate.
 - Evaluate the usefulness of this crate as part of a full regex implementation
-(e.g. using `regex-dfa` to find matches and then running `regex` on those
-matches in order to extract groups).
+  (e.g. using `regex-dfa` to find matches and then running `regex` on those
+  matches in order to extract groups).
+- When converting `Nfa` to `Dfa`, support limiting the number of states that
+  the `Dfa` can have (and returning an error if it starts to have too many).
+  Otherwise, the `Dfa` can have exponentially more states than the `Nfa`, which
+  is a DoS risk if we are compiling user-supplied regexes.
 - Implement a compiler plugin, and see if it improves performance.
 
 # License

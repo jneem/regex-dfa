@@ -142,6 +142,13 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         self.elts.is_empty()
     }
 
+    /// Tests whether this `CharMap` maps every value.
+    ///
+    /// Assumes the `CharMap` is `normalize()`ed.
+    pub fn is_full(&self) -> bool {
+        self.elts.len() == 1 && self.elts[0].0 == CharRange::new(0, std::u32::MAX)
+    }
+
     /// Iterates over all the mapped ranges and values.
     pub fn iter<'a>(&'a self) -> std::slice::Iter<'a, (CharRange, T)> {
         self.elts.iter()
@@ -296,6 +303,18 @@ impl CharSet {
     /// Tests if this set is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    /// Tests whether this set contains every `u32`.
+    ///
+    /// Assumes the set is `normalize()`ed.
+    pub fn is_full(&self) -> bool {
+        self.map.is_full()
+    }
+
+    /// Minimizes the number of ranges used to represent this set.
+    pub fn normalize(&mut self) {
+        self.map.normalize();
     }
 
     fn from_vec(vec: Vec<(CharRange, ())>) -> CharSet {

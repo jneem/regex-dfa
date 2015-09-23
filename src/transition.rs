@@ -8,6 +8,7 @@
 
 use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
+use std::fmt::Debug;
 use unicode::PERLW;
 
 /// A predicate is a transition that doesn't consume any input, but that can only be traversed if
@@ -15,6 +16,7 @@ use unicode::PERLW;
 #[derive(PartialEq, Debug, Clone)]
 pub struct Predicate(pub PredicatePart, pub PredicatePart);
 
+/// Half of a `Predicate`.
 #[derive(PartialEq, Debug, Clone)]
 pub struct PredicatePart {
     /// If this part is the first of the pair, `at_boundary == true` means that we can match the
@@ -36,10 +38,12 @@ impl PredicatePart {
         }
     }
 
+    /// Returns true if this `PredicatePart` always fails.
     pub fn is_empty(&self) -> bool {
         self.chars.is_empty() && !self.at_boundary
     }
 
+    /// Creates a `PredicatePart` that matches a single char.
     pub fn single_char(ch: char) -> PredicatePart {
         PredicatePart {
             chars: CharSet::single(ch as u32),
@@ -47,6 +51,8 @@ impl PredicatePart {
         }
     }
 
+    /// Returns a new `PredicatePart` that matches the same characters as this one, and always
+    /// matches the beginning or end of input.
     pub fn or_at_boundary(self) -> PredicatePart {
         PredicatePart {
             chars: self.chars,
@@ -54,6 +60,7 @@ impl PredicatePart {
         }
     }
 
+    /// Returns a new `PredicatePart` that always matches.
     pub fn full() -> PredicatePart {
         PredicatePart {
             chars: CharSet::full(),
@@ -61,6 +68,7 @@ impl PredicatePart {
         }
     }
 
+    /// Returns a new `PredicatePart` that matches at the beginning or end of input.
     pub fn at_boundary() -> PredicatePart {
         PredicatePart {
             chars: CharSet::new(),
@@ -68,6 +76,7 @@ impl PredicatePart {
         }
     }
 
+    /// Returns a new `CharSet` containing all word characters.
     fn word_chars() -> CharSet {
         let mut ret = CharSet::new();
         for &(start, end) in PERLW {
@@ -76,6 +85,7 @@ impl PredicatePart {
         ret
     }
 
+    /// Returns a new `CharSet` containing all non-word characters.
     fn not_word_chars() -> CharSet {
         let mut ret = CharSet::new();
         for &(start, end) in PERLW {
@@ -84,6 +94,7 @@ impl PredicatePart {
         ret.negated()
     }
 
+    /// Returns a new `PredicatePart` that matches all word characters.
     pub fn word_char() -> PredicatePart {
         PredicatePart {
             chars: PredicatePart::word_chars(),
@@ -91,6 +102,7 @@ impl PredicatePart {
         }
     }
 
+    /// Returns a new `PredicatePart` that matches all non-word characters (or the boundary).
     pub fn not_word_char() -> PredicatePart {
         PredicatePart {
             chars: PredicatePart::not_word_chars(),
@@ -113,29 +125,34 @@ impl Predicate {
         }
     }
 
-    pub fn filter_transitions(&self, in_trans: &CharMap<BitSet>, out_trans: &CharMap<BitSet>)
-    -> (CharMap<BitSet>, CharMap<BitSet>) {
+    /// Given transitions into and out of a state, return only those transitions satisfying this
+    /// predicate.
+    pub fn filter_transitions<T: Debug + PartialEq + Clone>
+            (&self, in_trans: &CharMap<T>, out_trans: &CharMap<T>)
+            -> (CharMap<T>, CharMap<T>)
+    {
         let &Predicate(ref in_pred, ref out_pred) = self;
         (in_trans.intersect(&in_pred.chars), out_trans.intersect(&out_pred.chars))
     }
 
     /// Imagine that `self` is a predicate leading to a state with acceptance condition `acc`.
     /// Returns the effective acceptance condition of the predicate.
-    pub fn filter_accept(&self, acc: Accept) -> Accept {
-        let &Predicate(_, ref out_pred) = self;
-        match acc {
-            Accept::Always =>
+    pub fn filter_accept(&self, acc: &Accept) -> Accept {
+        let out_pred = &self.1;
+        let ret = match acc {
+            &Accept::Always =>
                 Accept::Conditionally {
                     at_eoi: out_pred.at_boundary,
                     at_char: out_pred.chars.clone(),
                 },
-            Accept::Never => Accept::Never,
-            Accept::Conditionally { at_eoi, ref at_char } =>
+            &Accept::Never => Accept::Never,
+            &Accept::Conditionally { at_eoi, ref at_char } =>
                 Accept::Conditionally {
                     at_eoi: out_pred.at_boundary && at_eoi,
                     at_char: out_pred.chars.intersect(at_char),
                 }
-        }
+        };
+        ret.normalize()
     }
 }
 
@@ -195,6 +212,17 @@ impl Accept {
             }
         }
     }
+
+    pub fn normalize(self) -> Accept {
+        if let Accept::Conditionally { at_eoi, ref at_char } = self {
+            if !at_eoi && at_char.is_empty() {
+                return Accept::Never;
+            } else if at_eoi && at_char.is_full(){
+                return Accept::Always;
+            }
+        }
+        self
+    }
 }
 
 
@@ -242,8 +270,106 @@ impl NfaTransitions {
 #[cfg(test)]
 mod tests {
     use bit_set::BitSet;
-    use char_map::CharRange;
+    use char_map::*;
     use transition::*;
+
+    #[test]
+    fn test_predicate_part_intersect() {
+        let wc = PredicatePart::word_char();
+        let nwc = PredicatePart::not_word_char();
+        let bdy = PredicatePart::at_boundary();
+        let full = PredicatePart::full();
+        let a = PredicatePart::single_char('a');
+        let empty = PredicatePart {
+            at_boundary: false,
+            chars: CharSet::new(),
+        };
+
+        let check = |a: &PredicatePart, b: &PredicatePart, res: &PredicatePart| {
+            assert_eq!(a.intersect(b), *res);
+            assert_eq!(b.intersect(a), *res);
+        };
+        check(&wc, &nwc, &empty);
+        check(&wc, &bdy, &empty);
+        check(&nwc, &bdy, &bdy);
+        check(&a, &bdy, &empty);
+        check(&wc, &a, &a);
+        check(&nwc, &a, &empty);
+        check(&wc, &full, &wc);
+        check(&nwc, &full, &nwc);
+        check(&bdy, &full, &bdy);
+        check(&wc.or_at_boundary(), &bdy, &bdy);
+    }
+
+    #[test]
+    fn test_filter_transitions() {
+        let wc = PredicatePart::word_char();
+        let nwc = PredicatePart::not_word_char();
+        let bdy = PredicatePart::at_boundary();
+        let full = PredicatePart::full();
+        let a = PredicatePart::single_char('a');
+        let empty = PredicatePart {
+            at_boundary: false,
+            chars: CharSet::new(),
+        };
+
+        let cm_empty = CharMap::new();
+        let cm_az = CharMap::from_vec(vec![(CharRange::new('a' as u32, 'z' as u32), 1usize)]);
+        let cm_a = CharMap::from_vec(vec![(CharRange::new('a' as u32, 'a' as u32), 1usize)]);
+
+        let check = |a: &PredicatePart, b: &CharMap<usize>, res: &CharMap<usize>| {
+            assert_eq!(Predicate(a.clone(), a.clone()).filter_transitions(b, b),
+                (res.clone(), res.clone()));
+        };
+        check(&wc, &cm_empty, &cm_empty);
+        check(&wc, &cm_az, &cm_az);
+        check(&nwc, &cm_empty, &cm_empty);
+        check(&nwc, &cm_az, &cm_empty);
+        check(&bdy, &cm_empty, &cm_empty);
+        check(&bdy, &cm_az, &cm_empty);
+        check(&empty, &cm_empty, &cm_empty);
+        check(&empty, &cm_az, &cm_empty);
+        check(&full, &cm_empty, &cm_empty);
+        check(&full, &cm_az, &cm_az);
+        check(&a, &cm_empty, &cm_empty);
+        check(&a, &cm_az, &cm_a);
+    }
+
+    #[test]
+    fn test_filter_accept() {
+        let e = PredicatePart {
+            at_boundary: false,
+            chars: CharSet::new(),
+        };
+        let a = PredicatePart::single_char('a');
+        let full = PredicatePart::full();
+        let bdy = PredicatePart::at_boundary();
+
+        let acc_eoi = Accept::at_eoi();
+        let acc_a = Accept::at_char(CharSet::single('a' as u32));
+
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&acc_eoi), Accept::Never);
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&acc_a), Accept::Never);
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::Never), Accept::Never);
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::Always), Accept::Never);
+
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&acc_eoi), Accept::Never);
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&acc_a), acc_a);
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::Never), Accept::Never);
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::Always), acc_a);
+
+        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&acc_eoi), acc_eoi);
+        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&acc_a), acc_a);
+        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::Never),
+            Accept::Never);
+        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::Always),
+            Accept::Always);
+
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_eoi), acc_eoi);
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_a), Accept::Never);
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::Never), Accept::Never);
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::Always), acc_eoi);
+    }
 
     #[test]
     fn test_groups() {
@@ -263,17 +389,5 @@ mod tests {
             BitSet::from_bytes(&[0b01100000]),
         ]);
     }
-
-    /*
-    #[test]
-    fn test_only_valid_char() {
-        let t1 = from_vec(vec![(CharRange::new(5, 5), 7)]);
-        let t2 = from_vec(vec![(CharRange::new(5, 6), 7)]);
-        let t3 = from_vec(vec![(CharRange::new(5, 5), 7), (CharRange::new(6, 6), 8)]);
-        assert_eq!(t1.only_valid_char(), Some((5, 7)));
-        assert_eq!(t2.only_valid_char(), None);
-        assert_eq!(t3.only_valid_char(), None);
-    }
-    */
 }
 

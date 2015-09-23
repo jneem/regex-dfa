@@ -245,7 +245,7 @@ impl Nfa {
     // We've just created a new state for the predicate `pred`, and `states` is the eps-closure of
     // its target state. Under what conditions should the new state accept?
     fn predicate_accept(&self, pred: &Predicate, states: &BitSet) -> Accept {
-        pred.filter_accept(self.accept(states))
+        pred.filter_accept(&self.accept(states))
     }
 
     /// Returns a copy with all transitions reversed.
