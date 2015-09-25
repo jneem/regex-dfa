@@ -329,28 +329,31 @@ impl Nfa {
     ///
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
-    pub fn determinize(&self) -> Dfa {
+    pub fn determinize(&self, max_states: usize) -> Result<Dfa, error::Error> {
         let mut ret = Dfa::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
         let mut active_states = Vec::<BitSet>::new();
         let reachable = self.reachable_states();
 
         let add_state = |s: BitSet, dfa: &mut Dfa, active: &mut Vec<_>, map: &mut HashMap<_,_>|
-        -> usize {
+        -> Result<usize, error::Error> {
             if map.contains_key(&s) {
-                *map.get(&s).unwrap()
+                Ok(*map.get(&s).unwrap())
+            } else if dfa.num_states() >= max_states {
+                Err(error::Error::TooManyStates)
             } else {
                 dfa.add_state(self.accept(&s));
                 active.push(s.clone());
                 map.insert(s, dfa.num_states() - 1);
-                dfa.num_states() - 1
+                Ok(dfa.num_states() - 1)
             }
         };
 
         let mut init_other = self.eps_closure_single(0);
         init_other.intersect_with(&reachable);
         if !init_other.is_empty() {
-            let idx = add_state(init_other.clone(), &mut ret, &mut active_states, &mut state_map);
+            let idx =
+                try!(add_state(init_other.clone(), &mut ret, &mut active_states, &mut state_map));
             ret.init_otherwise = Some(idx);
         }
 
@@ -358,7 +361,8 @@ impl Nfa {
         init_at_start.union_with(&init_other);
         init_at_start.intersect_with(&reachable);
         if !init_at_start.is_empty() {
-            let idx = add_state(init_at_start, &mut ret, &mut active_states, &mut state_map);
+            let idx =
+                try!(add_state(init_at_start, &mut ret, &mut active_states, &mut state_map));
             ret.init_at_start = Some(idx);
         }
 
@@ -367,7 +371,7 @@ impl Nfa {
             init.union_with(&init_other);
             init.intersect_with(&reachable);
             if !init.is_empty() {
-                let idx = add_state(init, &mut ret, &mut active_states, &mut state_map);
+                let idx = try!(add_state(init, &mut ret, &mut active_states, &mut state_map));
                 ret.init_after_char.push(range, &idx);
             }
         }
@@ -378,13 +382,13 @@ impl Nfa {
             let trans = self.transitions(&state);
             for (range, target) in trans.into_iter() {
                 let target_idx =
-                    add_state(target.clone(), &mut ret, &mut active_states, &mut state_map);
+                    try!(add_state(target.clone(), &mut ret, &mut active_states, &mut state_map));
                 ret.add_transition(state_idx, target_idx, range);
             }
         }
 
         ret.sort_transitions();
-        ret
+        Ok(ret)
     }
 
     fn eps_closure(&self, states: &BitSet) -> BitSet {

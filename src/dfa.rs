@@ -101,10 +101,13 @@ impl Dfa {
         self.states.len()
     }
 
-    pub fn from_regex(re: &str) -> Result<Dfa, error::Error> {
+    /// Creates a `Dfa` from a regex string, bailing out if more than `max_states` states were
+    /// required.
+    pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Dfa, error::Error> {
         let mut nfa = try!(Nfa::from_regex(re));
         nfa.remove_predicates();
-        Ok(nfa.determinize().minimize())
+        let dfa = try!(nfa.determinize(max_states));
+        Ok(dfa.minimize())
     }
 
     pub fn add_state(&mut self, accept: Accept) {
@@ -695,7 +698,11 @@ impl Program {
     }
 
     pub fn from_regex(re: &str) -> Result<Program, error::Error> {
-        let dfa = try!(Dfa::from_regex(re));
+        Program::from_regex_bounded(re, std::usize::MAX)
+    }
+
+    pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Program, error::Error> {
+        let dfa = try!(Dfa::from_regex_bounded(re, max_states));
         Ok(dfa.to_program())
     }
 
@@ -912,13 +919,14 @@ mod tests {
     use nfa::Nfa;
     use regex_syntax;
     use std::iter;
+    use std::usize;
     use transition::Accept;
 
+    // Like Dfa::from_regex, but doesn't minimize.
     fn make_dfa(re: &str) -> Dfa {
-        let expr = regex_syntax::Expr::parse(re).unwrap();
-        let mut nfa = builder::NfaBuilder::from_expr(&expr).to_automaton();
+        let mut nfa = Nfa::from_regex(re).unwrap();
         nfa.remove_predicates();
-        nfa.determinize()
+        nfa.determinize(usize::MAX).unwrap()
     }
 
     // Returns an automaton that accepts strings with an even number of 'b's.
@@ -1086,29 +1094,21 @@ mod tests {
 
     #[test]
     fn test_anchored_literal_short_match() {
-        let re = Dfa::from_regex("^.bc(d|e)").unwrap();
+        let re = Program::from_regex("^.bc(d|e)").unwrap();
         let text = "abcdefghijklmnopqrstuvwxyz";
         assert!(re.is_match(text));
     }
 
     #[test]
     fn test_anchored_literal_long_match() {
-        let re = Dfa::from_regex("^.bc(d|e)").unwrap();
+        let re = Program::from_regex("^.bc(d|e)").unwrap();
         let text: String = iter::repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
         assert!(re.is_match(&text));
     }
 
-    #[test]
-    fn test_to_program() {
-        let re = Dfa::from_regex("^.bc(d|e)").unwrap();
-        let prog = re.to_program();
-        let text: String = iter::repeat("abcdefghijklmnopqrstuvwxyz").take(15).collect();
-        assert_eq!(prog.shortest_match(&text), Some((0, 4)));
-    }
-
    #[test]
     fn test_class_normalized() {
-        let re = Dfa::from_regex("[abcdw]").unwrap();
+        let re = make_dfa("[abcdw]");
         assert_eq!(re.states.len(), 2);
         // The order of the states is arbitrary, but one should have two transitions and
         // the other should have zero.
@@ -1121,6 +1121,12 @@ mod tests {
         assert_eq!(re.shortest_match("This is a test."), Some((10, 14)));
         let re = Program::from_regex(r"\bהחומוס\b").unwrap();
         assert_eq!(re.shortest_match("למי יש את החומוס הכי טוב בארץ?"), Some((17, 29)));
+    }
+
+    #[test]
+    fn test_max_states() {
+        assert!(Program::from_regex_bounded("foo", 3).is_err());
+        assert!(Program::from_regex_bounded("foo", 4).is_ok());
     }
 
     #[test]

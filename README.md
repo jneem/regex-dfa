@@ -63,10 +63,6 @@ shootout game).
 - Evaluate the usefulness of this crate as part of a full regex implementation
   (e.g. using `regex-dfa` to find matches and then running `regex` on those
   matches in order to extract groups).
-- When converting `Nfa` to `Dfa`, support limiting the number of states that
-  the `Dfa` can have (and returning an error if it starts to have too many).
-  Otherwise, the `Dfa` can have exponentially more states than the `Nfa`, which
-  is a DoS risk if we are compiling user-supplied regexes.
 - Implement a compiler plugin, and see if it improves performance.
 
 # License

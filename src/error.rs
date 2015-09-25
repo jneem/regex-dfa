@@ -13,7 +13,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum Error {
     RegexSyntax(regex_syntax::Error),
-    Unimplemented(&'static str),
+    TooManyStates,
 }
 
 use error::Error::*;
@@ -21,7 +21,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             RegexSyntax(ref e) => write!(f, "Regex syntax error: {}", e),
-            Unimplemented(s) => write!(f, "Unimplemented: {}", s),
+            TooManyStates => write!(f, "State overflow"),
         }
     }
 }
@@ -30,7 +30,7 @@ impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
             RegexSyntax(ref e) => e.description(),
-            Unimplemented(_) => "You found a regex that's unimplemented",
+            TooManyStates => "This NFA required too many states to represent as a DFA.",
         }
     }
 }

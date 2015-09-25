@@ -31,12 +31,6 @@ bench = true
 
 [[bench]]
 name = "dfa"
-path = "benches/bench_dfa.rs"
-test = false
-bench = true
-
-[[bench]]
-name = "dfa-prog"
 path = "benches/bench_dfa_prog.rs"
 test = false
 bench = true
