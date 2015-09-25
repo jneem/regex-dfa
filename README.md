@@ -6,6 +6,7 @@ Currently, the implementation is somewhat biased towards building DFAs from
 regular expressions.
 
 [![Build status](https://travis-ci.org/jneem/regex-dfa.svg)](https://travis-ci.org/jneem/regex-dfa)
+[![Coverage Status](https://coveralls.io/repos/jneem/regex-dfa/badge.svg?branch=master&service=github)](https://coveralls.io/github/jneem/regex-dfa?branch=master)
 
 [Documentation](http://jneem.github.io/regex-dfa/regex_dfa/index.html)
 
