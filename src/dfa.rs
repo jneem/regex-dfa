@@ -1130,6 +1130,11 @@ mod tests {
     }
 
     #[test]
+    fn test_syntax_error() {
+        assert!(Program::from_regex("(abc").is_err());
+    }
+
+    #[test]
     fn test_bug() {
         let re_str = "(a+|b)*";
         let text = "ab";
