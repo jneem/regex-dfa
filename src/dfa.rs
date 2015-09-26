@@ -1129,5 +1129,25 @@ mod tests {
     fn test_syntax_error() {
         assert!(Program::from_regex("(abc").is_err());
     }
+
+    #[test]
+    fn test_multi_line() {
+        let re = Program::from_regex(r"^A line.$").unwrap();
+        assert_eq!(re.shortest_match("Line 1\nA line.\nLine 2\n"), None);
+
+        let re = Program::from_regex(r"(?m)^A line.$").unwrap();
+        assert_eq!(re.shortest_match("Line 1\nA line.\nLine 2\n"), Some((7, 14)));
+    }
+
+    #[test]
+    fn test_dot_matches_nl() {
+        let re = Program::from_regex(r"a.b").unwrap();
+        assert_eq!(re.shortest_match("a\nb"), None);
+        assert_eq!(re.shortest_match("a\rb"), None);
+
+        let re = Program::from_regex(r"(?s)a.b").unwrap();
+        assert_eq!(re.shortest_match("a\nb"), Some((0, 3)));
+        assert_eq!(re.shortest_match("a\rb"), Some((0, 3)));
+    }
 }
 
