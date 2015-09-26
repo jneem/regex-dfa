@@ -1137,6 +1137,9 @@ mod tests {
         assert_eq!(re.shortest_match("This is a test."), Some((10, 14)));
         assert_eq!(re.shortest_match("This is a test"), Some((10, 14)));
         assert_eq!(re.shortest_match("test"), Some((0, 4)));
+
+        let re = Program::from_regex(r"(\btest\b *)+end").unwrap();
+        assert_eq!(re.shortest_match("This is a test test test end."), Some((10, 28)));
     }
 
     #[test]
