@@ -357,7 +357,7 @@ impl CharSet {
         while r1.is_some() || r2.is_some() {
             let r1_start = if let Some(&(r, _)) = r1 { r.start } else { std::u32::MAX };
             let r2_start = if let Some(&(r, _)) = r2 { r.start } else { std::u32::MAX };
-            if !cur_range.is_empty() && min(r1_start, r2_start) > cur_range.end {
+            if !cur_range.is_empty() && min(r1_start, r2_start) > cur_range.end.saturating_add(1) {
                 ret.push((cur_range, ()));
                 cur_range = CharRange::new(1, 0);
             }

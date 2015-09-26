@@ -59,7 +59,7 @@ impl NfaBuilder {
         let mut ret_len: usize = 0;
         for s in &self.states {
             ret_len += 1;
-            ret.add_state(if ret_len == self.len() { Accept::Always } else { Accept::Never });
+            ret.add_state(if ret_len == self.len() { Accept::always() } else { Accept::never() });
 
             for ch in &s.chars {
                 ret.add_transition(ret_len - 1, ret_len, *ch);

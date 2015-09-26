@@ -138,21 +138,10 @@ impl Predicate {
     /// Imagine that `self` is a predicate leading to a state with acceptance condition `acc`.
     /// Returns the effective acceptance condition of the predicate.
     pub fn filter_accept(&self, acc: &Accept) -> Accept {
-        let out_pred = &self.1;
-        let ret = match acc {
-            &Accept::Always =>
-                Accept::Conditionally {
-                    at_eoi: out_pred.at_boundary,
-                    at_char: out_pred.chars.clone(),
-                },
-            &Accept::Never => Accept::Never,
-            &Accept::Conditionally { at_eoi, ref at_char } =>
-                Accept::Conditionally {
-                    at_eoi: out_pred.at_boundary && at_eoi,
-                    at_char: out_pred.chars.intersect(at_char),
-                }
-        };
-        ret.normalize()
+        Accept {
+            at_eoi: self.1.at_boundary && acc.at_eoi,
+            at_char: self.1.chars.intersect(&acc.at_char),
+        }
     }
 }
 
@@ -160,68 +149,68 @@ impl Predicate {
 /// on what the next character is: we can either require the next character to be the end of the
 /// input, or we can require it to belong to a specific set.
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub enum Accept {
-    Never,
-    Always,
-    Conditionally { at_eoi: bool, at_char: CharSet },
+pub struct Accept {
+    pub at_eoi: bool,
+    pub at_char: CharSet,
 }
 
 impl Eq for Accept {}
 
 impl Accept {
+    /// Returns a new `Accept` that accepts only at the end of input.
     pub fn at_eoi() -> Accept {
-        Accept::Conditionally {
+        Accept {
             at_eoi: true,
             at_char: CharSet::new(),
         }
     }
 
+    /// Returns a new `Accept` that always accepts.
+    pub fn always() -> Accept {
+        Accept {
+            at_eoi: true,
+            at_char: CharSet::full(),
+        }
+    }
+
+    /// Returns a new `Accept` that never accepts.
+    pub fn never() -> Accept {
+        Accept {
+            at_eoi: false,
+            at_char: CharSet::new(),
+        }
+    }
+
+    /// Returns a new `Accept` that accepts if the next char belongs to `char_set`.
     pub fn at_char(char_set: CharSet) -> Accept {
-        Accept::Conditionally {
+        Accept {
             at_eoi: false,
             at_char: char_set,
         }
     }
 
-    pub fn accept_at_eoi(&self) -> bool {
-        match self {
-            &Accept::Always => { true },
-            &Accept::Never => { false },
-            &Accept::Conditionally { at_eoi, at_char: _ } => { at_eoi },
-        }
+    /// Returns true if this always accepts.
+    pub fn is_always(&self) -> bool {
+        self.at_eoi && self.at_char.is_full()
+    }
+
+    /// Returns true if this never accepts.
+    pub fn is_never(&self) -> bool {
+        !self.at_eoi && self.at_char.is_empty()
     }
 
     /// Returns an `Accept` value that will accept if either `self` or `other` does.
     pub fn union(&self, other: &Accept) -> Accept {
-        use transition::Accept::*;
-
-        match self {
-            &Never => { other.clone() },
-            &Always => { Always },
-            &Conditionally { at_eoi, ref at_char } => {
-                match other {
-                    &Never => { self.clone() },
-                    &Always => { Always },
-                    &Conditionally { at_eoi: other_at_eoi, at_char: ref other_at_char } => {
-                        Conditionally {
-                            at_eoi: at_eoi || other_at_eoi,
-                            at_char: at_char.union(other_at_char),
-                        }
-                    }
-                }
-            }
+        Accept {
+            at_eoi: self.at_eoi || other.at_eoi,
+            at_char: self.at_char.union(&other.at_char),
         }
     }
 
-    pub fn normalize(self) -> Accept {
-        if let Accept::Conditionally { at_eoi, ref at_char } = self {
-            if !at_eoi && at_char.is_empty() {
-                return Accept::Never;
-            } else if at_eoi && at_char.is_full(){
-                return Accept::Always;
-            }
-        }
-        self
+    /// If the next character is `ch` (where `None` represents end of input), checks whether we
+    /// should accept.
+    pub fn accepts(&self, ch: Option<u32>) -> bool {
+        (ch.is_none() && self.at_eoi) || (ch.is_some() && self.at_char.contains(ch.unwrap()))
     }
 }
 
@@ -348,27 +337,44 @@ mod tests {
         let acc_eoi = Accept::at_eoi();
         let acc_a = Accept::at_char(CharSet::single('a' as u32));
 
-        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&acc_eoi), Accept::Never);
-        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&acc_a), Accept::Never);
-        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::Never), Accept::Never);
-        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::Always), Accept::Never);
+        assert!(Predicate(e.clone(), e.clone()).filter_accept(&acc_eoi).is_never());
+        assert!(Predicate(e.clone(), e.clone()).filter_accept(&acc_a).is_never());
+        assert!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::never()).is_never());
+        assert!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::always()).is_never());
 
-        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&acc_eoi), Accept::Never);
+        assert!(Predicate(e.clone(), a.clone()).filter_accept(&acc_eoi).is_never());
         assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&acc_a), acc_a);
-        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::Never), Accept::Never);
-        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::Always), acc_a);
+        assert!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::never()).is_never());
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::always()), acc_a);
 
         assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&acc_eoi), acc_eoi);
         assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&acc_a), acc_a);
-        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::Never),
-            Accept::Never);
-        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::Always),
-            Accept::Always);
+        assert!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::never()).is_never());
+        assert!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::always()).is_always());
 
         assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_eoi), acc_eoi);
-        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_a), Accept::Never);
-        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::Never), Accept::Never);
-        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::Always), acc_eoi);
+        assert!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_a).is_never());
+        assert!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::never()).is_never());
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::always()), acc_eoi);
+    }
+
+    #[test]
+    fn test_union() {
+        assert!(Accept::never().union(&Accept::always()).is_always());
+        assert!(Accept::never().union(&Accept::never()).is_never());
+        assert_eq!(Accept::never().union(&Accept::at_eoi()), Accept::at_eoi());
+        assert!(Accept::always().union(&Accept::at_eoi()).is_always());
+
+        let acc_a = Accept::at_char(CharSet::single('a' as u32));
+        let acc_b = Accept::at_char(CharSet::single('b' as u32));
+        let acc_ab = {
+            let mut cs_ab = CharSet::new();
+            cs_ab.push(CharRange::new('a' as u32, 'b' as u32));
+            Accept { at_eoi: false, at_char: cs_ab }
+        };
+        assert_eq!(acc_a.union(&acc_b), acc_ab);
+        assert_eq!(acc_a.union(&Accept::never()), acc_a);
+        assert!(acc_a.union(&Accept::always()).is_always());
     }
 
     #[test]

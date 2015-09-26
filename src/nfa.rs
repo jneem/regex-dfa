@@ -206,7 +206,7 @@ impl Nfa {
                 self.states.push(NfaState::new(acc));
                 // We only keep `reversed` around for its transitions and predicates, so it doesn't
                 // matter what we pass for `accept` here.
-                reversed.states.push(NfaState::new(Accept::Never));
+                reversed.states.push(NfaState::new(Accept::never()));
                 let new_idx = self.states.len() - 1;
 
                 // If the `in_states` were a possible starting state at the beginning
@@ -328,7 +328,7 @@ impl Nfa {
 
         let mut final_states = BitSet::with_capacity(self.states.len());
         for (idx, s) in self.states.iter().enumerate() {
-            if s.accept != Accept::Never {
+            if !s.accept.is_never() {
                 final_states.insert(idx);
             }
         }
@@ -433,7 +433,7 @@ impl Nfa {
     }
 
     fn accept(&self, states: &BitSet) -> Accept {
-        states.iter().fold(Accept::Never, |a, b| a.union(&self.states[b].accept))
+        states.iter().fold(Accept::never(), |a, b| a.union(&self.states[b].accept))
     }
 
     /// Finds all the transitions out of the given set of states.
@@ -474,11 +474,11 @@ mod tests {
         assert_eq!(nfa.num_states(), 5);
 
         let mut target = Nfa::new();
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Always);
-        target.add_state(Accept::Never);
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
+        target.add_state(Accept::always());
+        target.add_state(Accept::never());
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(4, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
@@ -520,12 +520,12 @@ mod tests {
         assert_eq!(nfa.num_states(), 6);
 
         let mut target = Nfa::new();
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Always);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
+        target.add_state(Accept::always());
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(5, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
@@ -543,12 +543,12 @@ mod tests {
         assert_eq!(nfa.num_states(), 6);
 
         let mut target = Nfa::new();
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Never);
-        target.add_state(Accept::Always);
-        target.add_state(Accept::Conditionally { at_eoi: true, at_char: not_word_chars() });
-        target.add_state(Accept::Conditionally { at_eoi: false, at_char: word_chars() });
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
+        target.add_state(Accept::never());
+        target.add_state(Accept::always());
+        target.add_state(Accept { at_eoi: true, at_char: not_word_chars() });
+        target.add_state(Accept { at_eoi: false, at_char: word_chars() });
         target.add_transition(0, 1, CharRange::single('a' as u32));
         target.add_transition(0, 4, CharRange::single('a' as u32));
         target.add_eps(1, 2);

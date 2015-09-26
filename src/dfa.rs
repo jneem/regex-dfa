@@ -126,17 +126,7 @@ impl Dfa {
 
     /// Tests if the given state is accepting, assuming that `next` is the next char.
     fn accepting(&self, state: usize, next: Option<char>) -> bool {
-        use transition::Accept::*;
-        match self.states[state].accept {
-            Never => false,
-            Always => true,
-            Conditionally { at_eoi, ref at_char } => {
-                match next {
-                    None => at_eoi,
-                    Some(c) => at_char.contains(c as u32),
-                }
-            }
-        }
+        self.states[state].accept.accepts(next.map(|c| c as u32))
     }
 
     /// If we match some prefix of the string, returns the index after the endpoint of the longest
@@ -426,11 +416,11 @@ impl Dfa {
         for (idx, st) in self.states.iter().enumerate() {
             partition.entry(&st.accept).or_insert(BitSet::new()).insert(idx);
         }
-        let nevers = partition.get(&Accept::Never)
+        let nevers = partition.get(&Accept::never())
                               .map(|x| x.clone())
                               .unwrap_or_else(|| BitSet::new());
         let others = partition.into_iter()
-                              .filter(|&(key, _)| key != &Accept::Never)
+                              .filter(|&(key, _)| !key.is_never())
                               .map(|(_, val)| val)
                               .collect();
         (nevers, others)
@@ -569,7 +559,7 @@ impl Dfa {
         let mut lit_in_progress = String::new();
         while self.is_chain_link(st_idx, rev) {
             let st = &self.states[st_idx];
-            if st.accept != Accept::Never {
+            if !st.accept.is_never() {
                 ret.push(Inst::Acc(st.accept.clone()));
             }
             if let Some(ch) = Dfa::single_char(st.transitions.iter()) {
@@ -591,7 +581,7 @@ impl Dfa {
         }
 
         let st = &self.states[st_idx];
-        if st.accept != Accept::Never {
+        if !st.accept.is_never() {
             ret.push(Inst::Acc(st.accept.clone()));
         }
         if !st.transitions.is_empty() {
@@ -605,7 +595,7 @@ impl Dfa {
             } else {
                 ret.push(Inst::Branch(st.transitions.clone()));
             }
-        } else if ret.last() != Some(&Inst::Acc(Accept::Always)) {
+        } else if ret.last() != Some(&Inst::Acc(Accept::always())) {
             ret.push(Inst::Reject);
         }
 
@@ -715,15 +705,9 @@ impl Program {
         loop {
             match self.insts[state] {
                 Reject => { return None; },
-                Acc(Accept::Always) => { return Some(s); }
-                Acc(Accept::Never) => {},
-                Acc(Accept::Conditionally { at_eoi, ref at_char }) => {
-                    if at_eoi && s.is_empty() {
+                Acc(ref a) => {
+                    if a.accepts(s.chars().next().map(|c| c as u32)) {
                         return Some(s);
-                    } else if let Some(next_ch) = s.chars().next() {
-                        if at_char.contains(next_ch as u32) {
-                            return Some(s);
-                        }
                     }
                     state += 1;
                 },
@@ -932,8 +916,8 @@ mod tests {
         let mut ret = Dfa::new();
 
         ret.init_at_start = Some(0);
-        ret.add_state(Accept::Always);
-        ret.add_state(Accept::Never);
+        ret.add_state(Accept::always());
+        ret.add_state(Accept::never());
         ret.add_transition(0, 0, CharRange::single('a' as u32));
         ret.add_transition(0, 1, CharRange::single('b' as u32));
         ret.add_transition(1, 1, CharRange::single('a' as u32));
@@ -952,8 +936,8 @@ mod tests {
         let dfa = even_bs_dfa();
 
         let mut rev = Nfa::new();
-        rev.add_state(Accept::Always);
-        rev.add_state(Accept::Never);
+        rev.add_state(Accept::always());
+        rev.add_state(Accept::never());
         rev.add_transition(0, 0, CharRange::single('a' as u32));
         rev.add_transition(0, 1, CharRange::single('b' as u32));
         rev.add_transition(1, 0, CharRange::single('b' as u32));
@@ -968,9 +952,9 @@ mod tests {
         // whose last character is a b.
         let mut dfa = Dfa::new();
         dfa.init_at_start = Some(0);
-        dfa.add_state(Accept::Always);
-        dfa.add_state(Accept::Never);
-        dfa.add_state(Accept::Conditionally { at_eoi: true, at_char: CharSet::new() });
+        dfa.add_state(Accept::always());
+        dfa.add_state(Accept::never());
+        dfa.add_state(Accept::at_eoi());
         dfa.add_transition(0, 0, CharRange::single('a' as u32));
         dfa.add_transition(0, 2, CharRange::single('b' as u32));
         dfa.add_transition(1, 1, CharRange::single('a' as u32));
@@ -991,8 +975,7 @@ mod tests {
         // Make a DFA that accepts strings with an even number of b's, or whose next character
         // is a c.
         let mut dfa = even_bs_dfa();
-        dfa.states[1].accept = Accept::Conditionally { at_eoi: false,
-                                                       at_char: CharSet::single('c' as u32) };
+        dfa.states[1].accept = Accept::at_char(CharSet::single('c' as u32));
         assert_eq!(dfa.longest_match("aaaaaa"), Some((0, 6)));
         assert_eq!(dfa.longest_match("aaaaaba"), Some((0, 5)));
         assert_eq!(dfa.longest_match("aaaaaab"), Some((0, 6)));
