@@ -53,8 +53,6 @@ shootout game).
 
 # Status/TODO
 
-- The internals have more-or-less converged, but need to be documented and more
-  thoroughly tested.
 - For good regex performance, it is very important to quickly scan the text for
   plausible starting points. We currently have a fairly half-hearted
   implementation of this, which overlaps somewhat with the implementation in

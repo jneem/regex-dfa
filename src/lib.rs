@@ -7,13 +7,9 @@
 // except according to those terms.
 
 /*!
-This crate provides tools for creating, manipulating, and executing deterministic finite automata
-(DFAs). If you're interested in executing a DFA, the most interesting type is `Program`, which is a
-DFA represented as a sequence of instructions for a virtual machine. There is also a `Dfa`, which
-is a more classical representation of a DFA. It can also be executed, but runs slower than
-`Program`. Finally, there is `Nfa`, which is for representing and analyzing non-deterministic
-finite automata (NFAs). However, there is no support for executing NFAs; they are only used for
-constructing DFAs.
+This crate provides tools for converting regular expressions into deterministic finite automata
+(DFAs). The most interesting type is `Program`, which is a DFA represented as a sequence of
+instructions for a virtual machine.
 
 # Example: creating and running a `Program`
 
@@ -53,8 +49,6 @@ mod searcher;
 mod transition;
 mod unicode;
 
-pub use dfa::{Dfa, Program};
-pub use nfa::Nfa;
-
+pub use dfa::Program;
 pub use error::Error;
 
