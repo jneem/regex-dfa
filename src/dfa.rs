@@ -913,11 +913,9 @@ impl Debug for Program {
 
 #[cfg(test)]
 mod tests {
-    use builder;
     use char_map::{CharMap, CharRange, CharSet};
     use dfa::{Dfa, Program};
     use nfa::Nfa;
-    use regex_syntax;
     use std::iter;
     use std::usize;
     use transition::Accept;
@@ -1130,21 +1128,20 @@ mod tests {
     }
 
     #[test]
-    fn test_syntax_error() {
-        assert!(Program::from_regex("(abc").is_err());
+    fn test_adjacent_predicates() {
+        assert!(Program::from_regex(r"\btest\b\B").unwrap().insts.is_empty());
+        assert!(Program::from_regex(r"\btest\B\b").unwrap().insts.is_empty());
+        assert!(Program::from_regex(r"test1\b\Btest2").unwrap().insts.is_empty());
+
+        let re = Program::from_regex(r"\b\btest\b\b").unwrap();
+        assert_eq!(re.shortest_match("This is a test."), Some((10, 14)));
+        assert_eq!(re.shortest_match("This is a test"), Some((10, 14)));
+        assert_eq!(re.shortest_match("test"), Some((0, 4)));
     }
 
     #[test]
-    fn test_bug() {
-        let re_str = "(a+|b)*";
-        let text = "ab";
-        let expr = regex_syntax::Expr::parse(re_str).unwrap();
-        println!("expr: {:?}", expr);
-        let builder = builder::NfaBuilder::from_expr(&expr);
-        println!("builder: {:?}", builder);
-        let re = Program::from_regex(re_str).unwrap();
-        println!("{:?}", re);
-        assert!(re.shortest_match(text).is_some());
+    fn test_syntax_error() {
+        assert!(Program::from_regex("(abc").is_err());
     }
 }
 

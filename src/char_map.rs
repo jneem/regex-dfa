@@ -34,6 +34,11 @@ impl CharRange {
         CharRange { start: start, end: end }
     }
 
+    /// Creates a new `CharRange` containing all characters.
+    pub fn full() -> CharRange {
+        CharRange { start: 0, end: std::u32::MAX }
+    }
+
     /// Creates a new `CharRange` containing a single character.
     pub fn single(ch: u32) -> CharRange {
         CharRange::new(ch, ch)
@@ -384,7 +389,7 @@ impl CharSet {
 
     /// Creates a `CharSet` containing every codepoint.
     pub fn full() -> CharSet {
-        CharSet::from_vec(vec![(CharRange::new(0, std::u32::MAX), ())])
+        CharSet::from_vec(vec![(CharRange::full(), ())])
     }
 
     /// Creates a `CharSet` containing a single codepoint.
@@ -549,6 +554,12 @@ impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
         CharMultiMap { elts: ret }
     }
 
+    /// Returns a new `CharMultiMap`, containing only those mappings with values `v` satisfying
+    /// `f(v)`.
+    pub fn filter_values<F>(&self, mut f: F) -> CharMultiMap<T> where F: FnMut(&T) -> bool {
+        CharMultiMap::from_vec(self.elts.iter().filter(|x| f(&x.1)).cloned().collect())
+    }
+
     /// Splits the set of ranges into equal or disjoint ranges.
     ///
     /// The output is a `CharMultiMap` list of transitions in which every pair of `CharRange`s
@@ -608,12 +619,6 @@ impl<T: Clone + Debug + Hash + PartialEq> Deref for CharMultiMap<T> {
     type Target = Vec<(CharRange, T)>;
     fn deref(&self) -> &Self::Target {
         &self.elts
-    }
-}
-
-impl<T: Copy + Debug + Hash + PartialEq + 'static> CharMultiMap<T> {
-    pub fn extend<'a, I>(&mut self, iter: I) where I: IntoIterator<Item=&'a (CharRange, T)> {
-        self.elts.extend(iter)
     }
 }
 

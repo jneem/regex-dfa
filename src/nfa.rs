@@ -150,12 +150,22 @@ impl Nfa {
     }
 
     /// Modifies this automaton to remove all transition predicates.
+    ///
+    /// Note that this clobbers `init_at_start` and `init_after_char`, so you probably don't want
+    /// to call this if those are already set. In particular, calling `remove_predicates()` twice
+    /// on the same `Nfa` is probably a bad idea.
     pub fn remove_predicates(&mut self) {
-        let (mut changed, mut initial_preds) = self.remove_predicates_once();
+        self.init_at_start.clear();
+        self.init_at_start.insert(0);
+
+        // Sometimes an InClasses predicate is attached to the initial state. This map keeps track
+        // of such predicates: if `initial_preds` contains the map 'a' -> 3, for example, then if
+        // we just saw the character 'a' we should start in the state 3.
+        let mut initial_preds = CharMultiMap::<usize>::new();
+
+        let mut changed = self.remove_predicates_once(&mut initial_preds);
         while changed {
-            let (next_changed, next_preds) = self.remove_predicates_once();
-            changed = next_changed;
-            initial_preds.extend(next_preds.iter());
+            changed = self.remove_predicates_once(&mut initial_preds);
         }
         self.init_after_char = initial_preds.group();
     }
@@ -173,13 +183,9 @@ impl Nfa {
     //      }
     //  }
     // Above, when we say "leading into" or "leading out of," that includes eps-closures.
-    fn remove_predicates_once(&mut self) -> (bool, CharMultiMap<usize>) {
+    fn remove_predicates_once(&mut self, initial_preds: &mut CharMultiMap<usize>) -> bool {
         let orig_len = self.states.len();
         let mut reversed = self.reversed();
-        // Sometimes an InClasses predicate is attached to the initial state. This map keeps track
-        // of such predicates: if `initial_preds` contains the map 'a' -> 3, for example, then if
-        // we just saw the character 'a' we should start in the state 3.
-        let mut initial_preds = CharMultiMap::<usize>::new();
 
         for idx in 0..orig_len {
             let preds = self.states[idx].transitions.predicates.clone();
@@ -203,13 +209,21 @@ impl Nfa {
                 reversed.states.push(NfaState::new(Accept::Never));
                 let new_idx = self.states.len() - 1;
 
+                // If the `in_states` were a possible starting state at the beginning
+                // of the input, maybe make the new state also a starting state.
+                if pred.0.at_boundary && !in_states.is_disjoint(&self.init_at_start) {
+                    self.init_at_start.insert(new_idx);
+                }
+
+                // If the `in_states` are a possible starting state in the middle of the input,
+                // maybe make the new state a conditional starting state.
+                let mut init_chars = initial_preds.filter_values(|x| in_states.contains(&x));
                 if in_states.contains(&0) {
-                    if pred.0.at_boundary {
-                        self.init_at_start.insert(new_idx);
-                    }
-                    for &range in &pred.0.chars {
-                        initial_preds.push(range, &new_idx);
-                    }
+                    init_chars.push(CharRange::full(), &0);
+                }
+                init_chars = init_chars.intersect(&pred.0.chars);
+                for (range, _) in init_chars {
+                    initial_preds.push(range, &new_idx);
                 }
 
                 for (range, ref sources) in in_trans.into_iter() {
@@ -239,7 +253,7 @@ impl Nfa {
             }
         }
 
-        (self.states.len() > orig_len, initial_preds)
+        self.states.len() > orig_len
     }
 
     // We've just created a new state for the predicate `pred`, and `states` is the eps-closure of
@@ -358,7 +372,6 @@ impl Nfa {
         }
 
         let mut init_at_start = self.eps_closure(&self.init_at_start);
-        init_at_start.union_with(&init_other);
         init_at_start.intersect_with(&reachable);
         if !init_at_start.is_empty() {
             let idx =
@@ -469,6 +482,7 @@ mod tests {
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(4, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
+        target.init_at_start.insert(0);
         target.init_at_start.insert(4);
         assert_eq!(nfa, target)
     }
@@ -515,6 +529,7 @@ mod tests {
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(5, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
+        target.init_at_start.insert(0);
         target.init_at_start.insert(5);
         target.init_after_char = word_char_map(4, 5);
         assert_eq!(nfa, target)
@@ -537,6 +552,7 @@ mod tests {
         target.add_transition(0, 1, CharRange::single('a' as u32));
         target.add_transition(0, 4, CharRange::single('a' as u32));
         target.add_eps(1, 2);
+        target.init_at_start.insert(0);
         assert_eq!(nfa, target)
     }
 }
