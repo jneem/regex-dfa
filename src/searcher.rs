@@ -18,6 +18,7 @@ pub trait Matcher {
     fn matches(&self, &str) -> Option<usize>;
 }
 
+#[derive(Clone, Debug)]
 pub struct Iter<'a, 'b, S: Searcher + 'a> {
     searcher: &'a S,
     input: &'b str,
@@ -51,14 +52,16 @@ impl<'a, 'b, S: Searcher> Iterator for Iter<'a, 'b, S> {
     }
 }
 
-pub struct StrSearcher<'a>(pub &'a str);
+#[derive(Clone, Debug)]
+pub struct StrSearcher(pub String);
 
-impl<'a> Searcher for StrSearcher<'a> {
+impl Searcher for StrSearcher {
     fn search(&self, s: &str) -> Option<(usize, usize)> {
-        s.find(self.0).map(|x| (x, x + self.0.len()))
+        s.find(&self.0).map(|x| (x, x + self.0.len()))
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct ByteSearcher(pub u8);
 
 impl Searcher for ByteSearcher {
@@ -68,6 +71,7 @@ impl Searcher for ByteSearcher {
 }
 
 /// Searchers for (non-overlapping) intervals that don't match `S`.
+#[derive(Clone, Debug)]
 pub struct RepeatUntil<S: Searcher>(pub S);
 
 impl<S: Searcher> Searcher for RepeatUntil<S> {
@@ -143,6 +147,7 @@ impl Searcher for ExtAsciiSet {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct SearchThenMatch<S: Searcher, M: Matcher>(pub S, pub M);
 
 impl<S: Searcher, M: Matcher> Searcher for SearchThenMatch<S, M> {

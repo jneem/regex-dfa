@@ -498,12 +498,85 @@ pub enum Inst {
 }
 
 /// A deterministic finite automaton, ready for fast searching.
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct Program {
     insts: Vec<Inst>,
     init_at_start: Option<usize>,
     init_after_char: CharMap<usize>,
     init_otherwise: Option<usize>,
+    runner: Box<Runner>,
+}
+
+// A Runner is basically a `Fn(&Program, &str) -> Option<(usize, usize)>`,
+// except that Box<Fn> isn't clonable, and so we do this as a workaround.
+trait Runner {
+    fn run(&self, prog: &Program, input: &str) -> Option<(usize, usize)>;
+    fn box_clone(&self) -> Box<Runner>;
+}
+
+impl Clone for Box<Runner> {
+    fn clone(&self) -> Box<Runner> {
+        self.box_clone()
+    }
+}
+
+#[derive(Clone)]
+struct FastRunner<S: Searcher> {
+    rewind: bool,
+    start_state: usize,
+    searcher: S,
+}
+
+impl<S: Searcher + Clone + 'static> Runner for FastRunner<S> {
+    fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
+        for (start, end) in self.searcher.iter(s) {
+            let pos = if self.rewind { start } else { end };
+            if let Some(match_end) = prog.shortest_match_from(&s[pos..], self.start_state) {
+                return Some((start, match_end + pos));
+            }
+        }
+        None
+    }
+
+    fn box_clone(&self) -> Box<Runner> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Clone)]
+struct SlowRunner;
+
+impl Runner for SlowRunner {
+    fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
+        if let Some(state) = prog.init_at_start {
+            if let Some(end) = prog.shortest_match_from(s, state) {
+                return Some((0, end))
+            }
+        }
+
+        // Skip looping through the string if we know that the match has to start
+        // at the beginning.
+        if prog.init_otherwise.is_none() && prog.init_after_char.is_empty() {
+            return None;
+        }
+
+        let mut pos: usize = 0;
+        for ch in s.chars() {
+            pos += ch.len_utf8();
+
+            if let Some(state) = prog.state_after(ch as u32) {
+                if let Some(end) = prog.shortest_match_from(&s[pos..], state) {
+                    return Some((pos, pos + end));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn box_clone(&self) -> Box<Runner> {
+        Box::new(self.clone())
+    }
 }
 
 // Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopWhile`
@@ -541,6 +614,7 @@ impl Program {
             init_at_start: None,
             init_after_char: CharMap::new(),
             init_otherwise: None,
+            runner: Box::new(SlowRunner),
         }
     }
 
@@ -550,7 +624,9 @@ impl Program {
 
     pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Program, error::Error> {
         let dfa = try!(Dfa::from_regex_bounded(re, max_states));
-        Ok(dfa.to_program())
+        let mut prog = dfa.to_program();
+        prog.runner = prog.make_runner();
+        Ok(prog)
     }
 
     // On a successful match, returns `Some(end)` where `end` is the index after the end of the
@@ -609,21 +685,6 @@ impl Program {
         }
     }
 
-    // A fast path for a regex that starts with something for which we can search quickly.
-    fn shortest_match_fast<S>(&self, s: &str, searcher: S, state: usize, skip_state: bool)
-            -> Option<(usize, usize)>
-            where S: Searcher
-    {
-        let state = if skip_state { state + 1 } else { state };
-        for (start, end) in searcher.iter(s) {
-            let pos = if skip_state { end } else { start };
-            if let Some(match_end) = self.shortest_match_from(&s[pos..], state) {
-                return Some((start, match_end + pos));
-            }
-        }
-        None
-    }
-
     // If the set of allowed chars at the given state are all ASCII, build an optimized
     // representation of the allowed chars.
     fn ascii_set(&self, state: usize) -> Option<AsciiSet> {
@@ -646,12 +707,21 @@ impl Program {
         }
     }
 
-
     /// Returns the index range of the first shortest match, if there is a match. The indices
     /// returned are byte indices of the string. The first index is inclusive; the second is
     /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
+        self.runner.run(self, s)
+    }
+
+    fn make_runner(&self) -> Box<Runner> {
         use dfa::Inst::*;
+
+        fn fast<S>(search: S, state: usize, rewind: bool) -> Box<Runner>
+                where S: Searcher + Clone + 'static
+        {
+            Box::new(FastRunner { searcher: search, start_state: state, rewind: rewind })
+        }
 
         if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
             if let Some(state) = self.init_at_start {
@@ -660,28 +730,26 @@ impl Program {
                         if lit.len() == 1 {
                             let b = lit.as_bytes()[0];
                             if let Some(set) = self.ascii_set(state + 1) {
-                                let search = SearchThenMatch(ByteSearcher(b), set);
-                                return self.shortest_match_fast(s, search, state, false);
+                                return fast(SearchThenMatch(ByteSearcher(b), set), state, true);
                             } else {
-                                return self.shortest_match_fast(s, ByteSearcher(b), state, true);
+                                return fast(ByteSearcher(b), state + 1, false);
                             }
                         } else {
-                            return self.shortest_match_fast(s, StrSearcher(&*lit), state, true);
+                            return fast(StrSearcher(lit.clone()), state + 1, false);
                         }
                     },
                     LoopWhile(ref cs) => {
-                        let search = RepeatUntil(cs.complement());
-                        return self.shortest_match_fast(s, search, state, true);
+                        return fast(RepeatUntil(cs.complement()), state + 1, false);
                     },
                     Char(ref cs) => {
                         if cs.is_ascii() {
-                            return self.shortest_match_fast(s, cs.to_ascii_set(), state, true);
+                            return fast(cs.to_ascii_set(), state + 1, false);
                         }
                     },
                     Branch(ref cm) => {
                         let cs = cm.to_char_set();
                         if cs.is_ascii() {
-                            return self.shortest_match_fast(s, cs.to_ascii_set(), state, false);
+                            return fast(cs.to_ascii_set(), state, true);
                         }
                     },
                     _ => {},
@@ -689,34 +757,7 @@ impl Program {
             }
         }
 
-        self.shortest_match_slow(s)
-    }
-
-    fn shortest_match_slow(&self, s: &str) -> Option<(usize, usize)> {
-        if let Some(state) = self.init_at_start {
-            if let Some(end) = self.shortest_match_from(s, state) {
-                return Some((0, end))
-            }
-        }
-
-        // Skip looping through the string if we know that the match has to start
-        // at the beginning.
-        if self.init_otherwise.is_none() && self.init_after_char.is_empty() {
-            return None;
-        }
-
-        let mut pos: usize = 0;
-        for ch in s.chars() {
-            pos += ch.len_utf8();
-
-            if let Some(state) = self.state_after(ch as u32) {
-                if let Some(end) = self.shortest_match_from(&s[pos..], state) {
-                    return Some((pos, pos + end));
-                }
-            }
-        }
-
-        None
+        Box::new(SlowRunner)
     }
 
     fn state_after(&self, ch: u32) -> Option<usize> {
