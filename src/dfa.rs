@@ -6,6 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use aho_corasick::{AcAutomaton, Automaton, FullAcAutomaton};
 use ascii_set::AsciiSet;
 use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
@@ -14,7 +15,8 @@ use nfa::Nfa;
 use searcher::{ExtAsciiSet, ByteSearcher, RepeatUntil, Searcher, SearchThenMatch, StrSearcher};
 use std;
 use std::ascii::AsciiExt;
-use std::collections::{HashSet, HashMap};
+use std::collections::{BinaryHeap, HashSet, HashMap};
+use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
@@ -521,18 +523,45 @@ impl Clone for Box<Runner> {
 }
 
 #[derive(Clone)]
-struct FastRunner<S: Searcher> {
+struct SearchRunner<S: Searcher> {
     rewind: bool,
     start_state: usize,
     searcher: S,
 }
 
-impl<S: Searcher + Clone + 'static> Runner for FastRunner<S> {
+impl<S: Searcher + Clone + 'static> Runner for SearchRunner<S> {
     fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
         for (start, end) in self.searcher.iter(s) {
             let pos = if self.rewind { start } else { end };
             if let Some(match_end) = prog.shortest_match_from(&s[pos..], self.start_state) {
                 return Some((start, match_end + pos));
+            }
+        }
+        None
+    }
+
+    fn box_clone(&self) -> Box<Runner> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Clone)]
+struct AcRunner {
+    auto: FullAcAutomaton<String>,
+    pattern_state_map: Vec<usize>,
+    complete: bool,
+}
+
+impl Runner for AcRunner {
+    fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
+        for m in self.auto.find_overlapping(s) {
+            if self.complete {
+                return Some((m.start, m.end));
+            }
+
+            let state = self.pattern_state_map[m.pati];
+            if let Some(end) = prog.shortest_match_from(&s[m.end..], state) {
+                return Some((m.start, end));
             }
         }
         None
@@ -605,6 +634,166 @@ fn is_common(cs: &CharSet) -> bool {
     let common_chars_count = 10 + 26 + 26;
 
     cs.intersect(&common_chars).char_count() >= (common_chars_count * 3 / 4)
+}
+
+/// A pair of a `String` and the index of the state that we are in after encountering that string.
+///
+/// Prefixes are ordered by the decreasing length of their string.
+#[derive(Debug, Clone)]
+struct Prefix(pub String, pub usize);
+impl PartialOrd for Prefix {
+    fn partial_cmp(&self, other: &Prefix) -> Option<Ordering> {
+        self.0.len().partial_cmp(&other.0.len())
+    }
+}
+
+impl Ord for Prefix {
+    fn cmp(&self, other: &Prefix) -> Ordering {
+        self.partial_cmp(&other).unwrap()
+    }
+}
+
+impl PartialEq for Prefix {
+    fn eq(&self, other: &Prefix) -> bool {
+        self.0.len().eq(&other.0.len())
+    }
+}
+
+impl Eq for Prefix { }
+
+struct PrefixSearcher {
+    active: BinaryHeap<Prefix>,
+    current: Prefix,
+    finished: Vec<Prefix>,
+
+    // The set of prefixes is complete if:
+    //  - we're done with active prefixes before we go over any of our limits, and
+    //  - we didn't encounter any conditional accept statements.
+    complete: bool,
+
+    max_prefixes: usize,
+    max_len: usize,
+}
+
+impl PrefixSearcher {
+    fn new(max_prefixes: usize, max_len: usize) -> PrefixSearcher {
+        PrefixSearcher {
+            active: BinaryHeap::new(),
+            current: Prefix(String::new(), 0),
+            finished: Vec::new(),
+            complete: true,
+            max_prefixes: max_prefixes,
+            max_len: max_len,
+        }
+    }
+
+    fn bail_out(&mut self) {
+        self.finished.extend(self.active.iter().cloned());
+        self.finished.push(self.current.clone());
+        self.complete = false;
+    }
+
+    // Returns true if we bailed out.
+    fn add(&mut self, new_prefs: Vec<Prefix>) -> bool {
+        if new_prefs.len() + self.active.len() + self.finished.len() >= self.max_prefixes {
+            self.bail_out();
+            true
+        } else {
+            for p in new_prefs.into_iter() {
+                if p.0.len() >= self.max_len {
+                    self.finished.push(p);
+                } else {
+                    self.active.push(p);
+                }
+            }
+            false
+        }
+    }
+
+    fn too_many(&mut self, more: usize) -> bool {
+        if self.active.len() + self.finished.len() + more >= self.max_prefixes {
+            self.bail_out();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn search(&mut self, prog: &Program, state: usize) {
+        use dfa::Inst::*;
+
+        self.active.push(Prefix(String::new(), state));
+        while !self.active.is_empty() {
+            self.current = self.active.pop().unwrap();
+            match prog.insts[self.current.1] {
+                Literal(ref lit) => {
+                    let next_pref = Prefix(self.current.0.clone() + lit, self.current.1 + 1);
+                    if self.add(vec![next_pref]) {
+                        break;
+                    }
+                },
+                Char(ref cs) => {
+                    if self.too_many(cs.char_count() as usize) {
+                        break;
+                    }
+                    let next_prefs = cs.chars()
+                        .filter_map(std::char::from_u32)
+                        .map(|c| {
+                            let mut next_str = self.current.0.clone();
+                            next_str.push(c);
+                            Prefix(next_str, self.current.1 + 1)
+                        }).collect();
+                    if self.add(next_prefs) {
+                        break;
+                    }
+                },
+                Acc(ref acc) => {
+                    self.finished.push(self.current.clone());
+                    if !acc.is_always() {
+                        self.complete = false;
+                    }
+                },
+                Branch(ref cm) => {
+                    if self.too_many(cm.to_char_set().char_count() as usize) {
+                        break;
+                    }
+                    let next_prefs = cm.pairs().into_iter()
+                        .filter_map(|x| std::char::from_u32(x.0).map(|c| (c, x.1)))
+                        .map(|(c, tgt)| {
+                            let mut next_str = self.current.0.clone();
+                            next_str.push(c);
+                            Prefix(next_str, tgt)
+                        }).collect();
+                    if self.add(next_prefs) {
+                        break;
+                    }
+                },
+                Reject => {
+                },
+                LoopWhile(_) => {
+                    self.bail_out();
+                    break;
+                },
+            }
+        }
+    }
+
+    fn to_ac(&self) -> Option<AcRunner> {
+        if self.finished.len() <= 1
+                || self.finished.iter().any(|s| s.0.is_empty())
+                || self.finished.iter().all(|s| s.0.len() <= 1) {
+            None
+        } else {
+            let strings: Vec<String> = self.finished.iter().map(|x| x.0.clone()).collect();
+            let auto = FullAcAutomaton::new(AcAutomaton::new(strings));
+            let map: Vec<usize> = self.finished.iter().map(|x| x.1).collect();
+            Some(AcRunner {
+                auto: auto,
+                complete: self.complete,
+                pattern_state_map: map,
+            })
+        }
+    }
 }
 
 impl Program {
@@ -720,11 +909,17 @@ impl Program {
         fn fast<S>(search: S, state: usize, rewind: bool) -> Box<Runner>
                 where S: Searcher + Clone + 'static
         {
-            Box::new(FastRunner { searcher: search, start_state: state, rewind: rewind })
+            Box::new(SearchRunner { searcher: search, start_state: state, rewind: rewind })
         }
 
         if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
             if let Some(state) = self.init_at_start {
+                let mut prefixes = PrefixSearcher::new(30, 15); // FIXME: constants
+                prefixes.search(self, state);
+                if let Some(ac) = prefixes.to_ac() {
+                    return Box::new(ac);
+                }
+
                 match self.insts[state] {
                     Literal(ref lit) => {
                         if lit.len() == 1 {

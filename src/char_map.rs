@@ -14,6 +14,7 @@ use std::char;
 use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::iter::RangeInclusive;
 use std::fmt::Debug;
 use std::ops::Deref;
 
@@ -68,6 +69,11 @@ impl CharRange {
         } else {
             CharRange::new(min(self.start, other.start), max(self.end, other.end))
         }
+    }
+
+    /// Returns an iterator over chars in this range.
+    pub fn iter(&self) -> RangeInclusive<u32> {
+        std::iter::range_inclusive(self.start, self.end)
     }
 }
 
@@ -147,9 +153,25 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         self.elts.is_empty()
     }
 
+    /// Tests whether this `CharMap` maps every value.
+    ///
+    /// Assumes the `CharMap` is `normalize()`ed.
+    pub fn is_full(&self) -> bool {
+        self.elts.len() == 1 && self.elts[0].0 == CharRange::new(0, std::u32::MAX)
+    }
+
     /// Iterates over all the mapped ranges and values.
     pub fn iter<'a>(&'a self) -> std::slice::Iter<'a, (CharRange, T)> {
         self.elts.iter()
+    }
+
+    /// Returns a `Vec` of pairs of mapped chars and their values.
+    // Probably this should return an iterator, but I was having trouble with lifetimes...
+    pub fn pairs(&self) -> Vec<(u32, T)> {
+        let tmp: Vec<Vec<(u32, T)>> =
+            self.elts.iter()
+                .map(|x| x.0.iter().map(|c| (c, x.1.clone())).collect()).collect();
+        tmp.into_iter().flat_map(|v| v.into_iter()).collect()
     }
 
     /// Minimizes the number of ranges in this `CharMap`.
@@ -293,6 +315,11 @@ impl CharSet {
         self.map.is_empty()
     }
 
+    /// Tests whether this `CharSet` contains every char.
+    pub fn is_full(&self) -> bool {
+        self.map.is_full()
+    }
+
     fn from_vec(vec: Vec<(CharRange, ())>) -> CharSet {
         let mut ret = CharSet { map: CharMap { elts: vec } };
         ret.sort();
@@ -302,6 +329,11 @@ impl CharSet {
     /// Iterates over all the included ranges of chars.
     pub fn iter<'a>(&'a self) -> Box<Iterator<Item=&'a CharRange> + 'a> {
         Box::new(self.map.iter().map(|x| &x.0))
+    }
+
+    /// Iterators over all contained chars.
+    pub fn chars<'a>(&'a self) -> Box<Iterator<Item=u32> + 'a> {
+        Box::new(self.map.iter().flat_map(|x| x.0.iter()))
     }
 
     /// Converts this set to a `CharMap` that maps all of the contained characters to the same
@@ -422,8 +454,12 @@ impl CharSet {
     }
 
     /// Counts the number of chars in this set.
+    ///
+    /// This saturates at u32::MAX, even if the set is full.
     pub fn char_count(&self) -> u32 {
-        self.map.iter().fold(0, |acc, range| acc + (range.0.end - range.0.start + 1))
+        self.map.iter().fold(0, |acc, range| {
+            acc.saturating_add((range.0.end - range.0.start).saturating_add(1))
+        })
     }
 
     /// Checks if all the chars in this set belong to the ASCII range.

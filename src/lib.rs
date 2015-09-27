@@ -30,8 +30,9 @@ greedy repetition operators). This information is lost when moving to a DFA, so 
 necessarily find the exact same match that a standard regex engine will.
 */
 
-#![feature(slice_splits, str_char, test)]
+#![feature(range_inclusive, slice_splits, str_char, test)]
 
+extern crate aho_corasick;
 extern crate ascii_set;
 extern crate bit_set;
 extern crate memchr;

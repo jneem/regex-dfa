@@ -10,6 +10,7 @@ readme = "README.md"
 license = "MIT/Apache-2.0"
 
 [dependencies]
+aho-corasick = "*"
 ascii_set = "0.1.0"
 regex = "0.1.41"
 regex-syntax = "0.2.2"

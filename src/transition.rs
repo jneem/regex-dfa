@@ -177,6 +177,11 @@ impl Accept {
         !self.at_eoi && self.at_char.is_empty()
     }
 
+    /// Returns true if this always accepts.
+    pub fn is_always(&self) -> bool {
+        self.at_eoi && self.at_char.is_full()
+    }
+
     /// Returns an `Accept` value that will accept if either `self` or `other` does.
     pub fn union(&self, other: &Accept) -> Accept {
         Accept {
