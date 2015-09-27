@@ -11,7 +11,7 @@ use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
-use searcher::{Searcher, MemchrAsciiSetSearcher, MemchrSearcher};
+use searcher::{ExtAsciiSet, ByteSearcher, RepeatUntil, Searcher, SearchThenMatch, StrSearcher};
 use std;
 use std::ascii::AsciiExt;
 use std::collections::{HashSet, HashMap};
@@ -586,8 +586,8 @@ impl Dfa {
         }
         if !st.transitions.is_empty() {
             if ret.is_empty() {
-                if let Some((set, na, transitions)) = loop_optimization(&st.transitions, st_idx) {
-                    ret.push(Inst::LoopWhile(set, na));
+                if let Some((set, transitions)) = loop_optimization(&st.transitions, st_idx) {
+                    ret.push(Inst::LoopWhile(set));
                     ret.push(Inst::Branch(transitions));
                 } else {
                     ret.push(Inst::Branch(st.transitions.clone()));
@@ -634,10 +634,7 @@ pub enum Inst {
     Branch(CharMap<usize>),
 
     /// Consumes characters that belong to a set.
-    ///
-    /// If the `bool` is true, the set of characters to consume contains all non-ASCII characters.
-    /// Otherwise, the set contains no non-ASCII characters.
-    LoopWhile(AsciiSet, bool),
+    LoopWhile(ExtAsciiSet),
     Reject,
 }
 
@@ -653,11 +650,12 @@ pub struct Program {
 // Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopWhile`
 // instruction. If so, returns the lookup table and also the remaining transitions.
 fn loop_optimization(cm: &CharMap<usize>, st_idx: usize)
--> Option<(AsciiSet, bool, CharMap<usize>)> {
+-> Option<(ExtAsciiSet, CharMap<usize>)> {
     let loop_cs = cm.filter_values(|st| *st == st_idx).to_char_set();
     if is_common(&loop_cs) && (loop_cs.is_ascii() || loop_cs.contains_non_ascii()) {
         let set = loop_cs.to_ascii_set();
-        Some((set, loop_cs.contains_non_ascii(), cm.filter_values(|st| *st != st_idx)))
+        let set = ExtAsciiSet { set: set, contains_non_ascii: loop_cs.contains_non_ascii() };
+        Some((set, cm.filter_values(|st| *st != st_idx)))
     } else {
         None
     }
@@ -696,18 +694,18 @@ impl Program {
         Ok(dfa.to_program())
     }
 
-    // On a successful match, returns `Some(rest)` where `rest` is the part of the string following
-    // the match.
-    fn shortest_match_from<'a>(&self, mut s: &'a str, mut state: usize)
-    -> Option<&'a str> {
+    // On a successful match, returns `Some(end)` where `end` is the index after the end of the
+    // match.
+    fn shortest_match_from<'a>(&self, mut s: &'a str, mut state: usize) -> Option<usize> {
         use dfa::Inst::*;
+        let init_pos = s.as_ptr() as usize;
 
         loop {
             match self.insts[state] {
                 Reject => { return None; },
                 Acc(ref a) => {
                     if a.accepts(s.chars().next().map(|c| c as u32)) {
-                        return Some(s);
+                        return Some(s.as_ptr() as usize - init_pos);
                     }
                     state += 1;
                 },
@@ -739,12 +737,8 @@ impl Program {
                     }
                     return None;
                 },
-                LoopWhile(ref set, allow_non_ascii) => {
-                    let maybe_pos = if allow_non_ascii {
-                        s.as_bytes().iter().position(|x| !set.contains_byte(*x))
-                    } else {
-                        s.as_bytes().iter().position(|x| *x >= 128 || !set.contains_byte(*x))
-                    };
+                LoopWhile(ref set) => {
+                    let maybe_pos = s.as_bytes().iter().position(|x| !set.contains_byte(*x));
                     if let Some(pos) = maybe_pos {
                         state += 1;
                         s = &s[pos..];
@@ -756,10 +750,16 @@ impl Program {
         }
     }
 
-    fn memchr_searcher(&self, state: usize) -> Option<MemchrSearcher> {
-        if let Inst::Literal(ref lit) = self.insts[state] {
-            if lit.len() == 1 {
-                return Some(MemchrSearcher { byte: lit.as_bytes()[0] });
+    // A fast path for a regex that starts with something for which we can search quickly.
+    fn shortest_match_fast<S>(&self, s: &str, searcher: S, state: usize, skip_state: bool)
+            -> Option<(usize, usize)>
+            where S: Searcher
+    {
+        let state = if skip_state { state + 1 } else { state };
+        for (start, end) in searcher.iter(s) {
+            let pos = if skip_state { end } else { start };
+            if let Some(match_end) = self.shortest_match_from(&s[pos..], state) {
+                return Some((start, match_end + pos));
             }
         }
         None
@@ -787,52 +787,45 @@ impl Program {
         }
     }
 
-    fn memchr_ascii_searcher(&self, state: usize) -> Option<MemchrAsciiSetSearcher> {
-        if let Inst::Literal(ref lit) = self.insts[state] {
-            if lit.len() == 1 {
-                if let Some(set) = self.ascii_set(state + 1) {
-                    return Some(MemchrAsciiSetSearcher {
-                        byte: lit.as_bytes()[0],
-                        set: set,
-                    });
-                }
-            }
-        }
-        None
-    }
-
-    // A fast path for a regex that starts with something for which we can search quickly.
-    fn shortest_match_fast<S>(&self, s: &str, searcher: S, state: usize)
-    -> Option<(usize, usize)>
-    where S: Searcher {
-        let s_start = s.as_bytes().as_ptr() as usize;
-        for s in searcher.iter_str(s) {
-            if let Some(rest) = self.shortest_match_from(s, state) {
-                let match_start = s.as_bytes().as_ptr() as usize;
-                let rest_start = rest.as_bytes().as_ptr() as usize;
-                return Some((match_start - s_start, rest_start - s_start));
-            }
-        }
-        None
-    }
 
     /// Returns the index range of the first shortest match, if there is a match. The indices
     /// returned are byte indices of the string. The first index is inclusive; the second is
     /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
+        use dfa::Inst::*;
+
         if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
             if let Some(state) = self.init_at_start {
-                if let Some(searcher) = self.memchr_ascii_searcher(state) {
-                    return self.shortest_match_fast(s, searcher, state);
-                }
-                if let Some(searcher) = self.memchr_searcher(state) {
-                    return self.shortest_match_fast(s, searcher, state);
-                }
-                if let Inst::Literal(ref lit) = self.insts[state] {
-                    return self.shortest_match_fast(s, |x: &str| x.find(lit), state);
-                }
-                if let Some(searcher) = self.ascii_set(state) {
-                    return self.shortest_match_fast(s, searcher, state);
+                match self.insts[state] {
+                    Literal(ref lit) => {
+                        if lit.len() == 1 {
+                            let b = lit.as_bytes()[0];
+                            if let Some(set) = self.ascii_set(state + 1) {
+                                let search = SearchThenMatch(ByteSearcher(b), set);
+                                return self.shortest_match_fast(s, search, state, false);
+                            } else {
+                                return self.shortest_match_fast(s, ByteSearcher(b), state, true);
+                            }
+                        } else {
+                            return self.shortest_match_fast(s, StrSearcher(&*lit), state, true);
+                        }
+                    },
+                    LoopWhile(ref cs) => {
+                        let search = RepeatUntil(cs.complement());
+                        return self.shortest_match_fast(s, search, state, true);
+                    },
+                    Char(ref cs) => {
+                        if cs.is_ascii() {
+                            return self.shortest_match_fast(s, cs.to_ascii_set(), state, true);
+                        }
+                    },
+                    Branch(ref cm) => {
+                        let cs = cm.to_char_set();
+                        if cs.is_ascii() {
+                            return self.shortest_match_fast(s, cs.to_ascii_set(), state, false);
+                        }
+                    },
+                    _ => {},
                 }
             }
         }
@@ -840,12 +833,10 @@ impl Program {
         self.shortest_match_slow(s)
     }
 
-    fn shortest_match_slow(&self, mut s: &str) -> Option<(usize, usize)> {
-        let s_start = s.as_bytes().as_ptr() as usize;
+    fn shortest_match_slow(&self, s: &str) -> Option<(usize, usize)> {
         if let Some(state) = self.init_at_start {
-            if let Some(rest) = self.shortest_match_from(s, state) {
-                let rest_start = rest.as_bytes().as_ptr() as usize;
-                return Some((0, rest_start - s_start));
+            if let Some(end) = self.shortest_match_from(s, state) {
+                return Some((0, end))
             }
         }
 
@@ -855,14 +846,13 @@ impl Program {
             return None;
         }
 
-        while let Some((ch, rest)) = s.slice_shift_char() {
-            s = rest;
+        let mut pos: usize = 0;
+        for ch in s.chars() {
+            pos += ch.len_utf8();
 
             if let Some(state) = self.state_after(ch as u32) {
-                if let Some(rest) = self.shortest_match_from(s, state) {
-                    let match_start = s.as_bytes().as_ptr() as usize;
-                    let rest_start = rest.as_bytes().as_ptr() as usize;
-                    return Some((match_start - s_start, rest_start - s_start));
+                if let Some(end) = self.shortest_match_from(&s[pos..], state) {
+                    return Some((pos, pos + end));
                 }
             }
         }
@@ -1148,6 +1138,14 @@ mod tests {
         let re = Program::from_regex(r"(?s)a.b").unwrap();
         assert_eq!(re.shortest_match("a\nb"), Some((0, 3)));
         assert_eq!(re.shortest_match("a\rb"), Some((0, 3)));
+    }
+
+    #[test]
+    fn test_bug() {
+        let re = Program::from_regex("(.*)c(.*)").unwrap();
+        let text = "abcde";
+        println!("{:?}", re);
+        assert_eq!(re.shortest_match(text), Some((0, 3)));
     }
 }
 

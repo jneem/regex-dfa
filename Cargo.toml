@@ -20,9 +20,6 @@ memchr = "0.1.6"
 rand = "0.3"
 serde_json = "0.6"
 
-[profile.release]
-debug = true
-
 [[bench]]
 name = "dynamic"
 path = "benches/bench_dynamic.rs"
@@ -32,6 +29,6 @@ bench = true
 [[bench]]
 name = "dfa"
 path = "benches/bench_dfa_prog.rs"
-test = false
+test = true
 bench = true
 

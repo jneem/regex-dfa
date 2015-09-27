@@ -20,8 +20,7 @@ fn external_tests() {
         if status == "MATCH" {
             let re_str = test.get("pattern").unwrap().as_string().unwrap();
             let text = test.get("text").unwrap().as_string().unwrap();
-            println!("re: {:?}", re_str);
-            println!("text: {:?}", text);
+            println!("re: {:?}, text: {:?}", re_str, text);
             let range_arr = test.get("full_match").unwrap().as_array().unwrap();
             let range = (
                 range_arr[0].as_u64().unwrap() as usize,
