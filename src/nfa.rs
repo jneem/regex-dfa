@@ -101,18 +101,6 @@ impl Debug for Nfa {
 }
 
 impl Nfa {
-    pub fn new() -> Nfa {
-        Nfa {
-            states: Vec::new(),
-            init_at_start: BitSet::new(),
-            init_after_char: CharMap::new(),
-        }
-    }
-
-    pub fn num_states(&self) -> usize {
-        self.states.len()
-    }
-
     pub fn from_regex(re: &str) -> Result<Nfa, error::Error> {
         let expr = try!(regex_syntax::Expr::parse(re));
         Ok(NfaBuilder::from_expr(&expr).to_automaton())
@@ -469,11 +457,11 @@ mod tests {
         let mut nfa = Nfa::from_regex("^a").unwrap();
         // There should be a beginning predicate between states 0 and 4, an eps transition from 1
         // to 2, and 'a' transitions from 2 to 3 and 4 to 3.
-        assert_eq!(nfa.num_states(), 4);
+        assert_eq!(nfa.states.len(), 4);
         nfa.remove_predicates();
-        assert_eq!(nfa.num_states(), 5);
+        assert_eq!(nfa.states.len(), 5);
 
-        let mut target = Nfa::new();
+        let mut target = Nfa::with_capacity(6);
         target.add_state(Accept::never());
         target.add_state(Accept::never());
         target.add_state(Accept::never());
@@ -515,11 +503,11 @@ mod tests {
         // There should be a word boundary predicate between states 0 and 5, an eps transition from
         // 1 to 2, and 'a' transitions from 2 to 3 and 5 to 3. There will also be a useless state
         // 4.
-        assert_eq!(nfa.num_states(), 4);
+        assert_eq!(nfa.states.len(), 4);
         nfa.remove_predicates();
-        assert_eq!(nfa.num_states(), 6);
+        assert_eq!(nfa.states.len(), 6);
 
-        let mut target = Nfa::new();
+        let mut target = Nfa::with_capacity(6);
         target.add_state(Accept::never());
         target.add_state(Accept::never());
         target.add_state(Accept::never());
@@ -538,11 +526,11 @@ mod tests {
     #[test]
     fn test_word_boundary_end() {
         let mut nfa = Nfa::from_regex(r"a\b").unwrap();
-        assert_eq!(nfa.num_states(), 4);
+        assert_eq!(nfa.states.len(), 4);
         nfa.remove_predicates();
-        assert_eq!(nfa.num_states(), 6);
+        assert_eq!(nfa.states.len(), 6);
 
-        let mut target = Nfa::new();
+        let mut target = Nfa::with_capacity(6);
         target.add_state(Accept::never());
         target.add_state(Accept::never());
         target.add_state(Accept::never());

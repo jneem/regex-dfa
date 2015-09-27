@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use std::fmt::Debug;
 use unicode::PERLW;
@@ -157,14 +156,6 @@ pub struct Accept {
 impl Eq for Accept {}
 
 impl Accept {
-    /// Returns a new `Accept` that accepts only at the end of input.
-    pub fn at_eoi() -> Accept {
-        Accept {
-            at_eoi: true,
-            at_char: CharSet::new(),
-        }
-    }
-
     /// Returns a new `Accept` that always accepts.
     pub fn always() -> Accept {
         Accept {
@@ -179,19 +170,6 @@ impl Accept {
             at_eoi: false,
             at_char: CharSet::new(),
         }
-    }
-
-    /// Returns a new `Accept` that accepts if the next char belongs to `char_set`.
-    pub fn at_char(char_set: CharSet) -> Accept {
-        Accept {
-            at_eoi: false,
-            at_char: char_set,
-        }
-    }
-
-    /// Returns true if this always accepts.
-    pub fn is_always(&self) -> bool {
-        self.at_eoi && self.at_char.is_full()
     }
 
     /// Returns true if this never accepts.
@@ -233,32 +211,10 @@ impl NfaTransitions {
             predicates: Vec::new(),
         }
     }
-
-    pub fn from_vec(vec: Vec<(CharRange, usize)>) -> NfaTransitions {
-        NfaTransitions {
-            consuming: CharMultiMap::from_vec(vec),
-            eps: Vec::new(),
-            predicates: Vec::new(),
-        }
-    }
-
-    /// Groups and sorts the consuming transitions.
-    ///
-    /// If we map `ch` to `state` then the return value of this method will map `ch` to a set
-    /// containing `state`.
-    pub fn group_consuming(&self) -> CharMap<BitSet> {
-        self.consuming.group()
-    }
-
-    /// Like `group_consuming`, but only returns the groups.
-    pub fn groups(&self) -> Vec<BitSet> {
-        self.group_consuming().into_iter().map(|x| x.1).collect()
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use bit_set::BitSet;
     use char_map::*;
     use transition::*;
 
@@ -334,39 +290,45 @@ mod tests {
         let full = PredicatePart::full();
         let bdy = PredicatePart::at_boundary();
 
-        let acc_eoi = Accept::at_eoi();
-        let acc_a = Accept::at_char(CharSet::single('a' as u32));
+        let acc_eoi = Accept { at_eoi: true, at_char: CharSet::new() };
+        let acc_a = Accept { at_eoi: false, at_char: CharSet::single('a' as u32) };
+        let always = Accept::always();
+        let never = Accept::never();
 
-        assert!(Predicate(e.clone(), e.clone()).filter_accept(&acc_eoi).is_never());
-        assert!(Predicate(e.clone(), e.clone()).filter_accept(&acc_a).is_never());
-        assert!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::never()).is_never());
-        assert!(Predicate(e.clone(), e.clone()).filter_accept(&Accept::always()).is_never());
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&acc_eoi), never);
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&acc_a), never);
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&never), never);
+        assert_eq!(Predicate(e.clone(), e.clone()).filter_accept(&always), never);
 
-        assert!(Predicate(e.clone(), a.clone()).filter_accept(&acc_eoi).is_never());
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&acc_eoi), never);
         assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&acc_a), acc_a);
-        assert!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::never()).is_never());
-        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&Accept::always()), acc_a);
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&never), never);
+        assert_eq!(Predicate(e.clone(), a.clone()).filter_accept(&always), acc_a);
 
         assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&acc_eoi), acc_eoi);
         assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&acc_a), acc_a);
-        assert!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::never()).is_never());
-        assert!(Predicate(e.clone(), full.clone()).filter_accept(&Accept::always()).is_always());
+        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&never), never);
+        assert_eq!(Predicate(e.clone(), full.clone()).filter_accept(&always), always);
 
         assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_eoi), acc_eoi);
-        assert!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_a).is_never());
-        assert!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::never()).is_never());
-        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&Accept::always()), acc_eoi);
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&acc_a), never);
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&never), never);
+        assert_eq!(Predicate(e.clone(), bdy.clone()).filter_accept(&always), acc_eoi);
     }
 
     #[test]
     fn test_union() {
-        assert!(Accept::never().union(&Accept::always()).is_always());
-        assert!(Accept::never().union(&Accept::never()).is_never());
-        assert_eq!(Accept::never().union(&Accept::at_eoi()), Accept::at_eoi());
-        assert!(Accept::always().union(&Accept::at_eoi()).is_always());
+        let acc_eoi = Accept { at_eoi: true, at_char: CharSet::new() };
+        let always = Accept::always();
+        let never = Accept::never();
 
-        let acc_a = Accept::at_char(CharSet::single('a' as u32));
-        let acc_b = Accept::at_char(CharSet::single('b' as u32));
+        assert_eq!(Accept::never().union(&always), always);
+        assert_eq!(Accept::never().union(&never), never);
+        assert_eq!(Accept::never().union(&acc_eoi), acc_eoi);
+        assert_eq!(Accept::always().union(&acc_eoi), always);
+
+        let acc_a = Accept { at_eoi: false, at_char: CharSet::single('a' as u32) };
+        let acc_b = Accept { at_eoi: false, at_char: CharSet::single('b' as u32) };
         let acc_ab = {
             let mut cs_ab = CharSet::new();
             cs_ab.push(CharRange::new('a' as u32, 'b' as u32));
@@ -374,26 +336,7 @@ mod tests {
         };
         assert_eq!(acc_a.union(&acc_b), acc_ab);
         assert_eq!(acc_a.union(&Accept::never()), acc_a);
-        assert!(acc_a.union(&Accept::always()).is_always());
-    }
-
-    #[test]
-    fn test_groups() {
-        let trans = NfaTransitions::from_vec(vec![
-            (CharRange::new(0, 2), 0),
-            (CharRange::new(4, 5), 2),
-            (CharRange::new(0, 2), 2),
-            (CharRange::new(3, 3), 1),
-            (CharRange::new(4, 5), 1),
-        ]);
-        let mut sets = trans.groups();
-        sets.sort();
-
-        assert_eq!(sets, vec![
-            BitSet::from_bytes(&[0b10100000]),
-            BitSet::from_bytes(&[0b01000000]),
-            BitSet::from_bytes(&[0b01100000]),
-        ]);
+        assert_eq!(acc_a.union(&Accept::always()), always);
     }
 }
 

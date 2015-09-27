@@ -31,7 +31,6 @@ necessarily find the exact same match that a standard regex engine will.
 */
 
 #![feature(slice_splits, str_char, test)]
-#![allow(dead_code)]
 
 extern crate ascii_set;
 extern crate bit_set;
