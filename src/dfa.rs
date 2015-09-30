@@ -7,12 +7,11 @@
 // except according to those terms.
 
 use aho_corasick::{AcAutomaton, Automaton, FullAcAutomaton};
-use ascii_set::AsciiSet;
 use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
-use searcher::{ExtAsciiSet, ByteSearcher, RepeatUntil, Searcher, SearchThenMatch, StrSearcher};
+use searcher::{ExtAsciiSet, Search, AsciiSetIter, ByteIter, LoopIter, StrIter};
 use std;
 use std::ascii::AsciiExt;
 use std::collections::{BinaryHeap, HashSet, HashMap};
@@ -506,106 +505,7 @@ pub struct Program {
     init_at_start: Option<usize>,
     init_after_char: CharMap<usize>,
     init_otherwise: Option<usize>,
-    runner: Box<Runner>,
-}
-
-// A Runner is basically a `Fn(&Program, &str) -> Option<(usize, usize)>`,
-// except that Box<Fn> isn't clonable, and so we do this as a workaround.
-trait Runner {
-    fn run(&self, prog: &Program, input: &str) -> Option<(usize, usize)>;
-    fn box_clone(&self) -> Box<Runner>;
-}
-
-impl Clone for Box<Runner> {
-    fn clone(&self) -> Box<Runner> {
-        self.box_clone()
-    }
-}
-
-#[derive(Clone)]
-struct SearchRunner<S: Searcher> {
-    rewind: bool,
-    start_state: usize,
-    searcher: S,
-}
-
-impl<S: Searcher + Clone + 'static> Runner for SearchRunner<S> {
-    fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
-        for (start, end) in self.searcher.iter(s) {
-            let pos = if self.rewind { start } else { end };
-            if let Some(match_end) = prog.shortest_match_from(&s[pos..], self.start_state) {
-                return Some((start, match_end + pos));
-            }
-        }
-        None
-    }
-
-    fn box_clone(&self) -> Box<Runner> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone)]
-struct AcRunner {
-    auto: FullAcAutomaton<String>,
-    pattern_state_map: Vec<usize>,
-    complete: bool,
-}
-
-impl Runner for AcRunner {
-    fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
-        for m in self.auto.find_overlapping(s) {
-            if self.complete {
-                return Some((m.start, m.end));
-            }
-
-            let state = self.pattern_state_map[m.pati];
-            if let Some(end) = prog.shortest_match_from(&s[m.end..], state) {
-                return Some((m.start, end));
-            }
-        }
-        None
-    }
-
-    fn box_clone(&self) -> Box<Runner> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone)]
-struct SlowRunner;
-
-impl Runner for SlowRunner {
-    fn run(&self, prog: &Program, s: &str) -> Option<(usize, usize)> {
-        if let Some(state) = prog.init_at_start {
-            if let Some(end) = prog.shortest_match_from(s, state) {
-                return Some((0, end))
-            }
-        }
-
-        // Skip looping through the string if we know that the match has to start
-        // at the beginning.
-        if prog.init_otherwise.is_none() && prog.init_after_char.is_empty() {
-            return None;
-        }
-
-        let mut pos: usize = 0;
-        for ch in s.chars() {
-            pos += ch.len_utf8();
-
-            if let Some(state) = prog.state_after(ch as u32) {
-                if let Some(end) = prog.shortest_match_from(&s[pos..], state) {
-                    return Some((pos, pos + end));
-                }
-            }
-        }
-
-        None
-    }
-
-    fn box_clone(&self) -> Box<Runner> {
-        Box::new(self.clone())
-    }
+    searcher: Search,
 }
 
 // Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopWhile`
@@ -778,7 +678,7 @@ impl PrefixSearcher {
         }
     }
 
-    fn to_ac(&self) -> Option<AcRunner> {
+    fn to_ac(&self) -> Option<(FullAcAutomaton<String>, Vec<usize>)> {
         if self.finished.len() <= 1
                 || self.finished.iter().any(|s| s.0.is_empty())
                 || self.finished.iter().all(|s| s.0.len() <= 1) {
@@ -787,11 +687,7 @@ impl PrefixSearcher {
             let strings: Vec<String> = self.finished.iter().map(|x| x.0.clone()).collect();
             let auto = FullAcAutomaton::new(AcAutomaton::new(strings));
             let map: Vec<usize> = self.finished.iter().map(|x| x.1).collect();
-            Some(AcRunner {
-                auto: auto,
-                complete: self.complete,
-                pattern_state_map: map,
-            })
+            Some((auto, map))
         }
     }
 }
@@ -803,7 +699,7 @@ impl Program {
             init_at_start: None,
             init_after_char: CharMap::new(),
             init_otherwise: None,
-            runner: Box::new(SlowRunner),
+            searcher: Search::Empty,
         }
     }
 
@@ -814,7 +710,7 @@ impl Program {
     pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Program, error::Error> {
         let dfa = try!(Dfa::from_regex_bounded(re, max_states));
         let mut prog = dfa.to_program();
-        prog.runner = prog.make_runner();
+        prog.searcher = prog.make_search();
         Ok(prog)
     }
 
@@ -874,77 +770,97 @@ impl Program {
         }
     }
 
-    // If the set of allowed chars at the given state are all ASCII, build an optimized
-    // representation of the allowed chars.
-    fn ascii_set(&self, state: usize) -> Option<AsciiSet> {
-        match self.insts[state] {
-            Inst::Char(ref cs) =>
-                if cs.is_ascii() {
-                    Some(cs.to_ascii_set())
-                } else {
-                    None
-                },
-            Inst::Branch(ref cm) => {
-                let cs = cm.to_char_set();
-                if cs.is_ascii() {
-                    Some(cs.to_ascii_set())
-                } else {
-                    None
-                }
-            },
-            _ => None,
+    /// `positions` iterates over `(prefix_start, prog_start, state)`
+    fn shortest_match_from_iter<I>(&self, input: &str, positions: I) -> Option<(usize, usize)>
+        where I: Iterator<Item=(usize, usize, usize)>
+    {
+        for (pref_start, prog_start, state) in positions {
+            if let Some(end) = self.shortest_match_from(&input[prog_start..], state) {
+                return Some((pref_start, prog_start + end));
+            }
         }
+        None
     }
 
     /// Returns the index range of the first shortest match, if there is a match. The indices
     /// returned are byte indices of the string. The first index is inclusive; the second is
     /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        self.runner.run(self, s)
+        match self.searcher {
+            Search::AsciiChar(ref cs, state) =>
+                self.shortest_match_from_iter(s, AsciiSetIter::new(s, cs.clone(), state)),
+            Search::Byte(b, state) =>
+                self.shortest_match_from_iter(s, ByteIter::new(s, b, state)),
+            Search::Lit(ref lit, state) =>
+                self.shortest_match_from_iter(s, StrIter::new(s, lit, state)),
+            Search::Ac(ref ac, ref state_table) => {
+                let iter = ac.find_overlapping(s).map(|m| (m.start, m.end, state_table[m.pati]));
+                self.shortest_match_from_iter(s, iter)
+            },
+            Search::LoopUntil(ref cs, state) =>
+                self.shortest_match_from_iter(s, LoopIter::new(s, cs.clone(), state)),
+            Search::Empty => self.shortest_match_slow(s),
+        }
     }
 
-    fn make_runner(&self) -> Box<Runner> {
-        use dfa::Inst::*;
-
-        fn fast<S>(search: S, state: usize, rewind: bool) -> Box<Runner>
-                where S: Searcher + Clone + 'static
-        {
-            Box::new(SearchRunner { searcher: search, start_state: state, rewind: rewind })
+    fn shortest_match_slow(&self, s: &str) -> Option<(usize, usize)> {
+        if let Some(state) = self.init_at_start {
+            if let Some(end) = self.shortest_match_from(s, state) {
+                return Some((0, end))
+            }
         }
+
+        // Skip looping through the string if we know that the match has to start
+        // at the beginning.
+        if self.init_otherwise.is_none() && self.init_after_char.is_empty() {
+            return None;
+        }
+
+        let mut pos: usize = 0;
+        for ch in s.chars() {
+            pos += ch.len_utf8();
+
+            if let Some(state) = self.state_after(ch as u32) {
+                if let Some(end) = self.shortest_match_from(&s[pos..], state) {
+                    return Some((pos, pos + end));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn make_search(&self) -> Search {
+        use dfa::Inst::*;
 
         if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
             if let Some(state) = self.init_at_start {
                 let mut prefixes = PrefixSearcher::new(30, 15); // FIXME: constants
                 prefixes.search(self, state);
-                if let Some(ac) = prefixes.to_ac() {
-                    return Box::new(ac);
+                if let Some((ac, state_map)) = prefixes.to_ac() {
+                    return Search::Ac(ac, state_map);
                 }
 
                 match self.insts[state] {
                     Literal(ref lit) => {
                         if lit.len() == 1 {
-                            let b = lit.as_bytes()[0];
-                            if let Some(set) = self.ascii_set(state + 1) {
-                                return fast(SearchThenMatch(ByteSearcher(b), set), state, true);
-                            } else {
-                                return fast(ByteSearcher(b), state + 1, false);
-                            }
+                            return Search::Byte(lit.as_bytes()[0], state + 1);
                         } else {
-                            return fast(StrSearcher(lit.clone()), state + 1, false);
+                            return Search::Lit(lit.clone(), state + 1);
                         }
                     },
                     LoopWhile(ref cs) => {
-                        return fast(RepeatUntil(cs.complement()), state + 1, false);
+                        return Search::LoopUntil(cs.complement(), state + 1);
                     },
                     Char(ref cs) => {
                         if cs.is_ascii() {
-                            return fast(cs.to_ascii_set(), state + 1, false);
+                            return Search::AsciiChar(cs.to_ascii_set(), state);
                         }
                     },
                     Branch(ref cm) => {
                         let cs = cm.to_char_set();
                         if cs.is_ascii() {
-                            return fast(cs.to_ascii_set(), state, true);
+                            return Search::AsciiChar(cs.to_ascii_set(), state);
                         }
                     },
                     _ => {},
@@ -952,7 +868,7 @@ impl Program {
             }
         }
 
-        Box::new(SlowRunner)
+        Search::Empty
     }
 
     fn state_after(&self, ch: u32) -> Option<usize> {
@@ -1166,10 +1082,10 @@ mod tests {
 
     #[test]
     fn test_bug() {
-        let re = Program::from_regex("(.*)c(.*)").unwrap();
-        let text = "abcde";
+        let re = Program::from_regex("abc").unwrap();
+        let text = "xabcx";
         println!("{:?}", re);
-        assert_eq!(re.shortest_match(text), Some((0, 3)));
+        assert_eq!(re.shortest_match(text), Some((1, 4)));
     }
 }
 
