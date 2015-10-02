@@ -36,7 +36,6 @@ extern crate aho_corasick;
 extern crate ascii_set;
 extern crate bit_set;
 extern crate memchr;
-extern crate regex;
 extern crate regex_syntax;
 extern crate test;
 

@@ -714,6 +714,12 @@ impl Program {
         Ok(prog)
     }
 
+    pub fn is_anchored(&self) -> bool {
+        self.init_at_start.is_some()
+            && self.init_otherwise.is_none()
+            && self.init_after_char.is_empty()
+    }
+
     // On a successful match, returns `Some(end)` where `end` is the index after the end of the
     // match.
     fn shortest_match_from<'a>(&self, mut s: &'a str, mut state: usize) -> Option<usize> {
@@ -860,6 +866,10 @@ impl Program {
                     Branch(ref cm) => {
                         let cs = cm.to_char_set();
                         if cs.is_ascii() {
+                            if cs.char_count() == 1 {
+                                let &(range, state) = cm.iter().next().unwrap();
+                                return Search::Byte(range.start as u8, state);
+                            }
                             return Search::AsciiChar(cs.to_ascii_set(), state);
                         }
                     },
@@ -888,6 +898,7 @@ impl Debug for Program {
         try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init_at_start)));
         try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init_after_char)));
         try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init_otherwise)));
+        try!(f.write_fmt(format_args!("Searcher: {:?}\n", self.searcher)));
 
         for (idx, inst) in self.insts.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
@@ -899,8 +910,10 @@ impl Debug for Program {
 #[cfg(test)]
 mod tests {
     use char_map::{CharMap, CharRange, CharSet};
-    use dfa::{Dfa, Program};
+    use dfa::*;
+    use dfa::PrefixSearcher;
     use nfa::Nfa;
+    use searcher::Search;
     use std::usize;
     use transition::Accept;
 
@@ -1081,11 +1094,48 @@ mod tests {
     }
 
     #[test]
-    fn test_bug() {
-        let re = Program::from_regex("abc").unwrap();
-        let text = "xabcx";
-        println!("{:?}", re);
-        assert_eq!(re.shortest_match(text), Some((1, 4)));
+    fn test_prefixes() {
+        let re = Program::from_regex("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap();
+        let mut pref = PrefixSearcher::new(4, 30);
+        pref.search(&re, re.init_otherwise.unwrap());
+        let mut prefs = pref.finished.into_iter().map(|x| x.0).collect::<Vec<_>>();
+        prefs.sort();
+        assert_eq!(prefs, vec!["XABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                   "YABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                   "ZABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        ]);
+    }
+
+    #[test]
+    fn test_search_choice() {
+        fn is_byte(s: &Search) -> bool {
+            if let &Search::Byte(_, _) = s { true } else { false }
+        }
+        fn is_lit(s: &Search) -> bool {
+            if let &Search::Lit(_, _) = s { true } else { false }
+        }
+        fn is_loop(s: &Search) -> bool {
+            if let &Search::LoopUntil(_, _) = s { true } else { false }
+        }
+        fn is_ac(s: &Search) -> bool {
+            if let &Search::Ac(_, _) = s { true } else { false }
+        }
+        fn is_ascii(s: &Search) -> bool {
+            if let &Search::AsciiChar(_, _) = s { true } else { false }
+        }
+
+        let re = Program::from_regex(r"a.*b").unwrap();
+        assert!(is_byte(&re.searcher));
+        let re = Program::from_regex(r"abc.*b").unwrap();
+        assert!(is_lit(&re.searcher));
+        let re = Program::from_regex(r".*abc").unwrap();
+        assert!(is_loop(&re.searcher));
+        let re = Program::from_regex("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ$").unwrap();
+        assert!(is_ac(&re.searcher));
+        let re = Program::from_regex("[ab].*cd").unwrap();
+        assert!(is_ascii(&re.searcher));
+        let re = Program::from_regex("(f.*f|b.*b)").unwrap();
+        assert!(is_ascii(&re.searcher));
     }
 }
 
