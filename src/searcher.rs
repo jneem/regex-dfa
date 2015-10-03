@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use aho_corasick::FullAcAutomaton;
+use aho_corasick::{Automaton, FullAcAutomaton};
 use ascii_set::AsciiSet;
 use memchr::memchr;
 
@@ -178,3 +178,40 @@ impl<'a> Iterator for AsciiSetIter<'a> {
     }
 }
 
+// TODO: for some reason, rolling our own iterator here is faster than using the
+// aho_corasick crate's `find_overlapping` method. Figure out why.
+pub struct AcIter<'input, 'ac, 'map> {
+    ac: &'ac FullAcAutomaton<String>,
+    input: &'input str,
+    pos: usize,
+    state_map: &'map [usize],
+}
+
+impl<'input, 'ac, 'map> AcIter<'input, 'ac, 'map> {
+    pub fn new(input: &'input str, ac: &'ac FullAcAutomaton<String>, state_map: &'map [usize])
+            -> AcIter<'input, 'ac, 'map> {
+        AcIter {
+            ac: ac,
+            input: input,
+            pos: 0,
+            state_map: state_map,
+        }
+    }
+}
+
+impl<'input, 'ac, 'map> Iterator for AcIter<'input, 'ac, 'map> {
+    type Item = (usize, usize, usize);
+
+    fn next(&mut self) -> Option<(usize, usize, usize)> {
+        if let Some(mat) = self.ac.find(&self.input[self.pos..]).next() {
+            let ret = Some((self.pos + mat.start, self.pos + mat.end, self.state_map[mat.pati]));
+            self.pos += mat.start;
+            if self.pos < self.input.len() {
+                self.pos += self.input.char_at(self.pos).len_utf8();
+            }
+            ret
+        } else {
+            None
+        }
+    }
+}

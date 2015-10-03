@@ -11,7 +11,7 @@ use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
-use searcher::{ExtAsciiSet, Search, AsciiSetIter, ByteIter, LoopIter, StrIter};
+use searcher::{ExtAsciiSet, Search, AcIter, AsciiSetIter, ByteIter, LoopIter, StrIter};
 use std;
 use std::ascii::AsciiExt;
 use std::collections::{BinaryHeap, HashSet, HashMap};
@@ -20,6 +20,10 @@ use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
 use transition::Accept;
+
+// TODO: these limits are pretty arbitrary (just copied from the regex crate).
+const NUM_PREFIX_LIMIT: usize = 30;
+const PREFIX_LEN_LIMIT: usize = 15;
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -549,13 +553,13 @@ fn is_common(cs: &CharSet) -> bool {
 struct Prefix(pub String, pub usize);
 impl PartialOrd for Prefix {
     fn partial_cmp(&self, other: &Prefix) -> Option<Ordering> {
-        self.0.len().partial_cmp(&other.0.len())
+        self.0.len().partial_cmp(&other.0.len()).map(|x| x.reverse())
     }
 }
 
 impl Ord for Prefix {
     fn cmp(&self, other: &Prefix) -> Ordering {
-        self.partial_cmp(&other).unwrap()
+        self.partial_cmp(&other).unwrap().reverse()
     }
 }
 
@@ -601,7 +605,7 @@ impl PrefixSearcher {
 
     // Returns true if we bailed out.
     fn add(&mut self, new_prefs: Vec<Prefix>) -> bool {
-        if new_prefs.len() + self.active.len() + self.finished.len() >= self.max_prefixes {
+        if new_prefs.len() + self.active.len() + self.finished.len() > self.max_prefixes {
             self.bail_out();
             true
         } else {
@@ -617,7 +621,7 @@ impl PrefixSearcher {
     }
 
     fn too_many(&mut self, more: usize) -> bool {
-        if self.active.len() + self.finished.len() + more >= self.max_prefixes {
+        if self.active.len() + self.finished.len() + more > self.max_prefixes {
             self.bail_out();
             true
         } else {
@@ -809,10 +813,8 @@ impl Program {
                 self.shortest_match_from_iter(s, ByteIter::new(s, b, state)),
             Search::Lit(ref lit, state) =>
                 self.shortest_match_from_iter(s, StrIter::new(s, lit, state)),
-            Search::Ac(ref ac, ref state_table) => {
-                let iter = ac.find_overlapping(s).map(|m| (m.start, m.end, state_table[m.pati]));
-                self.shortest_match_from_iter(s, iter)
-            },
+            Search::Ac(ref ac, ref state_table) =>
+                self.shortest_match_from_iter(s, AcIter::new(s, ac, &*state_table)),
             Search::LoopUntil(ref cs, state) =>
                 self.shortest_match_from_iter(s, LoopIter::new(s, cs.clone(), state)),
             Search::Empty => self.shortest_match_slow(s),
@@ -851,7 +853,7 @@ impl Program {
 
         if self.init_after_char.is_empty() && self.init_at_start == self.init_otherwise {
             if let Some(state) = self.init_at_start {
-                let mut prefixes = PrefixSearcher::new(30, 15); // FIXME: constants
+                let mut prefixes = PrefixSearcher::new(NUM_PREFIX_LIMIT, PREFIX_LEN_LIMIT);
                 prefixes.search(self, state);
                 if let Some((ac, state_map)) = prefixes.to_ac() {
                     return Search::Ac(ac, state_map);
@@ -1105,15 +1107,24 @@ mod tests {
 
     #[test]
     fn test_prefixes() {
-        let re = Program::from_regex("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap();
-        let mut pref = PrefixSearcher::new(4, 30);
-        pref.search(&re, re.init_otherwise.unwrap());
-        let mut prefs = pref.finished.into_iter().map(|x| x.0).collect::<Vec<_>>();
-        prefs.sort();
-        assert_eq!(prefs, vec!["XABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                   "YABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                   "ZABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        ]);
+        fn test_prefix(re_str: &str, answer: Vec<&str>, max_num: usize, max_len: usize) {
+            let re = Program::from_regex(re_str).unwrap();
+            let mut pref = PrefixSearcher::new(max_num, max_len);
+            pref.search(&re, re.init_otherwise.unwrap());
+            let mut prefs = pref.finished.into_iter().map(|x| x.0).collect::<Vec<_>>();
+            prefs.sort();
+            assert_eq!(prefs, answer);
+        }
+
+        test_prefix("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            vec!["XABCDEFGHIJKLMNOPQRSTUVWXYZ",
+               "YABCDEFGHIJKLMNOPQRSTUVWXYZ",
+               "ZABCDEFGHIJKLMNOPQRSTUVWXYZ",],
+            3, 30);
+
+        test_prefix("(?i)abc[a-z]",
+            vec!["ABC", "ABc", "AbC", "Abc", "aBC", "aBc", "abC", "abc"],
+            30, 5);
     }
 
     #[test]
