@@ -70,11 +70,13 @@ impl<'a> Iterator for ByteIter<'a> {
     type Item = (usize, usize, usize);
 
     fn next(&mut self) -> Option<(usize, usize, usize)> {
+        let ret =
         memchr(self.byte, &self.input.as_bytes()[self.pos..])
             .map(|pos| {
-                self.pos = pos + 1;
-                (pos, pos + 1, self.state)
-            })
+                self.pos += pos + 1;
+                (self.pos - 1, self.pos, self.state)
+            });
+        ret
     }
 }
 
@@ -168,9 +170,8 @@ impl<'a> Iterator for AsciiSetIter<'a> {
     fn next(&mut self) -> Option<(usize, usize, usize)> {
         if let Some(pos) = self.input.as_bytes()[self.pos..].iter()
                 .position(|c| self.chars.contains_byte(*c)) {
-            let ret = Some((pos, pos, self.state));
             self.pos += pos + 1;
-            ret
+            Some((self.pos - 1, self.pos - 1, self.state))
         } else {
             None
         }

@@ -419,16 +419,21 @@ impl Dfa {
         let mut lit_in_progress = String::new();
         while self.is_chain_link(st_idx, rev) {
             let st = &self.states[st_idx];
-            if !st.accept.is_never() {
-                ret.push(Inst::Acc(st.accept.clone()));
-            }
-            if let Some(ch) = Dfa::single_char(st.transitions.iter()) {
-                lit_in_progress.push(std::char::from_u32(ch).unwrap());
-            } else {
+            let single_char = Dfa::single_char(st.transitions.iter());
+
+            if single_char.is_none() || !st.accept.is_never() {
+                // We can't continue the literal, so flush it.
                 if !lit_in_progress.is_empty() {
                     ret.push(Inst::Literal(lit_in_progress));
                     lit_in_progress = String::new();
                 }
+            }
+            if !st.accept.is_never() {
+                ret.push(Inst::Acc(st.accept.clone()));
+            }
+            if let Some(ch) = single_char {
+                lit_in_progress.push(std::char::from_u32(ch).unwrap());
+            } else {
                 ret.push(Inst::Char(st.transitions.to_char_set()));
             }
 
@@ -533,6 +538,7 @@ fn is_common(cs: &CharSet) -> bool {
     common_chars.push(CharRange::new('a' as u32, 'z' as u32));
     let common_chars_count = 10 + 26 + 26;
 
+    // TODO: this threshold is pretty arbitrary...
     cs.intersect(&common_chars).char_count() >= (common_chars_count * 3 / 4)
 }
 
@@ -792,6 +798,10 @@ impl Program {
     /// returned are byte indices of the string. The first index is inclusive; the second is
     /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
+        if self.insts.is_empty() {
+            return None;
+        }
+
         match self.searcher {
             Search::AsciiChar(ref cs, state) =>
                 self.shortest_match_from_iter(s, AsciiSetIter::new(s, cs.clone(), state)),

@@ -332,6 +332,11 @@ impl Nfa {
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
     pub fn determinize(&self, max_states: usize) -> Result<Dfa, error::Error> {
+        if self.states.is_empty() {
+            // FIXME: figure out what to do for empty automata
+            return Err(error::Error::TooManyStates);
+        }
+
         let mut ret = Dfa::new();
         let mut state_map = HashMap::<BitSet, usize>::new();
         let mut active_states = Vec::<BitSet>::new();

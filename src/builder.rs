@@ -168,6 +168,14 @@ impl NfaBuilder {
     /// The new states represent a language that accepts at least `min` and at most `maybe_max`
     /// copies of `expr`. (If `maybe_max` is `None`, there is no upper bound.)
     fn add_repeat_min_max(&mut self, expr: &Expr, min: u32, maybe_max: Option<u32>) {
+        if min == 0 && maybe_max == Some(0) {
+            // We add a state anyway, in order to maintain the convention that every expr should
+            // add at least one state (otherwise keeping track of indices becomes much more
+            // tedious).
+            self.states.push(BuilderState::new());
+            return;
+        }
+
         // The starting index of the repetition that we are currently working on.
         let mut cur_init_idx = self.states.len();
         if min > 0 {
