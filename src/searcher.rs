@@ -44,6 +44,8 @@ pub enum Search {
     LoopUntil(ExtAsciiSet, usize),
 }
 
+/// An iterator that searchest for a given byte. The second position is the one after the matched
+/// byte.
 pub struct ByteIter<'a> {
     input: &'a str,
     byte: u8,
@@ -80,6 +82,8 @@ impl<'a> Iterator for ByteIter<'a> {
     }
 }
 
+/// An iterator over (possibly overlapping) matches of a string. The second position is the one
+/// after the end of the match.
 pub struct StrIter<'hay, 'needle> {
     input: &'hay str,
     needle: &'needle str,
@@ -113,6 +117,8 @@ impl<'hay, 'needle> Iterator for StrIter<'hay, 'needle> {
     }
 }
 
+/// An iterator over all non-overlapping (but possibly empty) strings of chars belonging to a given
+/// set. The second position is the one after the end of the match.
 pub struct LoopIter<'a> {
     chars: ExtAsciiSet,
     input: &'a str,
@@ -146,6 +152,8 @@ impl<'a> Iterator for LoopIter<'a> {
     }
 }
 
+/// An iterator over all characters belonging to a certain ASCII set. The second position is the
+/// position of the match.
 pub struct AsciiSetIter<'a> {
     chars: AsciiSet,
     input: &'a str,
@@ -213,5 +221,48 @@ impl<'input, 'ac, 'map> Iterator for AcIter<'input, 'ac, 'map> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ascii_set::AsciiSet;
+
+    #[test]
+    fn test_byte_iter() {
+        let bi = ByteIter::new("abcaba", 'a' as u8, 5);
+        assert_eq!(bi.collect::<Vec<_>>(),
+            vec![(0, 1, 5), (3, 4, 5), (5, 6, 5)]);
+    }
+
+    #[test]
+    fn test_str_iter() {
+        let si = StrIter::new("abcaba", "ab", 5);
+        assert_eq!(si.collect::<Vec<_>>(),
+            vec![(0, 2, 5), (3, 5, 5)]);
+
+        let si = StrIter::new("aaaa", "aa", 5);
+        assert_eq!(si.collect::<Vec<_>>(),
+            vec![(0, 2, 5), (1, 3, 5), (2, 4, 5)]);
+    }
+
+    #[test]
+    fn test_loop_iter() {
+        let cs = ExtAsciiSet {
+            set: AsciiSet::from_chars("b".chars()),
+            contains_non_ascii: false,
+        };
+        let li = LoopIter::new("baaababaa", cs, 5);
+        assert_eq!(li.collect::<Vec<_>>(),
+            vec![(0, 0, 5), (1, 4, 5), (5, 6, 5)]);
+    }
+
+    #[test]
+    fn test_ascii_set_iter() {
+        let cs = AsciiSet::from_chars("ac".chars());
+        let asi = AsciiSetIter::new("abcba", cs, 5);
+        assert_eq!(asi.collect::<Vec<_>>(),
+            vec![(0, 0, 5), (2, 2, 5), (4, 4, 5)]);
     }
 }
