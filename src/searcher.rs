@@ -6,6 +6,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+/*!
+This module provides functions for quickly skipping through the haystack, looking for places that
+might conceivably be the start of a match. Just about everything in this module is an iterator over
+`(usize, usize, usize)` triples.
+
+  - The first `usize` is the index where the match begun. If this does turn out to be a match, the
+    DFA should report the match as beginning here. This should always be at a character boundary.
+  - The second `usize` is the index that the DFA should begin matching from. This could be
+    different from the first index because we might already know what state the DFA would be in
+    if it encountered the prefix we found. In that case, there is no need for the DFA to go back
+    and re-examine the prefix. This should always be at a character boundary.
+  - The third `usize` is the state that the DFA should start in.
+ */
+
 use aho_corasick::{Automaton, FullAcAutomaton};
 use ascii_set::AsciiSet;
 use memchr::memchr;
