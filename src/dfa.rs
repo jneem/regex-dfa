@@ -11,7 +11,7 @@ use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
-use searcher::{ExtAsciiSet, Search, AcIter, AsciiSetIter, ByteIter, LoopIter, StrIter};
+use searcher::{AsciiSetIter, ByteIter, ExtAsciiSet, LoopIter, Search, StrIter};
 use std;
 use std::ascii::AsciiExt;
 use std::collections::{BinaryHeap, HashSet, HashMap};
@@ -813,8 +813,10 @@ impl Program {
                 self.shortest_match_from_iter(s, ByteIter::new(s, b, state)),
             Search::Lit(ref lit, state) =>
                 self.shortest_match_from_iter(s, StrIter::new(s, lit, state)),
-            Search::Ac(ref ac, ref state_table) =>
-                self.shortest_match_from_iter(s, AcIter::new(s, ac, &*state_table)),
+            Search::Ac(ref ac, ref state_table) => {
+                let iter = ac.find_overlapping(s).map(|m| (m.start, m.end, state_table[m.pati]));
+                self.shortest_match_from_iter(s, iter)
+            },
             Search::LoopUntil(ref cs, state) =>
                 self.shortest_match_from_iter(s, LoopIter::new(s, cs.clone(), state)),
             Search::Empty => self.shortest_match_slow(s),
