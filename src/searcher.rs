@@ -58,8 +58,7 @@ pub enum Search {
     LoopUntil(ExtAsciiSet, usize),
 }
 
-/// An iterator that searchest for a given byte. The second position is the one after the matched
-/// byte.
+/// An iterator that searchest for a given byte. The second position is position of the byte.
 pub struct ByteIter<'a> {
     input: &'a str,
     byte: u8,
@@ -90,14 +89,14 @@ impl<'a> Iterator for ByteIter<'a> {
         memchr(self.byte, &self.input.as_bytes()[self.pos..])
             .map(|pos| {
                 self.pos += pos + 1;
-                (self.pos - 1, self.pos, self.state)
+                (self.pos - 1, self.pos - 1, self.state)
             });
         ret
     }
 }
 
 /// An iterator over (possibly overlapping) matches of a string. The second position is the one
-/// after the end of the match.
+/// at the start of the match.
 pub struct StrIter<'hay, 'needle> {
     input: &'hay str,
     needle: &'needle str,
@@ -122,7 +121,7 @@ impl<'hay, 'needle> Iterator for StrIter<'hay, 'needle> {
     fn next(&mut self) -> Option<(usize, usize, usize)> {
         if let Some(pos) = self.input[self.pos..].find(self.needle) {
             self.pos += pos;
-            let ret = Some((self.pos, self.pos + self.needle.len(), self.state));
+            let ret = Some((self.pos, self.pos, self.state));
             self.pos += self.input.char_at(pos).len_utf8();
             ret
         } else {
@@ -209,18 +208,18 @@ mod tests {
     fn test_byte_iter() {
         let bi = ByteIter::new("abcaba", 'a' as u8, 5);
         assert_eq!(bi.collect::<Vec<_>>(),
-            vec![(0, 1, 5), (3, 4, 5), (5, 6, 5)]);
+            vec![(0, 0, 5), (3, 3, 5), (5, 5, 5)]);
     }
 
     #[test]
     fn test_str_iter() {
         let si = StrIter::new("abcaba", "ab", 5);
         assert_eq!(si.collect::<Vec<_>>(),
-            vec![(0, 2, 5), (3, 5, 5)]);
+            vec![(0, 0, 5), (3, 3, 5)]);
 
         let si = StrIter::new("aaaa", "aa", 5);
         assert_eq!(si.collect::<Vec<_>>(),
-            vec![(0, 2, 5), (1, 3, 5), (2, 4, 5)]);
+            vec![(0, 0, 5), (1, 1, 5), (2, 2, 5)]);
     }
 
     #[test]

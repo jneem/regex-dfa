@@ -420,52 +420,31 @@ impl Dfa {
 
     fn build_chain(&self, mut st_idx: usize, rev: &Nfa) -> Vec<Inst> {
         let mut ret = Vec::new();
-        let mut lit_in_progress = String::new();
         while self.is_chain_link(st_idx, rev) {
             let st = &self.states[st_idx];
             let single_char = Dfa::single_char(st.transitions.iter());
 
-            if single_char.is_none() || !st.accept.is_never() {
-                // We can't continue the literal, so flush it.
-                if !lit_in_progress.is_empty() {
-                    ret.push(Inst::Literal(lit_in_progress));
-                    lit_in_progress = String::new();
-                }
-            }
             if !st.accept.is_never() {
                 ret.push(Inst::Acc(st.accept.clone()));
             }
             if let Some(ch) = single_char {
-                lit_in_progress.push(std::char::from_u32(ch).unwrap());
+                ret.push(Inst::Char(std::char::from_u32(ch).unwrap()));
             } else {
-                ret.push(Inst::Char(st.transitions.to_char_set()));
+                ret.push(Inst::CharSet(st.transitions.to_char_set()));
             }
 
             // This unwrap is OK because self.is_chain_link(st_idx, rev).
             st_idx = Dfa::single_target(self.states[st_idx].transitions.iter()).unwrap();
         }
 
-        if !lit_in_progress.is_empty() {
-            ret.push(Inst::Literal(lit_in_progress));
-        }
-
         let st = &self.states[st_idx];
         if !st.accept.is_never() {
             ret.push(Inst::Acc(st.accept.clone()));
         }
-        if !st.transitions.is_empty() {
-            if ret.is_empty() {
-                if let Some((set, transitions)) = loop_optimization(&st.transitions, st_idx) {
-                    ret.push(Inst::LoopWhile(set));
-                    ret.push(Inst::Branch(transitions));
-                } else {
-                    ret.push(Inst::Branch(st.transitions.clone()));
-                }
-            } else {
-                ret.push(Inst::Branch(st.transitions.clone()));
-            }
-        } else if ret.last() != Some(&Inst::Acc(Accept::always())) {
-            ret.push(Inst::Reject);
+        // Even if there are no transitions, add an empty branch (which is basically just an
+        // unconditional reject) if this is the last instruction in the chain.
+        if !st.transitions.is_empty() || ret.last() != Some(&Inst::Acc(Accept::always())) {
+            ret.push(Inst::Branch(st.transitions.clone()));
         }
 
         ret
@@ -497,14 +476,10 @@ impl Debug for Dfa {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Inst {
-    Literal(String),
-    Char(CharSet),
+    Char(char),
+    CharSet(CharSet),
     Acc(Accept),
     Branch(CharMap<usize>),
-
-    /// Consumes characters that belong to a set.
-    LoopWhile(ExtAsciiSet),
-    Reject,
 }
 
 /// A deterministic finite automaton, ready for fast searching.
@@ -517,33 +492,17 @@ pub struct Program {
     searcher: Search,
 }
 
-// Given the transitions at state index `st_idx`, checks to see if we should insert a `LoopWhile`
-// instruction. If so, returns the lookup table and also the remaining transitions.
-fn loop_optimization(cm: &CharMap<usize>, st_idx: usize)
--> Option<(ExtAsciiSet, CharMap<usize>)> {
+// Given the transitions at state index `st_idx`, checks to see if we should insert a loop
+// searcher. If so, returns the lookup table and also the remaining transitions.
+fn loop_optimization(cm: &CharMap<usize>, st_idx: usize) -> Option<ExtAsciiSet> {
     let loop_cs = cm.filter_values(|st| *st == st_idx).to_char_set();
-    if is_common(&loop_cs) && (loop_cs.is_ascii() || loop_cs.contains_non_ascii()) {
+    if !loop_cs.is_empty() && (loop_cs.is_ascii() || loop_cs.contains_non_ascii()) {
         let set = loop_cs.to_ascii_set();
         let set = ExtAsciiSet { set: set, contains_non_ascii: loop_cs.contains_non_ascii() };
-        Some((set, cm.filter_values(|st| *st != st_idx)))
+        Some(set)
     } else {
         None
     }
-}
-
-// The `LoopWhile` instruction is an optimization only: if we see a `Branch` instruction for which
-// "most" inputs lead back to the same instruction then we will add a `LoopWhile` instruction that
-// can be executed efficiently with a `Searcher`. This function determines what counts as "most"
-// inputs for this purpose.
-fn is_common(cs: &CharSet) -> bool {
-    let mut common_chars = CharSet::new();
-    common_chars.push(CharRange::new('0' as u32, '9' as u32));
-    common_chars.push(CharRange::new('A' as u32, 'Z' as u32));
-    common_chars.push(CharRange::new('a' as u32, 'z' as u32));
-    let common_chars_count = 10 + 26 + 26;
-
-    // TODO: this threshold is pretty arbitrary...
-    cs.intersect(&common_chars).char_count() >= (common_chars_count * 3 / 4)
 }
 
 /// A pair of a `String` and the index of the state that we are in after encountering that string.
@@ -636,13 +595,15 @@ impl PrefixSearcher {
         while !self.active.is_empty() {
             self.current = self.active.pop().unwrap();
             match prog.insts[self.current.1] {
-                Literal(ref lit) => {
-                    let next_pref = Prefix(self.current.0.clone() + lit, self.current.1 + 1);
+                Char(c) => {
+                    let mut next_pref = self.current.0.clone();
+                    next_pref.push(c);
+                    let next_pref = Prefix(next_pref, self.current.1 + 1);
                     if self.add(vec![next_pref]) {
                         break;
                     }
                 },
-                Char(ref cs) => {
+                CharSet(ref cs) => {
                     if self.too_many(cs.char_count() as usize) {
                         break;
                     }
@@ -678,12 +639,6 @@ impl PrefixSearcher {
                         break;
                     }
                 },
-                Reject => {
-                },
-                LoopWhile(_) => {
-                    self.bail_out();
-                    break;
-                },
             }
         }
     }
@@ -698,6 +653,14 @@ impl PrefixSearcher {
             let auto = FullAcAutomaton::new(AcAutomaton::new(strings));
             let map: Vec<usize> = self.finished.iter().map(|x| x.1).collect();
             Some((auto, map))
+        }
+    }
+
+    fn to_lit(&self) -> Option<String> {
+        if self.finished.len() == 1 {
+            Some(self.finished[0].0.clone())
+        } else {
+            None
         }
     }
 }
@@ -738,14 +701,21 @@ impl Program {
 
         loop {
             match self.insts[state] {
-                Reject => { return None; },
                 Acc(ref a) => {
                     if a.accepts(s.chars().next().map(|c| c as u32)) {
                         return Some(s.as_ptr() as usize - init_pos);
                     }
                     state += 1;
                 },
-                Char(ref cs) => {
+                Char(c) => {
+                    if s.starts_with(c) {
+                        state += 1;
+                        s = &s[c.len_utf8()..];
+                    } else {
+                        return None;
+                    }
+                },
+                CharSet(ref cs) => {
                     if let Some((next_ch, rest)) = s.slice_shift_char() {
                         if cs.contains(next_ch as u32) {
                             state += 1;
@@ -754,14 +724,6 @@ impl Program {
                         }
                     }
                     return None;
-                },
-                Literal(ref lit) => {
-                    if s.starts_with(lit) {
-                        state += 1;
-                        s = &s[lit.len()..];
-                    } else {
-                        return None;
-                    }
                 },
                 Branch(ref cm) => {
                     if let Some((next_ch, rest)) = s.slice_shift_char() {
@@ -772,15 +734,6 @@ impl Program {
                         }
                     }
                     return None;
-                },
-                LoopWhile(ref set) => {
-                    let maybe_pos = s.as_bytes().iter().position(|x| !set.contains_byte(*x));
-                    if let Some(pos) = maybe_pos {
-                        state += 1;
-                        s = &s[pos..];
-                    } else {
-                        return None;
-                    }
                 },
             }
         }
@@ -857,27 +810,26 @@ impl Program {
             if let Some(state) = self.init_at_start {
                 let mut prefixes = PrefixSearcher::new(NUM_PREFIX_LIMIT, PREFIX_LEN_LIMIT);
                 prefixes.search(self, state);
-                if let Some((ac, state_map)) = prefixes.to_ac() {
+                if let Some(lit) = prefixes.to_lit() {
+                    if lit.len() == 1 {
+                        return Search::Byte(lit.as_bytes()[0], state);
+                    } else if lit.len() >= 2 {
+                        return Search::Lit(lit.clone(), state);
+                    }
+                } else if let Some((ac, state_map)) = prefixes.to_ac() {
                     return Search::Ac(ac, state_map);
                 }
 
                 match self.insts[state] {
-                    Literal(ref lit) => {
-                        if lit.len() == 1 {
-                            return Search::Byte(lit.as_bytes()[0], state + 1);
-                        } else {
-                            return Search::Lit(lit.clone(), state + 1);
-                        }
-                    },
-                    LoopWhile(ref cs) => {
-                        return Search::LoopUntil(cs.complement(), state + 1);
-                    },
-                    Char(ref cs) => {
+                    CharSet(ref cs) => {
                         if cs.is_ascii() {
                             return Search::AsciiChar(cs.to_ascii_set(), state);
                         }
                     },
                     Branch(ref cm) => {
+                        if let Some(cs) = loop_optimization(cm, state) {
+                            return Search::LoopUntil(cs.complement(), state);
+                        }
                         let cs = cm.to_char_set();
                         if cs.is_ascii() {
                             if cs.char_count() == 1 {

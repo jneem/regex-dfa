@@ -127,6 +127,13 @@ fn one_pass_long_prefix_not(b: &mut Bencher) {
     bench_assert_match(b, re, text);
 }
 
+#[bench]
+fn backtrack(b: &mut Bencher) {
+    let re = regex!("a*b");
+    let text: String = repeat("aaaaaaaaaaaaaaaaaaaaaaaaaaaa").take(50).collect();
+    bench_assert_non_match(b, re, &text);
+}
+
 macro_rules! throughput(
     ($name:ident, $regex:expr, $size:expr) => (
         #[bench]

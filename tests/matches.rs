@@ -22,13 +22,13 @@ macro_rules! mat(
             let text = $text;
             let expected: Vec<Option<_>> = vec!($($loc)+);
             let r = Program::from_regex($re).unwrap();
+            println!("{:?}", r);
             let pos = r.shortest_match(text).map(|x| x.0);
 
             // We don't support capture groups, so just check the whole match.
             // Also, we don't guarantee to get the end of the match correct.
             let expected = expected[0].map(|x: (usize, usize)| x.0);
             if expected != pos {
-                println!("{:?}", r);
                 panic!("For RE '{}' against '{:?}', \
                         expected '{:?}' but got '{:?}'",
                        $re, text, expected, pos);
