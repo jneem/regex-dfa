@@ -11,13 +11,15 @@ use bit_set::BitSet;
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
 use error;
 use nfa::Nfa;
-use searcher::{AsciiSetIter, ByteIter, ExtAsciiSet, LoopIter, Search, StrIter};
+use searcher::{AsciiSetIter, ByteIter, ExtAsciiSet, LoopIter, Search, StrIter, Skipper};
 use std;
 use std::ascii::AsciiExt;
+use std::cell::RefCell;
 use std::collections::{BinaryHeap, HashSet, HashMap};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
+use std::ops::DerefMut;
 use std::result::Result;
 use transition::Accept;
 
@@ -332,6 +334,7 @@ impl Dfa {
         ret.init_after_char.map_values(&map_state);
         ret.init_at_start = self.init_at_start.map(&map_state);
         ret.init_otherwise = self.init_otherwise.map(&map_state);
+        ret.threads = RefCell::new(ProgThreads::with_capacity(ret.insts.len()));
         ret
     }
 
@@ -441,12 +444,10 @@ impl Dfa {
         if !st.accept.is_never() {
             ret.push(Inst::Acc(st.accept.clone()));
         }
+
         // Even if there are no transitions, add an empty branch (which is basically just an
         // unconditional reject) if this is the last instruction in the chain.
-        if !st.transitions.is_empty() || ret.last() != Some(&Inst::Acc(Accept::always())) {
-            ret.push(Inst::Branch(st.transitions.clone()));
-        }
-
+        ret.push(Inst::Branch(st.transitions.clone()));
         ret
     }
 }
@@ -482,6 +483,72 @@ pub enum Inst {
     Branch(CharMap<usize>),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct Thread {
+    state: usize,
+    start_idx: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Threads {
+    threads: Vec<Thread>,
+    states: Vec<u8>,
+}
+
+impl Threads {
+    fn with_capacity(n: usize) -> Threads {
+        Threads {
+            threads: Vec::with_capacity(n),
+            states: vec![0; n],
+        }
+    }
+
+    fn add(&mut self, state: usize, start_idx: usize) {
+        if self.states[state] == 0 {
+            self.states[state] = 1;
+            self.threads.push(Thread { state: state, start_idx: start_idx });
+        }
+    }
+
+    fn starts_after(&self, start_idx: usize) -> bool {
+        self.threads.is_empty() || self.threads[0].start_idx >= start_idx
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ProgThreads {
+    cur: Threads,
+    next: Threads,
+}
+
+impl ProgThreads {
+    fn with_capacity(n: usize) -> ProgThreads {
+        ProgThreads {
+            cur: Threads::with_capacity(n),
+            next: Threads::with_capacity(n),
+        }
+    }
+
+    fn swap(&mut self) {
+        std::mem::swap(&mut self.cur, &mut self.next);
+        self.next.threads.clear();
+    }
+
+    fn clear(&mut self) {
+        self.cur.threads.clear();
+        self.next.threads.clear();
+
+        for s in &mut self.cur.states {
+            *s = 0;
+        }
+        for s in &mut self.next.states {
+            *s = 0;
+        }
+    }
+}
+
+// TODO: make Program just a (public) vec of insts. Add multiple program runners for executing
+// programs depending on (e.g.) starting states, existence of cycles, etc.
 /// A deterministic finite automaton, ready for fast searching.
 #[derive(Clone)]
 pub struct Program {
@@ -490,7 +557,10 @@ pub struct Program {
     init_after_char: CharMap<usize>,
     init_otherwise: Option<usize>,
     searcher: Search,
+
+    threads: RefCell<ProgThreads>,
 }
+
 
 // Given the transitions at state index `st_idx`, checks to see if we should insert a loop
 // searcher. If so, returns the lookup table and also the remaining transitions.
@@ -673,6 +743,7 @@ impl Program {
             init_after_char: CharMap::new(),
             init_otherwise: None,
             searcher: Search::Empty,
+            threads: RefCell::new(ProgThreads::with_capacity(0)),
         }
     }
 
@@ -693,49 +764,142 @@ impl Program {
             && self.init_after_char.is_empty()
     }
 
+    fn advance_thread(&self,
+            threads: &mut ProgThreads,
+            acc: &mut Option<(usize, usize)>,
+            i: usize,
+            ch: char,
+            end: usize) {
+        let state = threads.cur.threads[i].state;
+        let start_idx = threads.cur.threads[i].start_idx;
+        threads.cur.states[state] = 0;
+
+        let (mut next_state, accept, retry) = self.step(state, ch);
+        if accept && (acc.is_none() || start_idx < acc.unwrap().0) {
+            *acc = Some((start_idx, end));
+        }
+        // We're assuming here that we won't be asked to retry twice in a row, and if we
+        // are asked to retry then there is no possibility of accepting afterwards.
+        if retry {
+            next_state = self.step(next_state.unwrap(), ch).0;
+        }
+        if let Some(next_state) = next_state {
+            threads.next.add(next_state, start_idx);
+        }
+    }
+
+    /// Returns (next_state, accept, retry), where
+    ///   - next_state is the next state to try
+    ///   - if accept is true then we should accept before consuming `ch`
+    ///   - if retry is true then we should call `step` again before advancing the input past `ch`.
+    ///
+    /// It would be a little cleaner for `step` to advance the input on its own instead of
+    /// asking its caller to advance, but if `step` is recursive then it can't be inlined (which
+    /// is very important for performance).
+    #[inline(always)]
+    fn step(&self, state: usize, ch: char) -> (Option<usize>, bool, bool) {
+        use dfa::Inst::*;
+        match self.insts[state] {
+            Acc(ref a) => {
+                return (Some(state + 1), a.accepts(Some(ch as u32)), true);
+            },
+            Char(c) => {
+                if ch == c {
+                    return (Some(state + 1), false, false);
+                }
+            },
+            CharSet(ref cs) => {
+                if cs.contains(ch as u32) {
+                    return (Some(state + 1), false, false);
+                }
+            },
+            Branch(ref cm) => {
+                if let Some(&next_state) = cm.get(ch as u32) {
+                    return (Some(next_state), false, false);
+                }
+            },
+        }
+        (None, false, false)
+    }
+
+    fn check_eoi(&self, state: usize) -> bool {
+        if let Inst::Acc(ref acc) = self.insts[state] {
+            acc.at_eoi
+        } else {
+            false
+        }
+    }
+
+    // In principle, we could make this generic over the skipper, but it doesn't seem to
+    // increase performance.
+    fn shortest_match_threaded<'a>(&'a self, s: &str, skip: Box<Skipper + 'a>)
+    -> Option<(usize, usize)> {
+        let mut acc: Option<(usize, usize)> = None;
+        let (first_start_pos, mut pos) = skip.skip(s, 0);
+        // Currently, we only use this function if init_otherwise.is_some().
+        let start_state = self.init_otherwise.unwrap();
+        let mut threads_guard = self.threads.borrow_mut();
+        let threads = threads_guard.deref_mut();
+
+        threads.clear();
+        threads.cur.threads.push(Thread { state: start_state, start_idx: first_start_pos });
+        while pos < s.len() {
+            let ch = s.char_at(pos);
+
+            for i in 0..threads.cur.threads.len() {
+                self.advance_thread(threads, &mut acc, i, ch, pos);
+            }
+            threads.swap();
+
+            // If one of our threads accepted and it started sooner than any of our active
+            // threads, we can stop early.
+            if acc.is_some() && threads.cur.starts_after(acc.unwrap().0) {
+                return acc;
+            }
+
+            // If we're out of threads, skip ahead to the next good position (but be sure to
+            // always advance the input by at least one char).
+            pos += ch.len_utf8();
+            if threads.cur.threads.is_empty() {
+                let (next_start_pos, next_pos) = skip.skip(s, pos);
+                pos = next_pos;
+                threads.cur.add(start_state, next_start_pos);
+            } else {
+                threads.cur.add(start_state, pos);
+            }
+        }
+
+        for th in &threads.cur.threads {
+            if self.check_eoi(th.state) {
+                return Some((th.start_idx, s.len()));
+            }
+        }
+        None
+    }
+
     // On a successful match, returns `Some(end)` where `end` is the index after the end of the
     // match.
-    fn shortest_match_from<'a>(&self, mut s: &'a str, mut state: usize) -> Option<usize> {
-        use dfa::Inst::*;
-        let init_pos = s.as_ptr() as usize;
-
-        loop {
-            match self.insts[state] {
-                Acc(ref a) => {
-                    if a.accepts(s.chars().next().map(|c| c as u32)) {
-                        return Some(s.as_ptr() as usize - init_pos);
-                    }
-                    state += 1;
-                },
-                Char(c) => {
-                    if s.starts_with(c) {
-                        state += 1;
-                        s = &s[c.len_utf8()..];
-                    } else {
-                        return None;
-                    }
-                },
-                CharSet(ref cs) => {
-                    if let Some((next_ch, rest)) = s.slice_shift_char() {
-                        if cs.contains(next_ch as u32) {
-                            state += 1;
-                            s = rest;
-                            continue;
-                        }
-                    }
-                    return None;
-                },
-                Branch(ref cm) => {
-                    if let Some((next_ch, rest)) = s.slice_shift_char() {
-                        if let Some(&next_state) = cm.get(next_ch as u32) {
-                            state = next_state;
-                            s = rest;
-                            continue;
-                        }
-                    }
-                    return None;
-                },
+    fn shortest_match_from<'a>(&self, s: &'a str, mut state: usize) -> Option<usize> {
+        let mut chars = s.char_indices().peekable();
+        let mut next = chars.next();
+        while let Some((pos, ch)) = next {
+            let (next_state, accepted, retry) = self.step(state, ch);
+            if accepted {
+                return Some(pos);
+            } else if let Some(next_state) = next_state {
+                state = next_state;
+                if !retry {
+                    next = chars.next();
+                }
+            } else {
+                return None;
             }
+        }
+
+        if self.check_eoi(state) {
+            Some(s.len())
+        } else {
+            None
         }
     }
 
@@ -759,6 +923,12 @@ impl Program {
             return None;
         }
 
+        if self.init_at_start == self.init_otherwise && self.init_after_char.is_empty() {
+            return self.shortest_match_threaded(s, self.searcher.to_skipper());
+        }
+
+        /* TODO: reinstate these (maybe using skippers instead of iterators) if the program
+         * has no cycles.
         match self.searcher {
             Search::AsciiChar(ref cs, state) =>
                 self.shortest_match_from_iter(s, AsciiSetIter::new(s, cs.clone(), state)),
@@ -774,6 +944,8 @@ impl Program {
                 self.shortest_match_from_iter(s, LoopIter::new(s, cs.clone(), state)),
             Search::Empty => self.shortest_match_slow(s),
         }
+        */
+        self.shortest_match_slow(s)
     }
 
     fn shortest_match_slow(&self, s: &str) -> Option<(usize, usize)> {

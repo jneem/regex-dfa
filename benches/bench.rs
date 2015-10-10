@@ -130,7 +130,16 @@ fn one_pass_long_prefix_not(b: &mut Bencher) {
 #[bench]
 fn backtrack(b: &mut Bencher) {
     let re = regex!("a*b");
-    let text: String = repeat("aaaaaaaaaaaaaaaaaaaaaaaaaaaa").take(50).collect();
+    let text: String = repeat("aaaaaaaaaaaaaaaaaaaaaaaaaaaa").take(100).collect();
+    b.bytes = text.len() as u64;
+    bench_assert_non_match(b, re, &text);
+}
+
+#[bench]
+fn skip(b: &mut Bencher) {
+    let re = regex!("a[b-zA-Z]+a");
+    let text: String = repeat("aaaaaaaaaaaaaaaaaaaaaaaaaaaa").take(100).collect();
+    b.bytes = text.len() as u64;
     bench_assert_non_match(b, re, &text);
 }
 

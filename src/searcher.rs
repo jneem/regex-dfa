@@ -58,6 +58,21 @@ pub enum Search {
     LoopUntil(ExtAsciiSet, usize),
 }
 
+impl Search {
+    pub fn to_skipper<'a>(&'a self) -> Box<Skipper + 'a> {
+        use searcher::Search::*;
+
+        match *self {
+            Empty => Box::new(NoSkipper),
+            AsciiChar(ref set, _) => Box::new(SkipToAsciiSet(set.clone())),
+            Byte(b, _) => Box::new(SkipToByte(b)),
+            Lit(ref s, _) => Box::new(SkipToStr(&s)),
+            Ac(ref ac, _) => Box::new(AcSkipper(ac)),
+            LoopUntil(ref set, _) => Box::new(LoopSkipper(set.clone())),
+        }
+    }
+}
+
 /// An iterator that searchest for a given byte. The second position is position of the byte.
 pub struct ByteIter<'a> {
     input: &'a str,
@@ -195,6 +210,70 @@ impl<'a> Iterator for AsciiSetIter<'a> {
             Some((self.pos - 1, self.pos - 1, self.state))
         } else {
             None
+        }
+    }
+}
+
+pub trait Skipper {
+    fn skip(&self, s: &str, pos: usize) -> (usize, usize);
+}
+
+pub struct NoSkipper;
+impl Skipper for NoSkipper {
+    fn skip(&self, _: &str, pos: usize) -> (usize, usize) { (pos, pos) }
+}
+
+pub struct SkipToByte(pub u8);
+impl Skipper for SkipToByte {
+    fn skip(&self, s: &str, pos: usize) -> (usize, usize) {
+        if let Some(offset) = memchr(self.0, &s.as_bytes()[pos..]) {
+            (pos + offset, pos + offset)
+        } else {
+            (s.len(), s.len())
+        }
+    }
+}
+
+pub struct SkipToStr<'a>(pub &'a str);
+impl<'a> Skipper for SkipToStr<'a> {
+    fn skip(&self, s: &str, pos: usize) -> (usize, usize) {
+        if let Some(offset) = s[pos..].find(self.0) {
+            (pos + offset, pos + offset)
+        } else {
+            (s.len(), s.len())
+        }
+    }
+}
+
+pub struct SkipToAsciiSet(pub AsciiSet);
+impl Skipper for SkipToAsciiSet {
+    fn skip(&self, s: &str, pos: usize) -> (usize, usize) {
+        if let Some(offset) = s[pos..].as_bytes().iter().position(|c| self.0.contains_byte(*c)) {
+            (pos + offset, pos + offset)
+        } else {
+            (s.len(), s.len())
+        }
+    }
+}
+
+pub struct LoopSkipper(pub ExtAsciiSet);
+impl Skipper for LoopSkipper {
+    fn skip(&self, s: &str, pos: usize) -> (usize, usize) {
+        if let Some(offset) = s[pos..].as_bytes().iter().position(|c| self.0.contains_byte(*c)) {
+            (pos, pos + offset)
+        } else {
+            (s.len(), s.len())
+        }
+    }
+}
+
+pub struct AcSkipper<'a>(pub &'a FullAcAutomaton<String>);
+impl<'a> Skipper for AcSkipper<'a> {
+    fn skip(&self, s: &str, pos: usize) -> (usize, usize) {
+        if let Some(mat) = self.0.find(&s[pos..]).next() {
+            (pos + mat.start, pos + mat.start)
+        } else {
+            (s.len(), s.len())
         }
     }
 }
