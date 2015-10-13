@@ -44,7 +44,10 @@ mod char_map;
 mod dfa;
 mod error;
 mod nfa;
+mod prefix;
+mod program;
 mod searcher;
+mod threaded;
 mod transition;
 mod unicode;
 

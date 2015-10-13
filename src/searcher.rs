@@ -48,6 +48,7 @@ impl ExtAsciiSet {
     }
 }
 
+// TODO: move this, and rename to Prefix
 #[derive(Clone, Debug)]
 pub enum Search {
     Empty,
