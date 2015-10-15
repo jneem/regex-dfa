@@ -1,7 +1,7 @@
 extern crate serde_json;
 extern crate regex_dfa;
 
-use regex_dfa::Program;
+use regex_dfa::Regex;
 use serde_json::Value;
 
 const INPUT: &'static str = include_str!("tests.json");
@@ -27,12 +27,12 @@ fn external_tests() {
                 range_arr[1].as_u64().unwrap() as usize
             );
 
-            let prog = Program::from_regex(re_str).unwrap();
-            let result = prog.shortest_match(text);
+            let re = Regex::new(re_str).unwrap();
+            let result = re.shortest_match(text);
             assert!(result.is_some());
             let result = result.unwrap();
             assert_eq!(result.0, range.0);
-            assert!(result.0 <= range.0);
+            assert!(result.1 <= range.1);
         }
     }
 }

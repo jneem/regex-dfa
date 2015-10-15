@@ -6,18 +6,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use engine::Engine;
 use prefix::Prefix;
 use program::{Program, InitStates};
+use searcher::{Skipper, SkipToAsciiSet, SkipToByte, SkipToStr, AcSkipper, LoopSkipper, NoSkipper};
 use std::mem;
 use std::cell::RefCell;
 use std::ops::DerefMut;
 
-trait Skipper {
-    fn skip(&self, s: &str, pos: usize, last_char: Option<char>) -> (usize, usize, usize);
-}
-
 trait Initter {
     fn init_state(&self, last_char: Option<char>) -> Option<usize>;
+}
+
+impl<'a> Initter for &'a InitStates {
+    fn init_state(&self, last_char: Option<char>) -> Option<usize> {
+        self.state_after(last_char)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,20 +88,19 @@ impl ProgThreads {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct ThreadedEngine {
     prog: Program,
-    init: InitStates,
     threads: RefCell<ProgThreads>,
     prefix: Prefix,
 }
 
 impl ThreadedEngine {
-    pub fn new(prog: Program, init: InitStates) -> ThreadedEngine {
+    pub fn new(prog: Program) -> ThreadedEngine {
         let len = prog.insts.len();
         let pref = Prefix::extract(&prog);
         ThreadedEngine {
             prog: prog,
-            init: init,
             threads: RefCell::new(ProgThreads::with_capacity(len)),
             prefix: pref,
         }
@@ -127,12 +130,15 @@ impl ThreadedEngine {
         }
     }
 
-    fn shortest_match_threaded<'a, Skip, Init>(&'a self, s: &str, skip: Skip, init: Init)
+    fn shortest_match_<'a, Skip, Init>(&'a self, s: &str, skip: Skip, init: Init)
     -> Option<(usize, usize)>
     where Skip: Skipper + 'a, Init: Initter + 'a,
     {
         let mut acc: Option<(usize, usize)> = None;
-        let (first_start_pos, mut pos, start_state) = skip.skip(s, 0, None);
+        let (first_start_pos, mut pos, start_state) = match skip.skip(s, 0, None) {
+            Some(x) => x,
+            None => return None,
+        };
         let mut threads_guard = self.threads.borrow_mut();
         let threads = threads_guard.deref_mut();
 
@@ -156,9 +162,12 @@ impl ThreadedEngine {
             // always advance the input by at least one char).
             pos += ch.len_utf8();
             if threads.cur.threads.is_empty() {
-                let (next_start_pos, next_pos, state) = skip.skip(s, pos, Some(ch));
-                pos = next_pos;
-                threads.cur.add(state, next_start_pos);
+                if let Some((next_start_pos, next_pos, state)) = skip.skip(s, pos, Some(ch)) {
+                    pos = next_pos;
+                    threads.cur.add(state, next_start_pos);
+                } else {
+                    return None
+                }
             } else if let Some(state) = init.init_state(Some(ch)) {
                 threads.cur.add(state, pos);
             }
@@ -172,5 +181,31 @@ impl ThreadedEngine {
         None
     }
 
+}
+
+impl Engine for ThreadedEngine {
+    fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
+        if self.prog.insts.is_empty() {
+            return None;
+        }
+
+        // TODO: see if we get better performance by specializing Initter
+        match self.prefix {
+            Prefix::AsciiChar(ref cs, state) =>
+                self.shortest_match_(s, SkipToAsciiSet(cs.clone(), state), &self.prog.init),
+            Prefix::Byte(b, state) =>
+                self.shortest_match_(s, SkipToByte(b, state), &self.prog.init),
+            Prefix::Lit(ref lit, state) =>
+                self.shortest_match_(s, SkipToStr(lit, state), &self.prog.init),
+            Prefix::Ac(ref ac, _) =>
+                self.shortest_match_(
+                    s,
+                    AcSkipper(ac, self.prog.init.constant().unwrap()),
+                    &self.prog.init),
+            Prefix::LoopUntil(ref cs, state) =>
+                self.shortest_match_(s, LoopSkipper(cs.clone(), state), &self.prog.init),
+            Prefix::Empty => self.shortest_match_(s, NoSkipper(&self.prog.init), &self.prog.init),
+        }
+    }
 }
 

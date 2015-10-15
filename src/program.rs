@@ -6,8 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use backtracking::BacktrackingEngine;
 use char_map::{CharMap, CharSet};
-use searcher::Search;
+use dfa::Dfa;
+use engine::Engine;
+use error;
+use std::fmt::{Debug, Formatter, Error as FmtError};
+use threaded::ThreadedEngine;
 use transition::Accept;
 
 pub trait RegexSearcher {
@@ -16,9 +21,9 @@ pub trait RegexSearcher {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InitStates {
-    init_at_start: Option<usize>,
-    init_after_char: CharMap<usize>,
-    init_otherwise: Option<usize>,
+    pub init_at_start: Option<usize>,
+    pub init_after_char: CharMap<usize>,
+    pub init_otherwise: Option<usize>,
 }
 
 impl InitStates {
@@ -39,6 +44,15 @@ impl InitStates {
             None
         }
     }
+
+    /// Returns the state if the previous char was `ch`.
+    pub fn state_after(&self, ch: Option<char>) -> Option<usize> {
+        if let Some(ch) = ch {
+            self.init_after_char.get(ch as u32).cloned().or(self.init_otherwise)
+        } else {
+            self.init_at_start
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,7 +63,7 @@ pub enum Inst {
     Branch(CharMap<usize>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Program {
     pub insts: Vec<Inst>,
     pub init: InitStates,
@@ -99,5 +113,33 @@ impl Program {
         }
     }
 
+    pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Program, error::Error> {
+        let dfa = try!(Dfa::from_regex_bounded(re, max_states));
+        Ok(dfa.to_program())
+    }
+
+    pub fn to_engine(self) -> Box<Engine> {
+        if self.init.anchored().is_some() {
+            Box::new(BacktrackingEngine::new(self))
+        } else {
+            Box::new(ThreadedEngine::new(self))
+        }
+    }
+}
+
+
+impl Debug for Program {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
+        try!(f.write_fmt(format_args!("Program ({} instructions):\n", self.insts.len())));
+
+        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init.init_at_start)));
+        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init.init_after_char)));
+        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init.init_otherwise)));
+
+        for (idx, inst) in self.insts.iter().enumerate() {
+            try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
+        }
+        Ok(())
+    }
 }
 

@@ -271,4 +271,62 @@ fn loop_optimization(cm: &CharMap<usize>, st_idx: usize) -> Option<ExtAsciiSet> 
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use prefix::{Prefix, PrefixSearcher};
+    use program::Program;
+
+    #[test]
+    fn test_search_choice() {
+        fn regex_prefix(s: &str) -> Prefix {
+            let prog = Program::from_regex_bounded(s, 100).unwrap();
+            Prefix::extract(&prog)
+        }
+
+        fn is_byte(p: &Prefix) -> bool {
+            if let &Prefix::Byte(_, _) = p { true } else { false }
+        }
+        fn is_lit(p: &Prefix) -> bool {
+            if let &Prefix::Lit(_, _) = p { true } else { false }
+        }
+        fn is_loop(p: &Prefix) -> bool {
+            if let &Prefix::LoopUntil(_, _) = p { true } else { false }
+        }
+        fn is_ac(p: &Prefix) -> bool {
+            if let &Prefix::Ac(_, _) = p { true } else { false }
+        }
+        fn is_ascii(p: &Prefix) -> bool {
+            if let &Prefix::AsciiChar(_, _) = p { true } else { false }
+        }
+
+        assert!(is_byte(&regex_prefix("a.*b")));
+        assert!(is_lit(&regex_prefix("abc.*b")));
+        assert!(is_loop(&regex_prefix(".*abc")));
+        assert!(is_ac(&regex_prefix("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ$")));
+        assert!(is_ascii(&regex_prefix("[ab].*cd")));
+        assert!(is_ascii(&regex_prefix("(f.*f|b.*b)")));
+    }
+
+    #[test]
+    fn test_prefixes() {
+        fn test_prefix(re_str: &str, answer: Vec<&str>, max_num: usize, max_len: usize) {
+            let re = Program::from_regex_bounded(re_str, 100).unwrap();
+            let mut pref = PrefixSearcher::new(max_num, max_len);
+            pref.search(&re, re.init.init_otherwise.unwrap());
+            let mut prefs = pref.finished.into_iter().map(|x| x.0).collect::<Vec<_>>();
+            prefs.sort();
+            assert_eq!(prefs, answer);
+        }
+
+        test_prefix("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            vec!["XABCDEFGHIJKLMNOPQRSTUVWXYZ",
+               "YABCDEFGHIJKLMNOPQRSTUVWXYZ",
+               "ZABCDEFGHIJKLMNOPQRSTUVWXYZ",],
+            3, 30);
+
+        test_prefix("(?i)abc[a-z]",
+            vec!["ABC", "ABc", "AbC", "Abc", "aBC", "aBc", "abC", "abc"],
+            30, 5);
+    }
+}
 

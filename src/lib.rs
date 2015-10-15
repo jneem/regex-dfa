@@ -14,9 +14,9 @@ instructions for a virtual machine.
 # Example: creating and running a `Program`
 
 ```rust
-use regex_dfa::Program;
-let dfa = Program::from_regex(r"\d{4}-\d{2}-\d{2}").unwrap();
-assert_eq!(dfa.shortest_match("My birthday is 1986-08-22!"), Some((15, 25)));
+use regex_dfa::Regex;
+let re = Regex::new(r"\d{4}-\d{2}-\d{2}").unwrap();
+assert_eq!(re.shortest_match("My birthday is 1986-08-22!"), Some((15, 25)));
 ```
 
 # Caveats
@@ -39,18 +39,21 @@ extern crate memchr;
 extern crate regex_syntax;
 extern crate test;
 
+mod backtracking;
 mod builder;
 mod char_map;
 mod dfa;
+mod engine;
 mod error;
 mod nfa;
 mod prefix;
 mod program;
+mod regex;
 mod searcher;
 mod threaded;
 mod transition;
 mod unicode;
 
-pub use dfa::Program;
 pub use error::Error;
+pub use regex::Regex;
 

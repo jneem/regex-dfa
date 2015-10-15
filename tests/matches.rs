@@ -13,7 +13,7 @@
 
 extern crate regex_dfa;
 
-use regex_dfa::Program;
+use regex_dfa::Regex;
 
 macro_rules! mat(
     ($name:ident, $re:expr, $text:expr, $($loc:tt)+) => (
@@ -21,7 +21,7 @@ macro_rules! mat(
         fn $name() {
             let text = $text;
             let expected: Vec<Option<_>> = vec!($($loc)+);
-            let r = Program::from_regex($re).unwrap();
+            let r = Regex::new($re).unwrap();
             println!("{:?}", r);
             let pos = r.shortest_match(text).map(|x| x.0);
 
@@ -427,6 +427,7 @@ mat!(match_flag_case, "(?i)abc", "ABC", Some((0, 3)));
 mat!(match_flag_weird_case, "(?i)a(?-i)bc", "Abc", Some((0, 3)));
 mat!(match_flag_weird_case_not, "(?i)a(?-i)bc", "ABC", None);
 mat!(match_flag_case_dotnl, "(?is)a.", "A\n", Some((0, 2)));
+mat!(match_flag_case_dotnl_cr, "(?is)a.", "A\r", Some((0, 2)));
 mat!(match_flag_case_dotnl_toggle, "(?is)a.(?-is)a.", "A\nab", Some((0, 4)));
 mat!(match_flag_case_dotnl_toggle_not, "(?is)a.(?-is)a.", "A\na\n", None);
 mat!(match_flag_case_dotnl_toggle_ok, "(?is)a.(?-is:a.)?", "A\na\n", Some((0, 2)));
@@ -468,6 +469,15 @@ mat!(uni_perl_s_neg, r"\S+", "☃", Some((0, 3)));
 // And do the same for word boundaries.
 mat!(uni_boundary_none, r"\d\b", "6δ", None);
 mat!(uni_boundary_ogham, r"\d\b", "6 ", Some((0, 1)));
+
+// Word boundaries in the middle of text.
+mat!(boundary_mid, r"\btest\b", "This is a test.", Some((10, 14)));
+mat!(boundary_mid_uni, r"\bהחומוס\b", "למי יש את החומוס הכי טוב בארץ?", Some((17, 29)));
+
+// Doubled word boundaries.
+mat!(boundary_doubled, r"\b\btest\b\b", "This is a test.", Some((10, 14)));
+mat!(boundary_doubled_whole, r"\b\btest\b\b", "test", Some((0, 4)));
+mat!(boundary_rep, r"(\btest\b *)+end", "This is a test test test end.", Some((10, 28)));
 
 // Test negated character classes.
 mat!(negclass_letters, r"[^ac]", "acx", Some((2, 3)));

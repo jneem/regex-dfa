@@ -225,16 +225,6 @@
         "text": "ceghijkmopqyz"
     },
     {
-        "full_match": [
-            0,
-            1
-        ],
-        "pattern": "\\xff",
-        "status": "MATCH",
-        "sub_matches": [],
-        "text": "\u00ff"
-    },
-    {
         "pattern": "\\x00ffffffffffffff",
         "status": "NO_MATCH",
         "text": "\u00ff"
@@ -5259,7 +5249,7 @@
     {
         "full_match": [
             0,
-            1
+            2
         ],
         "pattern": "\\xff",
         "status": "MATCH",
@@ -5636,7 +5626,7 @@
     {
         "full_match": [
             0,
-            1
+            2
         ],
         "pattern": "\\b.\\b",
         "status": "MATCH",
@@ -5646,7 +5636,7 @@
     {
         "full_match": [
             0,
-            1
+            2
         ],
         "pattern": "\\w",
         "status": "MATCH",
