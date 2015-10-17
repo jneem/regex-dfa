@@ -207,5 +207,9 @@ impl Engine for ThreadedEngine {
             Prefix::Empty => self.shortest_match_(s, NoSkipper(&self.prog.init), &self.prog.init),
         }
     }
+
+    fn clone_box(&self) -> Box<Engine> {
+        Box::new(self.clone())
+    }
 }
 

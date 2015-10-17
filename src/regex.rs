@@ -16,15 +16,13 @@ pub struct Regex {
     engine: Box<Engine>,
 }
 
-/*
 impl Clone for Regex {
     fn clone(&self) -> Regex {
         Regex {
-            engine: Box::new(self.engine.clone()),
+            engine: self.engine.clone_box(),
         }
     }
 }
-*/
 
 impl Regex {
     pub fn new(re: &str) -> Result<Regex, error::Error> {

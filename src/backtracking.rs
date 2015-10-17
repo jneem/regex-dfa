@@ -115,4 +115,8 @@ impl Engine for BacktrackingEngine {
             Prefix::Empty => self.shortest_match_slow(s),
         }
     }
+
+    fn clone_box(&self) -> Box<Engine> {
+        Box::new(self.clone())
+    }
 }
