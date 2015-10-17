@@ -8,10 +8,9 @@
 
 /*!
 This crate provides tools for converting regular expressions into deterministic finite automata
-(DFAs). The most interesting type is `Program`, which is a DFA represented as a sequence of
-instructions for a virtual machine.
+(DFAs). The most interesting type is `Regex`, which is a virtual machine for executing a DFA.
 
-# Example: creating and running a `Program`
+# Example: creating and running a `Regex`
 
 ```rust
 use regex_dfa::Regex;
@@ -21,7 +20,7 @@ assert_eq!(re.shortest_match("My birthday is 1986-08-22!"), Some((15, 25)));
 
 # Caveats
 
-The most useful function in this crate is `Program::shortest_match`, which looks for substrings of
+The most useful function in this crate is `Regex::shortest_match`, which looks for substrings of
 the given string that match the language of the DFA. The first index of the return value is fairly
 self-explanatory but the second index should be used with caution because it is only a bound on the
 ending index you will get from running a standard regex engine. This is because a regex specifies
