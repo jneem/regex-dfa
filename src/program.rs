@@ -118,12 +118,74 @@ impl Program {
         Ok(dfa.to_program())
     }
 
+    /// Returns an engine for executing this program.
     pub fn to_engine(self) -> Box<Engine> {
-        if self.init.anchored().is_some() {
+        if self.init.anchored().is_some() || !self.has_cycles() {
             Box::new(BacktrackingEngine::new(self))
         } else {
             Box::new(ThreadedEngine::new(self))
         }
+    }
+
+    /// Checks whether the execution graph of this program has any cycles.
+    ///
+    /// If not, it's a good candidate for the backtracking engine.
+    pub fn has_cycles(&self) -> bool {
+        use self::Inst::*;
+
+        if self.insts.is_empty() {
+            return false;
+        }
+
+        // Pairs of (state, child_idx) where child_idx is the index of the next child to explore.
+        let mut stack: Vec<(usize, usize)> = Vec::with_capacity(self.insts.len());
+        let mut visiting: Vec<bool> = vec![false; self.insts.len()];
+        let mut done: Vec<bool> = vec![false; self.insts.len()];
+
+        macro_rules! push {
+            ($state:expr) => {
+                if visiting[$state] {
+                    return true;
+                } else if !done[$state] {
+                    stack.push(($state, 0));
+                    visiting[$state] = true;
+                }
+            };
+        }
+
+        macro_rules! pop {
+            ($state:expr) => {
+                visiting[$state] = false;
+                done[$state] = true;
+                stack.pop();
+            };
+        }
+
+        for start in 0..self.insts.len() {
+            if !done[start] {
+                stack.push((start, 0));
+
+                while !stack.is_empty() {
+                    let &(cur, child_idx) = stack.last().unwrap();
+                    stack.last_mut().unwrap().1 += 1;
+
+                    match self.insts[cur] {
+                        Acc(ref a) => if !a.is_always() && child_idx == 0 {
+                            push!(cur + 1);
+                        } else {
+                            pop!(cur);
+                        },
+                        Branch(ref cm) => if child_idx < cm.len() {
+                            push!(cm.nth(child_idx).1);
+                        } else {
+                            pop!(cur);
+                        },
+                        _ => if child_idx > 0 { pop!(cur); } else { push!(cur + 1); },
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
@@ -140,6 +202,36 @@ impl Debug for Program {
             try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std;
+    use super::*;
+
+    #[test]
+    fn cycles() {
+        macro_rules! cyc {
+            ($re:expr, $res:expr) => {
+                {
+                    let prog = Program::from_regex_bounded($re, std::usize::MAX).unwrap();
+                    println!("{:?}", prog);
+                    assert_eq!($res, prog.has_cycles());
+                }
+            };
+        }
+
+        cyc!("abcde", false);
+        cyc!("ab*d", true);
+        cyc!("ab*", false);
+        cyc!("ab*$", true);
+        cyc!("ab+", false);
+        cyc!("ab+$", true);
+        cyc!("(ab*|cde)", false);
+        cyc!("(ab*|cde)f", true);
+        cyc!("(abc)*", false);
+        cyc!("(abc)*def", true);
     }
 }
 

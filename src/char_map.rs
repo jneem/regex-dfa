@@ -148,6 +148,14 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         self.elts.len()
     }
 
+    /// Gets the `n`th range and data.
+    ///
+    /// # Panics
+    ///  - if `n` is out of range.
+    pub fn nth(&self, n: usize) -> &(CharRange, T) {
+        self.elts.get(n).unwrap()
+    }
+
     /// Tests whether this `CharMap` is empty.
     pub fn is_empty(&self) -> bool {
         self.elts.is_empty()
