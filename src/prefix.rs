@@ -7,10 +7,8 @@
 // except according to those terms.
 
 use aho_corasick::{Automaton, AcAutomaton, FullAcAutomaton};
-use ascii_set::AsciiSet;
-use char_map::CharMap;
+use bytes::{ByteMap, ByteSet};
 use program::Program;
-use std;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -18,41 +16,18 @@ use std::collections::BinaryHeap;
 const NUM_PREFIX_LIMIT: usize = 30;
 const PREFIX_LEN_LIMIT: usize = 15;
 
-/// A set of chars that either is entirely ASCII or else contains every non-ASCII char.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExtAsciiSet {
-    pub set: AsciiSet,
-    pub contains_non_ascii: bool,
-}
-
-impl ExtAsciiSet {
-    pub fn contains_byte(&self, b: u8) -> bool {
-        if self.contains_non_ascii {
-            b >= 128 || self.set.contains_byte(b)
-        } else {
-            self.set.contains_byte(b)
-        }
-    }
-
-    pub fn complement(&self) -> ExtAsciiSet {
-        ExtAsciiSet {
-            set: self.set.complement(),
-            contains_non_ascii: !self.contains_non_ascii,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum Prefix {
     Empty,
-    AsciiChar(AsciiSet, usize),
+    ByteSet(ByteSet, usize),
     Byte(u8, usize),
-    Lit(String, usize),
-    Ac(FullAcAutomaton<String>, Vec<usize>),
-    LoopUntil(ExtAsciiSet, usize),
+    //Lit(String, usize),
+    Ac(FullAcAutomaton<Vec<u8>>, Vec<usize>),
+    LoopWhile(ByteSet, usize),
 }
 
 impl Prefix {
+    // TODO: extract from the Dfa instead of the Program.
     pub fn extract(prog: &Program) -> Prefix {
         use program::Inst::*;
 
@@ -61,32 +36,26 @@ impl Prefix {
             prefixes.search(prog, state);
             if let Some(lit) = prefixes.to_lit() {
                 if lit.len() == 1 {
-                    return Prefix::Byte(lit.as_bytes()[0], state);
-                } else if lit.len() >= 2 {
-                    return Prefix::Lit(lit.clone(), state);
+                    return Prefix::Byte(lit[0], state);
                 }
-            } else if let Some((ac, state_map)) = prefixes.to_ac() {
+            }
+            if let Some((ac, state_map)) = prefixes.to_ac() {
                 return Prefix::Ac(ac, state_map);
             }
 
             match prog.insts[state] {
-                CharSet(ref cs) => {
-                    if cs.is_ascii() {
-                        return Prefix::AsciiChar(cs.to_ascii_set(), state);
-                    }
+                ByteSet(ref bs) => {
+                    return Prefix::ByteSet(bs.clone(), state);
                 },
-                Branch(ref cm) => {
-                    if let Some(cs) = loop_optimization(cm, state) {
-                        return Prefix::LoopUntil(cs.complement(), state);
+                Branch(ref bm) => {
+                    if let Some(bs) = loop_optimization(bm, state) {
+                        return Prefix::LoopWhile(bs, state);
                     }
-                    let cs = cm.to_char_set();
-                    if cs.is_ascii() {
-                        if cs.char_count() == 1 {
-                            let &(range, state) = cm.iter().next().unwrap();
-                            return Prefix::Byte(range.start as u8, state);
-                        }
-                        return Prefix::AsciiChar(cs.to_ascii_set(), state);
+                    if bm.len() == 1 {
+                        let (b, state) = bm.into_iter().next().unwrap();
+                        return Prefix::Byte(b, state as usize);
                     }
+                    return Prefix::ByteSet(bm.to_set(), state);
                 },
                 _ => {},
             }
@@ -100,7 +69,7 @@ impl Prefix {
 ///
 /// Prefixes are ordered by the decreasing length of their string.
 #[derive(Debug, Clone)]
-struct PrefixPart(pub String, pub usize);
+struct PrefixPart(pub Vec<u8>, pub usize);
 impl PartialOrd for PrefixPart {
     fn partial_cmp(&self, other: &PrefixPart) -> Option<Ordering> {
         self.0.len().partial_cmp(&other.0.len()).map(|x| x.reverse())
@@ -140,7 +109,7 @@ impl PrefixSearcher {
     fn new(max_prefixes: usize, max_len: usize) -> PrefixSearcher {
         PrefixSearcher {
             active: BinaryHeap::new(),
-            current: PrefixPart(String::new(), 0),
+            current: PrefixPart(Vec::new(), 0),
             finished: Vec::new(),
             complete: true,
             max_prefixes: max_prefixes,
@@ -183,49 +152,44 @@ impl PrefixSearcher {
     fn search(&mut self, prog: &Program, state: usize) {
         use program::Inst::*;
 
-        self.active.push(PrefixPart(String::new(), state));
+        self.active.push(PrefixPart(Vec::new(), state));
         while !self.active.is_empty() {
             self.current = self.active.pop().unwrap();
             match prog.insts[self.current.1] {
-                Char(c) => {
+                Byte(b) => {
                     let mut next_pref = self.current.0.clone();
-                    next_pref.push(c);
+                    next_pref.push(b);
                     let next_pref = PrefixPart(next_pref, self.current.1 + 1);
                     if self.add(vec![next_pref]) {
                         break;
                     }
                 },
-                CharSet(ref cs) => {
-                    if self.too_many(cs.char_count() as usize) {
+                ByteSet(ref bs) => {
+                    if self.too_many(bs.len()) {
                         break;
                     }
-                    let next_prefs = cs.chars()
-                        .filter_map(std::char::from_u32)
-                        .map(|c| {
+                    let next_prefs = bs.into_iter()
+                        .map(|b| {
                             let mut next_str = self.current.0.clone();
-                            next_str.push(c);
+                            next_str.push(b);
                             PrefixPart(next_str, self.current.1 + 1)
                         }).collect();
                     if self.add(next_prefs) {
                         break;
                     }
                 },
-                Acc(ref acc) => {
+                Acc(_) => {
                     self.finished.push(self.current.clone());
-                    if !acc.is_always() {
-                        self.complete = false;
-                    }
                 },
-                Branch(ref cm) => {
-                    if self.too_many(cm.to_char_set().char_count() as usize) {
+                Branch(ref bm) => {
+                    if self.too_many(bm.len()) {
                         break;
                     }
-                    let next_prefs = cm.pairs().into_iter()
-                        .filter_map(|x| std::char::from_u32(x.0).map(|c| (c, x.1)))
-                        .map(|(c, tgt)| {
+                    let next_prefs = bm.into_iter()
+                        .map(|(b, tgt)| {
                             let mut next_str = self.current.0.clone();
-                            next_str.push(c);
-                            PrefixPart(next_str, tgt)
+                            next_str.push(b);
+                            PrefixPart(next_str, tgt as usize)
                         }).collect();
                     if self.add(next_prefs) {
                         break;
@@ -235,20 +199,20 @@ impl PrefixSearcher {
         }
     }
 
-    fn to_ac(&self) -> Option<(FullAcAutomaton<String>, Vec<usize>)> {
-        if self.finished.len() <= 1
+    fn to_ac(&self) -> Option<(FullAcAutomaton<Vec<u8>>, Vec<usize>)> {
+        if self.finished.is_empty()
                 || self.finished.iter().any(|s| s.0.is_empty())
                 || self.finished.iter().all(|s| s.0.len() <= 1) {
             None
         } else {
-            let strings: Vec<String> = self.finished.iter().map(|x| x.0.clone()).collect();
+            let strings: Vec<Vec<u8>> = self.finished.iter().map(|x| x.0.clone()).collect();
             let auto = FullAcAutomaton::new(AcAutomaton::new(strings));
             let map: Vec<usize> = self.finished.iter().map(|x| x.1).collect();
             Some((auto, map))
         }
     }
 
-    fn to_lit(&self) -> Option<String> {
+    fn to_lit(&self) -> Option<Vec<u8>> {
         if self.finished.len() == 1 {
             Some(self.finished[0].0.clone())
         } else {
@@ -259,13 +223,10 @@ impl PrefixSearcher {
 }
 
 // Given the transitions at state index `st_idx`, checks to see if we should insert a loop
-// searcher. If so, returns the lookup table and also the remaining transitions.
-fn loop_optimization(cm: &CharMap<usize>, st_idx: usize) -> Option<ExtAsciiSet> {
-    let loop_cs = cm.filter_values(|st| *st == st_idx).to_char_set();
-    if !loop_cs.is_empty() && (loop_cs.is_ascii() || loop_cs.contains_non_ascii()) {
-        let set = loop_cs.to_ascii_set();
-        let set = ExtAsciiSet { set: set, contains_non_ascii: loop_cs.contains_non_ascii() };
-        Some(set)
+// searcher. If so, returns the set of characters that are part of the loop.
+fn loop_optimization(bm: &ByteMap, st_idx: usize) -> Option<ByteSet> {
+    if bm.into_iter().any(|x| x.1 as usize == st_idx) {
+        Some(bm.filter_values(|s| s as usize == st_idx))
     } else {
         None
     }
@@ -273,48 +234,57 @@ fn loop_optimization(cm: &CharMap<usize>, st_idx: usize) -> Option<ExtAsciiSet> 
 
 #[cfg(test)]
 mod tests {
+    use dfa::Dfa;
     use prefix::{Prefix, PrefixSearcher};
-    use program::Program;
 
     #[test]
     fn test_search_choice() {
         fn regex_prefix(s: &str) -> Prefix {
-            let prog = Program::from_regex_bounded(s, 100).unwrap();
+            let prog = Dfa::from_regex_bounded(s, 100).unwrap().to_program();
+            println!("{:?}", prog);
             Prefix::extract(&prog)
         }
 
         fn is_byte(p: &Prefix) -> bool {
             if let &Prefix::Byte(_, _) = p { true } else { false }
         }
+        /*
         fn is_lit(p: &Prefix) -> bool {
             if let &Prefix::Lit(_, _) = p { true } else { false }
         }
+        */
         fn is_loop(p: &Prefix) -> bool {
-            if let &Prefix::LoopUntil(_, _) = p { true } else { false }
+            if let &Prefix::LoopWhile(_, _) = p { true } else { false }
         }
         fn is_ac(p: &Prefix) -> bool {
             if let &Prefix::Ac(_, _) = p { true } else { false }
         }
-        fn is_ascii(p: &Prefix) -> bool {
-            if let &Prefix::AsciiChar(_, _) = p { true } else { false }
+        fn is_set(p: &Prefix) -> bool {
+            if let &Prefix::ByteSet(_, _) = p { true } else { false }
         }
 
         assert!(is_byte(&regex_prefix("a.*b")));
-        assert!(is_lit(&regex_prefix("abc.*b")));
+        assert!(is_ac(&regex_prefix("abc.*b")));
         assert!(is_loop(&regex_prefix(".*abc")));
         assert!(is_ac(&regex_prefix("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ$")));
-        assert!(is_ascii(&regex_prefix("[ab].*cd")));
-        assert!(is_ascii(&regex_prefix("(f.*f|b.*b)")));
+        assert!(is_set(&regex_prefix("[ab].*cd")));
+        assert!(is_set(&regex_prefix("(f.*f|b.*b)")));
     }
 
     #[test]
     fn test_prefixes() {
         fn test_prefix(re_str: &str, answer: Vec<&str>, max_num: usize, max_len: usize) {
-            let re = Program::from_regex_bounded(re_str, 100).unwrap();
+            let re = Dfa::from_regex_bounded(re_str, 100).unwrap().to_program();
             let mut pref = PrefixSearcher::new(max_num, max_len);
             pref.search(&re, re.init.init_otherwise.unwrap());
             let mut prefs = pref.finished.into_iter().map(|x| x.0).collect::<Vec<_>>();
             prefs.sort();
+
+            let answer: Vec<Vec<u8>> =
+                answer
+                    .iter()
+                    .map(|s| s.as_bytes().to_owned())
+                    .collect();
             assert_eq!(prefs, answer);
         }
 

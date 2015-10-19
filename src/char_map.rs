@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ascii_set::AsciiSet;
 use bit_set::BitSet;
 use regex_syntax;
 use std;
@@ -15,8 +14,10 @@ use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::iter::RangeInclusive;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
+
+const DISPLAY_LIMIT: usize = 10;
 
 /// A range of code points, including the endpoints.
 ///
@@ -56,6 +57,8 @@ impl CharRange {
     }
 
     /// Tests whether this range is empty.
+    ///
+    /// TODO: can we just forbid ranges from being empty?
     pub fn is_empty(&self) -> bool {
         self.start > self.end
     }
@@ -74,6 +77,31 @@ impl CharRange {
     /// Returns an iterator over chars in this range.
     pub fn iter(&self) -> RangeInclusive<u32> {
         std::iter::range_inclusive(self.start, self.end)
+    }
+
+    /// Returns this range as a pair of chars, or none if this is an empty range.
+    pub fn to_char_pair(&self) -> Option<(char, char)> {
+        // Round up self.start to the nearest legal codepoint.
+        let start = if self.start > 0xD7FF && self.start < 0xE000 {
+            0xE000
+        } else {
+            self.start
+        };
+
+        // Round down self.end.
+        let end = if self.end > 0x10FFFF {
+            0x10FFFF
+        } else if self.end < 0xE000 && self.end > 0xD7FF {
+            0xD7FF
+        } else {
+            self.end
+        };
+
+        if start > end {
+            None
+        } else {
+            Some((char::from_u32(start).unwrap(), char::from_u32(end).unwrap()))
+        }
     }
 }
 
@@ -96,7 +124,7 @@ impl PartialOrd<u32> for CharRange {
 }
 
 /// A set of characters. Optionally, each character in the set may be associated with some data.
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Clone, Hash)]
 pub struct CharMap<T: Clone + Debug + PartialEq> {
     elts: Vec<(CharRange, T)>,
 }
@@ -114,6 +142,22 @@ impl<'a, T: Clone + Debug + PartialEq> IntoIterator for &'a CharMap<T> {
     type IntoIter = std::slice::Iter<'a, (CharRange, T)>;
     fn into_iter(self) -> Self::IntoIter {
         self.elts.iter()
+    }
+}
+
+impl<T: Clone + Debug + PartialEq> Debug for CharMap<T> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        let s = self.iter()
+            .take(DISPLAY_LIMIT)
+            .map(|x| format!("{} - {} => {:?}", x.0.start, x.0.end, x.1))
+            .collect::<Vec<String>>()
+            .join(", ");
+        if self.elts.len() > DISPLAY_LIMIT {
+            try!(f.write_fmt(format_args!("CharMap ({}...)", s)));
+        } else {
+            try!(f.write_fmt(format_args!("CharMap ({})", s)));
+        }
+        Ok(())
     }
 }
 
@@ -146,14 +190,6 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
     /// Note that this is not usually the same as the number of mapped characters.
     pub fn len(&self) -> usize {
         self.elts.len()
-    }
-
-    /// Gets the `n`th range and data.
-    ///
-    /// # Panics
-    ///  - if `n` is out of range.
-    pub fn nth(&self, n: usize) -> &(CharRange, T) {
-        self.elts.get(n).unwrap()
     }
 
     /// Tests whether this `CharMap` is empty.
@@ -234,7 +270,7 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 
     /// Looks up a character in the map.
     pub fn get(&self, ch: u32) -> Option<&T> {
-        match self.elts[..].binary_search_by(|&(r, _)| r.partial_cmp(&ch).unwrap()) {
+        match self.elts.binary_search_by(|&(r, _)| r.partial_cmp(&ch).unwrap()) {
             Ok(idx) => { Some(&self.elts[idx].1) },
             Err(_) => { None },
         }
@@ -284,7 +320,7 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
 }
 
 /// A set of characters, implemented as a sorted list of (inclusive) ranges.
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Clone, Hash)]
 pub struct CharSet {
     map: CharMap<()>,
 }
@@ -295,6 +331,22 @@ impl<'a> IntoIterator for &'a CharSet {
     type IntoIter = Box<std::iter::Iterator<Item=&'a CharRange> + 'a>;
     fn into_iter(self) -> Self::IntoIter {
         Box::new(self.map.elts.iter().map(|x| &x.0))
+    }
+}
+
+impl Debug for CharSet {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        let s = self.into_iter()
+            .take(DISPLAY_LIMIT)
+            .map(|x| format!("{} - {}", x.start, x.end))
+            .collect::<Vec<String>>()
+            .join(", ");
+        if self.map.elts.len() > DISPLAY_LIMIT {
+            try!(f.write_fmt(format_args!("CharSet ({}...)", s)));
+        } else {
+            try!(f.write_fmt(format_args!("CharSet ({})", s)));
+        }
+        Ok(())
     }
 }
 
@@ -470,37 +522,6 @@ impl CharSet {
         })
     }
 
-    /// Checks if all the chars in this set belong to the ASCII range.
-    pub fn is_ascii(&self) -> bool {
-        self.map.is_empty() || self.map.elts.last().unwrap().0.end <= 127
-    }
-
-    /// Returns true if all non-ASCII chars are contained in this set.
-    pub fn contains_non_ascii(&self) -> bool {
-        let mut non_ascii = CharSet::new();
-        non_ascii.push(CharRange::new(0x80, 0xD7FF));
-        non_ascii.push(CharRange::new(0xE000,0x10FFFF));
-
-        non_ascii == self.intersect(&non_ascii)
-    }
-
-    /// Creates an `AsciiSet` containing all of the ASCII characters in this set.
-    ///
-    /// Non-ASCII characters are silently ignored.
-    pub fn to_ascii_set(&self) -> AsciiSet {
-        AsciiSet::from_ranges(
-            self.iter().filter_map(|r|
-                if r.start < 128 {
-                    let start = char::from_u32(r.start).unwrap();
-                    let end = char::from_u32(min(127, r.end)).unwrap();
-                    Some((start, end))
-                } else {
-                    None
-                }
-            )
-        )
-    }
-
     /// Returns the set of all characters that are not in this set.
     pub fn negated(&self) -> CharSet {
         let mut ret = CharSet::with_capacity(self.map.len() + 1);
@@ -521,7 +542,7 @@ impl CharSet {
 }
 
 /// A multi-valued mapping from chars to other data.
-#[derive(Debug, Hash, PartialEq)]
+#[derive(Hash, PartialEq)]
 pub struct CharMultiMap<T: Clone + Debug + Hash + PartialEq> {
     elts: Vec<(CharRange, T)>,
 }
@@ -531,6 +552,22 @@ impl<T: Clone + Debug + Hash + PartialEq> IntoIterator for CharMultiMap<T> {
     type IntoIter = std::vec::IntoIter<(CharRange, T)>;
     fn into_iter(self) -> Self::IntoIter {
         self.elts.into_iter()
+    }
+}
+
+impl<T: Clone + Debug + Hash + PartialEq> Debug for CharMultiMap<T> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        let s = self.elts.iter()
+            .take(DISPLAY_LIMIT)
+            .map(|x| format!("{} - {} => {:?}", x.0.start, x.0.end, x.1))
+            .collect::<Vec<String>>()
+            .join(", ");
+        if self.elts.len() > DISPLAY_LIMIT {
+            try!(f.write_fmt(format_args!("CharMultiMap ({}...)", s)));
+        } else {
+            try!(f.write_fmt(format_args!("CharMultiMap ({})", s)));
+        }
+        Ok(())
     }
 }
 
@@ -613,6 +650,10 @@ impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
 
         ret
     }
+
+    pub fn into_vec(self) -> Vec<(CharRange, T)> {
+        self.elts
+    }
 }
 
 impl CharMultiMap<usize> {
@@ -639,7 +680,6 @@ impl<T: Clone + Debug + Hash + PartialEq> Deref for CharMultiMap<T> {
 
 #[cfg(test)]
 mod tests {
-    use ascii_set::AsciiSet;
     use char_map::*;
     use std::u32::MAX;
 
@@ -761,19 +801,6 @@ mod tests {
         ]);
         map.normalize();
         assert_eq!(map, target);
-    }
-
-    #[test]
-    fn test_to_ascii_set() {
-        let map = CharSet::from_vec(vec![(CharRange::new('a' as u32, 'z' as u32), ())]);
-        assert_eq!(map.to_ascii_set(), AsciiSet::lower_case_letters());
-
-        // No panics if the range extends over non-ASCII characters.
-        let map = CharSet::from_vec(vec![
-            (CharRange::new('a' as u32, 'z' as u32), ()),
-            (CharRange::new(900, 1000), ()),
-        ]);
-        assert_eq!(map.to_ascii_set(), AsciiSet::lower_case_letters());
     }
 
     fn make_mm(xs: &[(u32, u32, usize)]) -> CharMultiMap<usize> {

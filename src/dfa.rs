@@ -7,6 +7,7 @@
 // except according to those terms.
 
 use bit_set::BitSet;
+use bytes::ByteMap;
 use char_map::{CharMap, CharMultiMap, CharRange};
 use error;
 use nfa::Nfa;
@@ -16,7 +17,7 @@ use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
-use transition::Accept;
+use transition::Accept as NfaAccept;
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -49,17 +50,64 @@ impl SplitSet for BitSet {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DfaAccept {
+    pub at_eoi: bool,
+    // If at_eoi is true, this must be true also.
+    pub otherwise: bool,
+    pub bytes_ago: u8,
+}
+
+impl DfaAccept {
+    pub fn never() -> DfaAccept {
+        DfaAccept {
+            at_eoi: false,
+            otherwise: false,
+            bytes_ago: 0,
+        }
+    }
+
+    pub fn is_never(&self) -> bool {
+        !self.at_eoi && !self.otherwise
+    }
+
+    pub fn accept(bytes_ago: u8) -> DfaAccept {
+        DfaAccept {
+            at_eoi: true,
+            otherwise: true,
+            bytes_ago: bytes_ago,
+        }
+    }
+
+    /// Returns a state that accepts if either of the given states accepts.
+    ///
+    /// If both states accept, then they must agree on how long ago they accept.
+    pub fn union_shortest(&self, other: &DfaAccept) -> DfaAccept {
+        DfaAccept {
+            at_eoi: self.at_eoi || other.at_eoi,
+            otherwise: self.otherwise || other.otherwise,
+            bytes_ago: std::cmp::max(self.bytes_ago, other.bytes_ago),
+        }
+    }
+}
+
 #[derive(PartialEq, Debug)]
 pub struct DfaState {
+    // Because we convert the NFA into a byte-consuming machine before making it deterministic,
+    // all the ranges here will be byte ranges. In that sense, `CharMap` might not be the most
+    // appropriate data structure here, but we use it anyway because it has a bunch of useful
+    // methods.
     pub transitions: CharMap<usize>,
-    pub accept: Accept,
+    /// If `Some`, this is an accepting state, but maybe we should say that we accepted
+    /// a few bytes ago.
+    pub accept: DfaAccept,
 }
 
 impl DfaState {
-    pub fn new(accept: Accept) -> DfaState {
+    pub fn new(accept: DfaAccept) -> DfaState {
         DfaState {
             transitions: CharMap::new(),
-            accept: accept.clone(),
+            accept: accept,
         }
     }
 }
@@ -102,13 +150,12 @@ impl Dfa {
     /// Creates a `Dfa` from a regex string, bailing out if more than `max_states` states were
     /// required.
     pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Dfa, error::Error> {
-        let mut nfa = try!(Nfa::from_regex(re));
-        nfa.remove_predicates();
-        let dfa = try!(nfa.determinize(max_states));
+        let nfa = try!(Nfa::from_regex(re));
+        let dfa = try!(nfa.determinize_for_shortest_match(max_states));
         Ok(dfa.minimize())
     }
 
-    pub fn add_state(&mut self, accept: Accept) {
+    pub fn add_state(&mut self, accept: DfaAccept) {
         self.states.push(DfaState::new(accept));
     }
 
@@ -269,13 +316,11 @@ impl Dfa {
     /// the set of states that never accept; the other element is a partition of the remaining
     /// states.
     fn accept_partition(&self) -> (BitSet, Vec<BitSet>) {
-        let mut partition = HashMap::<&Accept, BitSet>::new();
+        let mut partition = HashMap::<DfaAccept, BitSet>::new();
         for (idx, st) in self.states.iter().enumerate() {
-            partition.entry(&st.accept).or_insert(BitSet::new()).insert(idx);
+            partition.entry(st.accept).or_insert(BitSet::new()).insert(idx);
         }
-        let nevers = partition.get(&Accept::never())
-                              .map(|x| x.clone())
-                              .unwrap_or_else(|| BitSet::new());
+        let nevers = partition.get(&DfaAccept::never()).cloned().unwrap_or_else(|| BitSet::new());
         let others = partition.into_iter()
                               .filter(|&(key, _)| !key.is_never())
                               .map(|(_, val)| val)
@@ -291,8 +336,8 @@ impl Dfa {
     fn reversed(&self) -> Nfa {
         let mut ret = Nfa::with_capacity(self.states.len());
 
-        for st in self.states.iter() {
-            ret.add_state(st.accept.clone());
+        for _ in self.states.iter() {
+            ret.add_state(NfaAccept::never());
         }
 
         for (idx, st) in self.states.iter().enumerate() {
@@ -311,24 +356,30 @@ impl Dfa {
         // Fix up the indices to refer to the new instructions. Note that only the last instruction
         // in each chain can be a Branch, so we only need to look at those.
         for ch in &mut chains {
-            if let Some(inst) = ch.last_mut() {
-                if let &mut Inst::Branch(ref mut cm) = inst {
-                    cm.map_values(&map_state);
+            if let Some(inst_acc) = ch.last_mut() {
+                if let &mut Inst::Branch(ref mut bm) = &mut inst_acc.0 {
+                    bm.map_values(&map_state);
                 }
             }
         }
+        let insts_accepts: Vec<_> = chains.into_iter().flat_map(|c| c.into_iter()).collect();
+        let accept_at_eoi = insts_accepts.iter()
+            .map(|x| if x.1.at_eoi { x.1.bytes_ago } else { std::u8::MAX })
+            .collect();
+        let insts = insts_accepts.into_iter().map(|x| x.0).collect();
 
-        let insts = chains.into_iter().flat_map(|c| c.into_iter()).collect::<Vec<_>>();
         // TODO: put this logic in InitStates
         let mut init = InitStates {
             init_after_char: self.init_after_char.clone(),
             init_at_start: self.init_at_start.map(&map_state),
             init_otherwise: self.init_otherwise.map(&map_state),
         };
+
         init.init_after_char.map_values(&map_state);
         Program {
             init: init,
             insts: insts,
+            accept_at_eoi: accept_at_eoi,
         }
     }
 
@@ -336,8 +387,8 @@ impl Dfa {
     /// The second return value is a map from the old state index to the element in the first
     /// return value that represents the same state. The third return value is the accumulated
     /// lengths of the chains.
-    fn chains(&self) -> (Vec<Vec<Inst>>, HashMap<usize, usize>, Vec<usize>) {
-        let mut chains = Vec::<Vec<Inst>>::new();
+    fn chains(&self) -> (Vec<Vec<(Inst, DfaAccept)>>, HashMap<usize, usize>, Vec<usize>) {
+        let mut chains = Vec::<Vec<_>>::new();
         let mut map = HashMap::<usize, usize>::new();
         let mut lengths = Vec::new();
         let mut cur_length = 0;
@@ -415,19 +466,20 @@ impl Dfa {
             || (&self.init_after_char).into_iter().any(|x| x.1 == st_idx)
     }
 
-    fn build_chain(&self, mut st_idx: usize, rev: &Nfa) -> Vec<Inst> {
+    fn build_chain(&self, mut st_idx: usize, rev: &Nfa) -> Vec<(Inst, DfaAccept)> {
         let mut ret = Vec::new();
         while self.is_chain_link(st_idx, rev) {
             let st = &self.states[st_idx];
             let single_char = Dfa::single_char(st.transitions.iter());
 
-            if !st.accept.is_never() {
-                ret.push(Inst::Acc(st.accept.clone()));
+            if st.accept.otherwise {
+                ret.push((Inst::Acc(st.accept.bytes_ago), st.accept));
             }
             if let Some(ch) = single_char {
-                ret.push(Inst::Char(std::char::from_u32(ch).unwrap()));
+                ret.push((Inst::Byte(ch as u8), st.accept));
             } else {
-                ret.push(Inst::CharSet(st.transitions.to_char_set()));
+                let byte_set = ByteMap::from_char_map(&st.transitions).to_set();
+                ret.push((Inst::ByteSet(byte_set), st.accept));
             }
 
             // This unwrap is OK because self.is_chain_link(st_idx, rev).
@@ -435,14 +487,59 @@ impl Dfa {
         }
 
         let st = &self.states[st_idx];
-        if !st.accept.is_never() {
-            ret.push(Inst::Acc(st.accept.clone()));
+        if st.accept.otherwise {
+            ret.push((Inst::Acc(st.accept.bytes_ago), st.accept));
         }
 
-        // Even if there are no transitions, add an empty branch (which is basically just an
-        // unconditional reject) if this is the last instruction in the chain.
-        ret.push(Inst::Branch(st.transitions.clone()));
+        // Add a branch instruction, even if it's empty (an empty branch is basically a reject).
+        ret.push((Inst::Branch(ByteMap::from_char_map(&st.transitions)), st.accept));
         ret
+    }
+
+    /// Checks whether this DFA has any cycles.
+    ///
+    /// If not, it's a good candidate for the backtracking engine.
+    pub fn has_cycles(&self) -> bool {
+        if self.states.is_empty() {
+            return false;
+        }
+
+        // Pairs of (state, children_left_to_explore).
+        let mut stack: Vec<(usize, std::slice::Iter<_>)> = Vec::with_capacity(self.states.len());
+        let mut visiting: Vec<bool> = vec![false; self.states.len()];
+        let mut done: Vec<bool> = vec![false; self.states.len()];
+
+        for start_idx in 0..self.states.len() {
+            if !done[start_idx] {
+                stack.push((start_idx, self.states[start_idx].transitions.iter()));
+
+                while !stack.is_empty() {
+                    let (cur, next_child) = {
+                        let &mut (cur, ref mut children) = stack.last_mut().unwrap();
+                        (cur, children.next())
+                    };
+
+                    if let Some(&(_, child)) = next_child {
+                        if !self.states[cur].accept.otherwise {
+                            // Push the child onto the stack.
+                            if visiting[child] {
+                                return true;
+                            } else if !done[child] {
+                                stack.push((child, self.states[child].transitions.iter()));
+                                visiting[child] = true;
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Pop the current node from the stack.
+                    visiting[cur] = false;
+                    done[cur] = true;
+                    stack.pop();
+                }
+            }
+        }
+        false
     }
 }
 
@@ -473,20 +570,18 @@ impl Debug for Dfa {
 mod tests {
     use dfa::*;
     use nfa::Nfa;
-    use program::Program;
     use std::usize;
 
     // Like Dfa::from_regex, but doesn't minimize.
     fn make_dfa(re: &str) -> Dfa {
-        let mut nfa = Nfa::from_regex(re).unwrap();
-        nfa.remove_predicates();
-        nfa.determinize(usize::MAX).unwrap()
+        Nfa::from_regex(re).unwrap().determinize_for_shortest_match(usize::MAX).unwrap()
     }
 
     #[test]
     fn test_minimize() {
         let auto = make_dfa("a*b*").minimize();
-        assert_eq!(auto.states.len(), 2);
+        // 1, because optimizing for shortest match means we match empty strings.
+        assert_eq!(auto.states.len(), 1);
 
         let auto = make_dfa(r"^a").minimize();
         assert_eq!(auto.states.len(), 2);
@@ -502,7 +597,8 @@ mod tests {
 
    #[test]
     fn test_class_normalized() {
-        let re = make_dfa("[abcdw]");
+        let re = make_dfa("[abcdw]").minimize();
+        println!("{:?}", re);
         assert_eq!(re.states.len(), 2);
         // The order of the states is arbitrary, but one should have two transitions and
         // the other should have zero.
@@ -511,8 +607,8 @@ mod tests {
 
     #[test]
     fn test_max_states() {
-        assert!(Program::from_regex_bounded("foo", 3).is_err());
-        assert!(Program::from_regex_bounded("foo", 4).is_ok());
+        assert!(Dfa::from_regex_bounded("foo", 3).is_err());
+        assert!(Dfa::from_regex_bounded("foo", 4).is_ok());
     }
 
     #[test]
@@ -528,10 +624,26 @@ mod tests {
     }
 
     #[test]
-    fn test_bug() {
-        use regex::Regex;
-        let re = Regex::new(r"\xff").unwrap();
-        assert_eq!(re.shortest_match("\u{ff}"), Some((0, 2)));
+    fn cycles() {
+        macro_rules! cyc {
+            ($re:expr, $res:expr) => {
+                {
+                    let dfa = Dfa::from_regex_bounded($re, usize::MAX).unwrap();
+                    println!("{:?}", dfa);
+                    assert_eq!(dfa.has_cycles(), $res);
+                }
+            };
+        }
+
+        cyc!("abcde", false);
+        cyc!("ab*d", true);
+        cyc!("ab*", false);
+        cyc!("ab*$", true);
+        cyc!("ab+", false);
+        cyc!("ab+$", true);
+        cyc!("(ab*|cde)", false);
+        cyc!("(ab*|cde)f", true);
+        cyc!("(abc)*", false);
+        cyc!("(abc)*def", true);
     }
 }
-

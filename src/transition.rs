@@ -189,12 +189,6 @@ impl Accept {
             at_char: self.at_char.union(&other.at_char),
         }
     }
-
-    /// If the next character is `ch` (where `None` represents end of input), checks whether we
-    /// should accept.
-    pub fn accepts(&self, ch: Option<u32>) -> bool {
-        (ch.is_none() && self.at_eoi) || (ch.is_some() && self.at_char.contains(ch.unwrap()))
-    }
 }
 
 

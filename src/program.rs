@@ -6,14 +6,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use backtracking::BacktrackingEngine;
-use char_map::{CharMap, CharSet};
-use dfa::Dfa;
-use engine::Engine;
-use error;
+use bytes::{ByteSet, ByteMap};
+use char_map::CharMap;
+use std;
 use std::fmt::{Debug, Formatter, Error as FmtError};
-use threaded::ThreadedEngine;
-use transition::Accept;
+use std::{u8, u32};
 
 pub trait RegexSearcher {
     fn shortest_match(&self, haystack: &str) -> Option<(usize, usize)>;
@@ -45,147 +42,88 @@ impl InitStates {
         }
     }
 
-    /// Returns the state if the previous char was `ch`.
-    pub fn state_after(&self, ch: Option<char>) -> Option<usize> {
-        if let Some(ch) = ch {
-            self.init_after_char.get(ch as u32).cloned().or(self.init_otherwise)
-        } else {
+    /// Returns the starting state if we are at the given pos in the input.
+    pub fn state_at_pos(&self, input: &[u8], pos: usize) -> Option<usize> {
+        if pos == 0 {
             self.init_at_start
+        } else {
+            let s = unsafe { std::str::from_utf8_unchecked(input) };
+            if s.is_char_boundary(pos) {
+                let ch = s.char_at_reverse(pos);
+                self.init_after_char.get(ch as u32).cloned().or(self.init_otherwise)
+            } else {
+                None
+            }
         }
     }
 }
 
+// TODO: write a better debug impl that doesn't print usize::MAX millions of times.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Inst {
-    Char(char),
-    CharSet(CharSet),
-    Acc(Accept),
-    Branch(CharMap<usize>),
+    Byte(u8),
+    ByteSet(ByteSet),
+    Acc(u8),
+    Branch(ByteMap),
 }
 
 #[derive(Clone, PartialEq)]
 pub struct Program {
     pub insts: Vec<Inst>,
     pub init: InitStates,
+    pub accept_at_eoi: Vec<u8>,
 }
 
 impl Program {
-    /// Returns (next_state, accept, retry), where
+    /// Returns (next_state, accept), where
     ///   - next_state is the next state to try
-    ///   - if accept is true then we should accept before consuming `ch`
-    ///   - if retry is true then we should call `step` again before advancing the input past `ch`.
-    ///
-    /// It would be a little cleaner for `step` to advance the input on its own instead of
-    /// asking its caller to advance, but if `step` is recursive then it can't be inlined (which
-    /// is very important for performance).
+    ///   - accept says how many bytes ago we should have accepted.
     #[inline(always)]
-    pub fn step(&self, state: usize, ch: char) -> (Option<usize>, bool, bool) {
+    pub fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>) {
         use program::Inst::*;
         match self.insts[state] {
-            Acc(ref a) => {
-                return (Some(state + 1), a.accepts(Some(ch as u32)), true);
+            Acc(a) => {
+                return (Some(state + 1), Some(a));
             },
-            Char(c) => {
-                if ch == c {
-                    return (Some(state + 1), false, false);
+            Byte(b) => {
+                if b == input[0] {
+                    return (Some(state + 1), None);
                 }
             },
-            CharSet(ref cs) => {
-                if cs.contains(ch as u32) {
-                    return (Some(state + 1), false, false);
+            ByteSet(ref bs) => {
+                if bs.0[input[0] as usize] {
+                    return (Some(state + 1), None);
                 }
             },
-            Branch(ref cm) => {
-                if let Some(&next_state) = cm.get(ch as u32) {
-                    return (Some(next_state), false, false);
+            Branch(ref table) => {
+                let next_state = table.0[input[0] as usize];
+                if next_state != u32::MAX {
+                    return (Some(next_state as usize), None);
                 }
             },
         }
-        (None, false, false)
+        (None, None)
     }
 
-    /// Returns true if the program should accept at the end of input in state `state`.
-    pub fn check_eoi(&self, state: usize) -> bool {
-        if let Inst::Acc(ref acc) = self.insts[state] {
-            acc.at_eoi
+    /// If the program should accept at the end of input in state `state`, returns the index of the
+    /// end of the match.
+    pub fn check_eoi(&self, state: usize, pos: usize) -> Option<usize> {
+        if self.accept_at_eoi[state] != u8::MAX {
+            Some(pos.saturating_sub(self.accept_at_eoi[state] as usize))
         } else {
-            false
+            None
         }
     }
 
-    pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Program, error::Error> {
-        let dfa = try!(Dfa::from_regex_bounded(re, max_states));
-        Ok(dfa.to_program())
-    }
-
-    /// Returns an engine for executing this program.
-    pub fn to_engine(self) -> Box<Engine> {
-        if self.init.anchored().is_some() || !self.has_cycles() {
-            Box::new(BacktrackingEngine::new(self))
-        } else {
-            Box::new(ThreadedEngine::new(self))
-        }
-    }
-
-    /// Checks whether the execution graph of this program has any cycles.
-    ///
-    /// If not, it's a good candidate for the backtracking engine.
-    pub fn has_cycles(&self) -> bool {
-        use self::Inst::*;
-
-        if self.insts.is_empty() {
-            return false;
-        }
-
-        // Pairs of (state, child_idx) where child_idx is the index of the next child to explore.
-        let mut stack: Vec<(usize, usize)> = Vec::with_capacity(self.insts.len());
-        let mut visiting: Vec<bool> = vec![false; self.insts.len()];
-        let mut done: Vec<bool> = vec![false; self.insts.len()];
-
-        macro_rules! push {
-            ($state:expr) => {
-                if visiting[$state] {
-                    return true;
-                } else if !done[$state] {
-                    stack.push(($state, 0));
-                    visiting[$state] = true;
-                }
-            };
-        }
-
-        macro_rules! pop {
-            ($state:expr) => {
-                visiting[$state] = false;
-                done[$state] = true;
-                stack.pop();
-            };
-        }
-
-        for start in 0..self.insts.len() {
-            if !done[start] {
-                stack.push((start, 0));
-
-                while !stack.is_empty() {
-                    let &(cur, child_idx) = stack.last().unwrap();
-                    stack.last_mut().unwrap().1 += 1;
-
-                    match self.insts[cur] {
-                        Acc(ref a) => if !a.is_always() && child_idx == 0 {
-                            push!(cur + 1);
-                        } else {
-                            pop!(cur);
-                        },
-                        Branch(ref cm) => if child_idx < cm.len() {
-                            push!(cm.nth(child_idx).1);
-                        } else {
-                            pop!(cur);
-                        },
-                        _ => if child_idx > 0 { pop!(cur); } else { push!(cur + 1); },
-                    }
-                }
+    /// If this program matches an empty match at the end of the input, return it.
+    pub fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
+        let pos = input.len();
+        if let Some(state) = self.init.state_at_pos(input, pos) {
+            if self.accept_at_eoi[state] != u8::MAX {
+                return Some((pos, pos));
             }
         }
-        false
+        None
     }
 }
 
@@ -197,6 +135,7 @@ impl Debug for Program {
         try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init.init_at_start)));
         try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init.init_after_char)));
         try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init.init_otherwise)));
+        try!(f.write_fmt(format_args!("Accept_at_eoi: {:?}\n", self.accept_at_eoi)));
 
         for (idx, inst) in self.insts.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
@@ -204,34 +143,3 @@ impl Debug for Program {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std;
-    use super::*;
-
-    #[test]
-    fn cycles() {
-        macro_rules! cyc {
-            ($re:expr, $res:expr) => {
-                {
-                    let prog = Program::from_regex_bounded($re, std::usize::MAX).unwrap();
-                    println!("{:?}", prog);
-                    assert_eq!($res, prog.has_cycles());
-                }
-            };
-        }
-
-        cyc!("abcde", false);
-        cyc!("ab*d", true);
-        cyc!("ab*", false);
-        cyc!("ab*$", true);
-        cyc!("ab+", false);
-        cyc!("ab+$", true);
-        cyc!("(ab*|cde)", false);
-        cyc!("(ab*|cde)f", true);
-        cyc!("(abc)*", false);
-        cyc!("(abc)*def", true);
-    }
-}
-

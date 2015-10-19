@@ -34,12 +34,15 @@ necessarily find the exact same match that a standard regex engine will.
 extern crate aho_corasick;
 extern crate ascii_set;
 extern crate bit_set;
+extern crate itertools;
 extern crate memchr;
 extern crate regex_syntax;
 extern crate test;
+extern crate utf8_ranges;
 
 mod backtracking;
 mod builder;
+mod bytes;
 mod char_map;
 mod dfa;
 mod engine;

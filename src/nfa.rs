@@ -9,8 +9,9 @@
 use bit_set::BitSet;
 use builder::NfaBuilder;
 use char_map::{CharMap, CharMultiMap, CharRange};
-use dfa::Dfa;
+use dfa::{Dfa, DfaAccept};
 use error;
+use itertools::Itertools;
 use regex_syntax;
 use std;
 use std::collections::HashMap;
@@ -19,12 +20,61 @@ use std::mem;
 use std::ops::Deref;
 use std::result::Result;
 use transition::{Accept, NfaTransitions, Predicate};
+use utf8_ranges::{Utf8Range, Utf8Sequence, Utf8Sequences};
 
+struct MergedUtf8Sequences {
+    head: Vec<Utf8Range>,
+    last_byte: Vec<Utf8Range>,
+}
+
+// FIXME: replace BitSets by something with better asymptotic performance (BTreeSet?).
+// Now that we're using byte machines, we have a lot of states...
+
+impl MergedUtf8Sequences {
+    // Panics if not all the input sequences have the same leading byte ranges.
+    fn merge<I: Iterator<Item=Utf8Sequence>>(iter: I) -> MergedUtf8Sequences {
+        let mut head = Vec::new();
+        let mut last_byte = Vec::new();
+
+        for seq in iter {
+            let len = seq.len();
+            let h = &seq.as_slice()[..len-1];
+            if head.is_empty() {
+                head.extend(h);
+            } else if &head[..] != h {
+                panic!("invalid sequences to merge");
+            }
+
+            last_byte.push(seq.as_slice()[len-1]);
+        }
+
+        MergedUtf8Sequences {
+            head: head,
+            last_byte: last_byte,
+        }
+    }
+
+    fn merge_all<I: Iterator<Item=Utf8Sequence>>(iter: I) -> Vec<MergedUtf8Sequences> {
+        let mut ret = Vec::new();
+        let head = |u: &Utf8Sequence| {
+            let len = u.len();
+            u.as_slice()[..len-1].to_owned()
+        };
+
+        for (_, seqs) in &iter.group_by_lazy(head) {
+            ret.push(MergedUtf8Sequences::merge(seqs));
+        }
+        ret
+    }
+}
 
 #[derive(PartialEq, Debug)]
 pub struct NfaState {
     pub transitions: NfaTransitions,
+    /// Before calling `byte_me()`, this determines whether we accept or not.
     pub accept: Accept,
+    /// After calling `byte_me()`, this determines whether we accept or not.
+    pub dfa_accept: DfaAccept,
 }
 
 impl NfaState {
@@ -32,6 +82,7 @@ impl NfaState {
         NfaState {
             transitions: NfaTransitions::new(),
             accept: accept,
+            dfa_accept: DfaAccept::never(),
         }
     }
 }
@@ -78,14 +129,12 @@ impl Debug for Nfa {
         }
 
         for (st_idx, st) in self.states.iter().enumerate() {
-            try!(f.write_fmt(format_args!("\tState {} (accept: {:?}):\n", st_idx, st.accept)));
+            try!(f.write_fmt(format_args!("\tState {}:\n", st_idx)));
+            try!(f.write_fmt(format_args!("\t\tAccept: {:?}\n", st.accept)));
+            try!(f.write_fmt(format_args!("\t\tDfa_accept: {:?}\n", st.dfa_accept)));
 
             if !st.transitions.consuming.is_empty() {
-                try!(f.write_str("\t\tTransitions:\n"));
-                for &(range, target) in st.transitions.consuming.iter() {
-                    try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
-                                                  range.start, range.end, target)));
-                }
+                try!(f.write_fmt(format_args!("\t\tTransitions: {:?}\n", st.transitions.consuming)));
             }
 
             if !st.transitions.eps.is_empty() {
@@ -137,12 +186,96 @@ impl Nfa {
         self.states[from].transitions.consuming.deref()
     }
 
+    /// Adds a path from `start_state` to `end_state` for all byte sequences matching `seq`.
+    ///
+    /// If `end_state` is None, then the last state becomes an accepting state that rewinds
+    /// to the beginning of the sequence.
+    ///
+    /// All the transitions in this path are byte transitions, not char transitions.
+    fn add_utf8_sequence(
+        &mut self,
+        start_state: usize,
+        end_state: Option<usize>,
+        seq: MergedUtf8Sequences
+    ) {
+        let mut last_state = start_state;
+        for range in &seq.head {
+            self.add_state(Accept::never());
+            let cur_state = self.states.len() - 1;
+            let range = CharRange::new(range.start as u32, range.end as u32);
+
+            self.add_transition(last_state, cur_state, range);
+            last_state = cur_state;
+        }
+
+        let end_state = if let Some(e) = end_state {
+            e
+        } else {
+            self.add_state(Accept::never());
+            let e = self.states.len() - 1;
+            self.states[e].dfa_accept = DfaAccept::accept(seq.head.len() as u8 + 1);
+            e
+        };
+
+        for range in &seq.last_byte {
+            let range = CharRange::new(range.start as u32, range.end as u32);
+            self.add_transition(last_state, end_state, range);
+        }
+    }
+
+    fn add_utf8_sequences<I>(
+        &mut self,
+        start_state: usize,
+        ranges: I,
+        target: Option<usize>)
+    where I: Iterator<Item=CharRange> {
+        let utf8_seqs = ranges
+            .filter_map(|r| r.to_char_pair())
+            .flat_map(|(start, end)| Utf8Sequences::new(start, end));
+        let merged = MergedUtf8Sequences::merge_all(utf8_seqs);
+        for m in merged {
+            self.add_utf8_sequence(start_state, target, m);
+        }
+    }
+
+    /// Converts all the transitions in this automaton into byte transitions.
+    ///
+    /// It also converts `Accept` to `DfaAccept`.
+    ///
+    /// This doesn't do anything to predicates, so you probably want to `remove_predicates()`
+    /// first.
+    fn byte_me(&mut self) {
+        for i in &self.reachable_states() {
+            let mut trans = CharMultiMap::new();
+            mem::swap(&mut trans, &mut self.states[i].transitions.consuming);
+
+            // Group transitions by the target state, and add them in batches. Most of the time, we
+            // can merge a bunch of Utf8Sequences before adding them, which saves a bunch of
+            // states.
+            let mut trans = trans.into_vec();
+            trans.sort_by(|x, y| x.1.cmp(&y.1));
+            for (tgt, transitions) in trans.into_iter().group_by(|x| x.1) {
+                self.add_utf8_sequences(i, transitions.into_iter().map(|x| x.0), Some(tgt));
+            }
+
+            // Convert from Accept to DfaAccept.
+            self.states[i].dfa_accept.at_eoi = self.states[i].accept.at_eoi;
+            if self.states[i].accept.at_char.is_full() {
+                debug_assert!(self.states[i].accept.at_eoi);
+                self.states[i].dfa_accept.otherwise = true;
+            } else if !self.states[i].accept.at_char.is_empty() {
+                let ranges = self.states[i].accept.at_char.clone();
+                self.add_utf8_sequences(i, ranges.into_iter().cloned(), None);
+            }
+        }
+    }
+
     /// Modifies this automaton to remove all transition predicates.
     ///
     /// Note that this clobbers `init_at_start` and `init_after_char`, so you probably don't want
     /// to call this if those are already set. In particular, calling `remove_predicates()` twice
     /// on the same `Nfa` is probably a bad idea.
-    pub fn remove_predicates(&mut self) {
+    fn remove_predicates(&mut self) {
         self.init_at_start.clear();
         self.init_at_start.insert(0);
 
@@ -171,11 +304,15 @@ impl Nfa {
     //      }
     //  }
     // Above, when we say "leading into" or "leading out of," that includes eps-closures.
+    //
+    // TODO: this function is pretty generous about adding extra states, which can be
+    // problematic when combined with large unicode classes. We could be much more stingy about
+    // extra states, e.g. at predicates only matching the beginning or end of input.
     fn remove_predicates_once(&mut self, initial_preds: &mut CharMultiMap<usize>) -> bool {
         let orig_len = self.states.len();
         let mut reversed = self.reversed();
 
-        for idx in 0..orig_len {
+        for idx in self.reachable_states().iter() {
             let preds = self.states[idx].transitions.predicates.clone();
             self.states[idx].transitions.predicates.clear();
             // Also remove the preds from our reversed copy.
@@ -250,6 +387,42 @@ impl Nfa {
         pred.filter_accept(&self.accept(states))
     }
 
+    /// Deletes all transitions following an unconditional accept.
+    fn optimize_for_shortest_match(&mut self) {
+        for st_idx in 0..self.states.len() {
+            let eps_closure = self.eps_closure_single(st_idx);
+            if self.accept(&eps_closure).is_always() {
+                self.states[st_idx].transitions.predicates.clear();
+                self.states[st_idx].transitions.consuming = CharMultiMap::new();
+            }
+        }
+
+        for st in &mut self.states {
+            if st.accept.is_always() {
+                st.transitions.eps.clear();
+            }
+        }
+
+        self.trim_unreachable();
+    }
+
+    fn trim_unreachable(&mut self) {
+        let reachable = self.reachable_states();
+
+        for st_idx in 0..self.states.len() {
+            if !reachable.contains(&st_idx) {
+                self.states[st_idx].transitions.predicates.clear();
+                self.states[st_idx].transitions.eps.clear();
+                self.states[st_idx].transitions.consuming = CharMultiMap::new();
+            }
+        }
+
+        for st in &mut self.states {
+            st.transitions.consuming =
+                st.transitions.consuming.filter_values(|v| reachable.contains(&v));
+        }
+    }
+
     /// Returns a copy with all transitions reversed.
     ///
     /// Its states will have the same indices as those of the original.
@@ -275,8 +448,7 @@ impl Nfa {
         ret
     }
 
-    /// Returns the set of all states that can be reached from some initial state.  Predicates must
-    /// be removed before calling this.
+    /// Returns the set of all states that can be reached from some initial state.
     fn reachable_from(&self, states: &BitSet) -> BitSet {
         let mut active = states.clone();
         let mut next_active = BitSet::with_capacity(self.states.len());
@@ -291,6 +463,13 @@ impl Nfa {
                     }
                 }
                 for &(_, t) in self.states[s].transitions.consuming.iter() {
+                    if !ret.contains(&t) {
+                        ret.insert(t);
+                        next_active.insert(t);
+                    }
+                }
+
+                for &(_, t) in self.states[s].transitions.predicates.iter() {
                     if !ret.contains(&t) {
                         ret.insert(t);
                         next_active.insert(t);
@@ -327,11 +506,28 @@ impl Nfa {
         forward
     }
 
+    /// Creates a deterministic automaton that can be used to find the shortest strings matching
+    /// this language.
+    pub fn determinize_for_shortest_match(mut self, max_states: usize)
+    -> Result<Dfa, error::Error> {
+        // Technically, we only need to optimize_for_shortest_match once at the end. But
+        // doing it more times is cheap, and it can help prevent remove_predicates and byte_me
+        // from unnecessarily adding many states.
+        self.optimize_for_shortest_match();
+        self.remove_predicates();
+        self.optimize_for_shortest_match();
+        self.byte_me();
+
+        // Don't optimize again after byte_me, because it switches from accept to dfa_accept
+        // and therefore messes up reachable_states.
+        self.determinize(max_states)
+    }
+
     /// Creates a deterministic automaton representing the same language.
     ///
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
-    pub fn determinize(&self, max_states: usize) -> Result<Dfa, error::Error> {
+    fn determinize(&self, max_states: usize) -> Result<Dfa, error::Error> {
         if self.states.is_empty() {
             // FIXME: figure out what to do for empty automata
             return Err(error::Error::TooManyStates);
@@ -349,7 +545,7 @@ impl Nfa {
             } else if dfa.num_states() >= max_states {
                 Err(error::Error::TooManyStates)
             } else {
-                dfa.add_state(self.accept(&s));
+                dfa.add_state(self.dfa_accept(&s));
                 active.push(s.clone());
                 map.insert(s, dfa.num_states() - 1);
                 Ok(dfa.num_states() - 1)
@@ -427,6 +623,14 @@ impl Nfa {
 
     fn accept(&self, states: &BitSet) -> Accept {
         states.iter().fold(Accept::never(), |a, b| a.union(&self.states[b].accept))
+    }
+
+    fn dfa_accept(&self, states: &BitSet) -> DfaAccept {
+        let ret = states.iter()
+            .fold(
+                DfaAccept::never(),
+                |a, b| a.union_shortest(&self.states[b].dfa_accept));
+        ret
     }
 
     /// Finds all the transitions out of the given set of states.
