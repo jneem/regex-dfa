@@ -7,8 +7,16 @@
 // except according to those terms.
 
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use unicode::PERLW;
+
+/// How we represent a set of states. The two important criteria are:
+///
+/// - it should be reasonably fast even when there are thousands of states (this knocks out
+///   BitSet), and
+/// - it should be hashable (this knocks out HashSet).
+pub type StateSet = BTreeSet<usize>;
 
 /// A predicate is a transition that doesn't consume any input, but that can only be traversed if
 /// the previous char and the next char satisfy some condition.
@@ -192,7 +200,7 @@ impl Accept {
 }
 
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct NfaTransitions {
     /// Transitions that consume input.
     pub consuming: CharMultiMap<usize>,
@@ -209,6 +217,29 @@ impl NfaTransitions {
             eps: Vec::new(),
             predicates: Vec::new(),
         }
+    }
+
+    pub fn map_targets<F>(&mut self, mut f: F) where F: FnMut(usize) -> usize {
+        fn map_vec<T, F>(v: &mut Vec<T>, mut f: F) where F: FnMut(&mut T) {
+            for i in 0..v.len() {
+                f(&mut v[i]);
+            }
+        }
+
+        map_vec(&mut self.predicates, |x| { x.1 = f(x.1); });
+        map_vec(&mut self.eps, |x| { *x = f(*x); });
+        map_vec(self.consuming.vec_ref_mut(), |x| { x.1 = f(x.1) });
+    }
+
+    pub fn retain_targets<F>(&mut self, mut f: F) where F: FnMut(usize) -> bool {
+        self.predicates.retain(|x| f(x.1));
+        self.eps.retain(|x| f(*x));
+        self.consuming.vec_ref_mut().retain(|x| f(x.1));
+    }
+
+    pub fn filter_map_targets<F>(&mut self, mut f: F) where F: FnMut(usize) -> Option<usize> {
+        self.retain_targets(|x| f(x).is_some());
+        self.map_targets(|x| f(x).unwrap());
     }
 }
 

@@ -33,7 +33,6 @@ necessarily find the exact same match that a standard regex engine will.
 
 extern crate aho_corasick;
 extern crate ascii_set;
-extern crate bit_set;
 extern crate itertools;
 extern crate memchr;
 extern crate regex_syntax;

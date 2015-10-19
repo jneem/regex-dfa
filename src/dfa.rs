@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bit_set::BitSet;
 use bytes::ByteMap;
 use char_map::{CharMap, CharMultiMap, CharRange};
 use error;
@@ -17,7 +16,7 @@ use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::result::Result;
-use transition::Accept as NfaAccept;
+use transition::{Accept as NfaAccept, StateSet};
 
 trait PopArbitrary<T> {
     /// Removes and returns an arbitrary member of this collection.
@@ -40,10 +39,11 @@ trait SplitSet: Sized {
     fn split(&self, other: &Self) -> Option<(Self, Self)>;
 }
 
-impl SplitSet for BitSet {
-    fn split(&self, other: &BitSet) -> Option<(BitSet, BitSet)> {
+impl SplitSet for StateSet {
+    fn split(&self, other: &StateSet) -> Option<(StateSet, StateSet)> {
         if !self.is_disjoint(other) && !self.is_subset(other) {
-            Some((self.intersection(other).collect(), self.difference(other).collect()))
+            Some((self.intersection(other).cloned().collect(),
+                self.difference(other).cloned().collect()))
         } else {
             None
         }
@@ -170,7 +170,7 @@ impl Dfa {
     }
 
     /// Partitions the given states according to what characters they accept.
-    fn reject_partition(&self, states: &BitSet) -> Vec<BitSet> {
+    fn reject_partition(&self, states: &StateSet) -> Vec<StateSet> {
         if states.is_empty() {
             // Return the empty partition instead of a partition consisting of the empty set.
             return Vec::new();
@@ -184,7 +184,7 @@ impl Dfa {
         // If state `i` rejects char `c` then this will map `c` to `i`.
         let all_rejects = CharMultiMap::from_vec(
             states.iter()
-                .flat_map(|idx| rejects(idx).into_iter())
+                .flat_map(|idx| rejects(*idx).into_iter())
                 .collect()
         );
 
@@ -215,8 +215,8 @@ impl Dfa {
     fn minimize(&self) -> Dfa {
         let (never_states, acc_state_partition) = self.accept_partition();
         let reject_partition = self.reject_partition(&never_states);
-        let mut partition = Vec::<BitSet>::new();
-        let mut distinguishers = HashSet::<BitSet>::new();
+        let mut partition = Vec::<StateSet>::new();
+        let mut distinguishers = HashSet::<StateSet>::new();
         let reversed = self.reversed();
 
         // This is a little conservative -- we don't actually have to add everything to the set of
@@ -229,7 +229,7 @@ impl Dfa {
 
         while distinguishers.len() > 0 {
             let dist = distinguishers.pop_arbitrary();
-            let sets: Vec<BitSet> = reversed.transitions(&dist)
+            let sets: Vec<StateSet> = reversed.transitions(&dist)
                                             .into_iter()
                                             .map(|(_, x)| x)
                                             .collect();
@@ -238,7 +238,7 @@ impl Dfa {
             // some element of `sets` reveals it to contain more than
             // one equivalence class.
             for s in &sets {
-                let mut next_partition = Vec::<BitSet>::new();
+                let mut next_partition = Vec::<StateSet>::new();
 
                 for y in partition.iter() {
                     if let Some((y0, y1)) = y.split(s) {
@@ -270,11 +270,11 @@ impl Dfa {
         let mut old_state_to_new = vec![0; self.states.len()];
         for part in partition.iter() {
             // This unwrap is safe because we don't allow any empty sets into the partition.
-            let rep_idx = part.iter().next().unwrap();
+            let rep_idx = *part.iter().next().unwrap();
             let rep = &self.states[rep_idx];
             ret.states.push(DfaState::new(rep.accept.clone()));
 
-            for state in part.iter() {
+            for &state in part.iter() {
                 old_state_to_new[state] = ret.states.len() - 1;
             }
         }
@@ -282,7 +282,7 @@ impl Dfa {
         // Fix the indices in all transitions to refer to the new state numbering.
         for part in partition.iter() {
             // This unwrap is safe because we don't allow any empty sets into the partition.
-            let old_src_idx = part.iter().next().unwrap();
+            let old_src_idx = *part.iter().next().unwrap();
             let new_src_idx = old_state_to_new[old_src_idx];
 
             for &(ref range, old_tgt_idx) in self.states[old_src_idx].transitions.iter() {
@@ -315,12 +315,12 @@ impl Dfa {
     /// Returns a partition of states according to their accept value. The first tuple element is
     /// the set of states that never accept; the other element is a partition of the remaining
     /// states.
-    fn accept_partition(&self) -> (BitSet, Vec<BitSet>) {
-        let mut partition = HashMap::<DfaAccept, BitSet>::new();
+    fn accept_partition(&self) -> (StateSet, Vec<StateSet>) {
+        let mut partition = HashMap::<DfaAccept, StateSet>::new();
         for (idx, st) in self.states.iter().enumerate() {
-            partition.entry(st.accept).or_insert(BitSet::new()).insert(idx);
+            partition.entry(st.accept).or_insert(StateSet::new()).insert(idx);
         }
-        let nevers = partition.get(&DfaAccept::never()).cloned().unwrap_or_else(|| BitSet::new());
+        let nevers = partition.get(&DfaAccept::never()).cloned().unwrap_or_else(|| StateSet::new());
         let others = partition.into_iter()
                               .filter(|&(key, _)| !key.is_never())
                               .map(|(_, val)| val)

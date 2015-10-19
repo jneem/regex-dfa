@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bit_set::BitSet;
 use regex_syntax;
 use std;
 use std::char;
@@ -16,6 +15,7 @@ use std::hash::Hash;
 use std::iter::RangeInclusive;
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
+use transition::StateSet;
 
 const DISPLAY_LIMIT: usize = 10;
 
@@ -542,7 +542,7 @@ impl CharSet {
 }
 
 /// A multi-valued mapping from chars to other data.
-#[derive(Hash, PartialEq)]
+#[derive(Clone, Hash, PartialEq)]
 pub struct CharMultiMap<T: Clone + Debug + Hash + PartialEq> {
     elts: Vec<(CharRange, T)>,
 }
@@ -654,18 +654,22 @@ impl<T: Clone + Debug + Hash + PartialEq> CharMultiMap<T> {
     pub fn into_vec(self) -> Vec<(CharRange, T)> {
         self.elts
     }
+
+    pub fn vec_ref_mut(&mut self) -> &mut Vec<(CharRange, T)> {
+        &mut self.elts
+    }
 }
 
 impl CharMultiMap<usize> {
     /// Makes the ranges sorted and non-overlapping. The data associated with each range will
     /// be a set of `usize`s instead of a single `usize`.
-    pub fn group(&self) -> CharMap<BitSet> {
-        let mut map = HashMap::<CharRange, BitSet>::new();
+    pub fn group(&self) -> CharMap<StateSet> {
+        let mut map = HashMap::<CharRange, StateSet>::new();
         for (range, state) in self.split().elts.into_iter() {
-            map.entry(range).or_insert(BitSet::new()).insert(state);
+            map.entry(range).or_insert(StateSet::new()).insert(state);
         }
 
-        let mut vec: Vec<(CharRange, BitSet)> = map.into_iter().collect();
+        let mut vec: Vec<(CharRange, StateSet)> = map.into_iter().collect();
         vec.sort_by(|&(r1, _), &(r2, _)| r1.start.cmp(&r2.start));
         CharMap { elts: vec }
     }
