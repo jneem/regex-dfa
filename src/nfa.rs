@@ -26,9 +26,6 @@ struct MergedUtf8Sequences {
     last_byte: Vec<Utf8Range>,
 }
 
-// FIXME: replace StateSets by something with better asymptotic performance (BTreeSet?).
-// Now that we're using byte machines, we have a lot of states...
-
 impl MergedUtf8Sequences {
     // Panics if not all the input sequences have the same leading byte ranges.
     fn merge<I: Iterator<Item=Utf8Sequence>>(iter: I) -> MergedUtf8Sequences {
@@ -95,7 +92,7 @@ impl NfaState {
 ///
 /// The initial state of an `Nfa` always includes state zero, but see also the documentation for
 /// `init_at_start` and `init_after_char`.
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Nfa {
     states: Vec<NfaState>,
 
@@ -238,24 +235,31 @@ impl Nfa {
         &mut self,
         start_state: usize,
         ranges: I,
-        target: Option<usize>)
+        target: Option<usize>,
+        max_states: usize)
+    -> Result<(), error::Error>
     where I: Iterator<Item=CharRange> {
         let utf8_seqs = ranges
             .filter_map(|r| r.to_char_pair())
             .flat_map(|(start, end)| Utf8Sequences::new(start, end));
         let merged = MergedUtf8Sequences::merge_all(utf8_seqs);
+
+        let len: usize = merged.iter().map(|m| m.head.len()).sum();
+        if self.states.len() + len > max_states {
+            return Err(error::Error::TooManyStates);
+        }
+
         for m in merged {
             self.add_utf8_sequence(start_state, target, m);
         }
+        Ok(())
     }
 
     /// Converts all the transitions in this automaton into byte transitions.
     ///
-    /// It also converts `Accept` to `DfaAccept`.
-    ///
     /// This doesn't do anything to predicates, so you probably want to `remove_predicates()`
     /// first.
-    fn byte_me(&mut self) {
+    fn byte_me(&mut self, max_states: usize) -> Result<(), error::Error> {
         for i in 0..self.states.len() {
             let mut trans = CharMultiMap::new();
             mem::swap(&mut trans, &mut self.states[i].transitions.consuming);
@@ -266,19 +270,33 @@ impl Nfa {
             let mut trans = trans.into_vec();
             trans.sort_by(|x, y| x.1.cmp(&y.1));
             for (tgt, transitions) in trans.into_iter().group_by(|x| x.1) {
-                self.add_utf8_sequences(i, transitions.into_iter().map(|x| x.0), Some(tgt));
+                try!(self.add_utf8_sequences(
+                        i,
+                        transitions.into_iter().map(|x| x.0),
+                        Some(tgt),
+                        max_states));
             }
+        }
+        Ok(())
+    }
 
-            // Convert from Accept to DfaAccept.
+    /// Convert from using Accept to DfaAccept.
+    fn byte_accept(&mut self, max_states: usize) -> Result<(), error::Error> {
+        for i in 0..self.states.len() {
             self.states[i].dfa_accept.at_eoi = self.states[i].accept.at_eoi;
             if self.states[i].accept.at_char.is_full() {
                 debug_assert!(self.states[i].accept.at_eoi);
                 self.states[i].dfa_accept.otherwise = true;
             } else if !self.states[i].accept.at_char.is_empty() {
                 let ranges = self.states[i].accept.at_char.clone();
-                self.add_utf8_sequences(i, ranges.into_iter().cloned(), None);
+                try!(self.add_utf8_sequences(
+                        i,
+                        ranges.into_iter().cloned(),
+                        None,
+                        max_states));
             }
         }
+        Ok(())
     }
 
     /// Modifies this automaton to remove all transition predicates.
@@ -316,9 +334,9 @@ impl Nfa {
     //  }
     // Above, when we say "leading into" or "leading out of," that includes eps-closures.
     //
-    // TODO: this function is pretty generous about adding extra states, which can be
-    // problematic when combined with large unicode classes. We could be much more stingy about
-    // extra states, e.g. at predicates only matching the beginning or end of input.
+    // TODO: this function is pretty generous about adding extra states. We could be much more
+    // stingy about extra states, e.g. at predicates only matching the beginning or end of input.
+    // (Although this is rather less crucial now that we are trimming unreachable states.)
     fn remove_predicates_once(&mut self, initial_preds: &mut CharMultiMap<usize>) -> bool {
         let orig_len = self.states.len();
         let mut reversed = self.reversed();
@@ -536,7 +554,8 @@ impl Nfa {
         self.optimize_for_shortest_match();
         self.remove_predicates();
         self.optimize_for_shortest_match();
-        self.byte_me();
+        try!(self.byte_me(max_states));
+        try!(self.byte_accept(max_states));
 
         // Don't optimize again after byte_me, because it switches from accept to dfa_accept
         // and therefore messes up reachable_states.
@@ -768,6 +787,25 @@ mod tests {
         target.init.insert(0);
         target.init_at_start.insert(0);
         assert_eq!(nfa, target)
+    }
+
+    #[test]
+    fn test_max_size() {
+        let nfa = Nfa::from_regex(r"a[0-9]b").unwrap();
+        assert!(nfa.clone().byte_me(10).is_ok());
+        assert!(nfa.clone().byte_me(5).is_err());
+
+        let mut nfa = Nfa::from_regex(r"\ba\b").unwrap();
+        nfa.remove_predicates();
+        assert!(nfa.clone().byte_me(10).is_ok());
+        assert!(nfa.clone().byte_me(5).is_err());
+        assert!(nfa.clone().byte_accept(2000).is_ok());
+        assert!(nfa.clone().byte_accept(500).is_err());
+
+        let mut nfa = Nfa::from_regex(r"blah.*\ba\b.*blah").unwrap();
+        nfa.remove_predicates();
+        assert!(nfa.clone().byte_me(10000).is_ok());
+        assert!(nfa.clone().byte_me(8000).is_err());
     }
 }
 
