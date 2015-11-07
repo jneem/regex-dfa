@@ -103,7 +103,7 @@ impl Dfa {
     /// required.
     pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Dfa, error::Error> {
         let mut nfa = try!(Nfa::from_regex(re));
-        try!(nfa.remove_predicates(max_states));
+        nfa.remove_predicates();
         let dfa = try!(nfa.determinize(max_states));
         Ok(dfa.minimize())
     }
@@ -479,7 +479,7 @@ mod tests {
     // Like Dfa::from_regex, but doesn't minimize.
     fn make_dfa(re: &str) -> Dfa {
         let mut nfa = Nfa::from_regex(re).unwrap();
-        nfa.remove_predicates(usize::MAX);
+        nfa.remove_predicates();
         nfa.determinize(usize::MAX).unwrap()
     }
 

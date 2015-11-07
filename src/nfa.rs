@@ -142,7 +142,7 @@ impl Nfa {
     /// Note that this clobbers `init_at_start` and `init_after_char`, so you probably don't want
     /// to call this if those are already set. In particular, calling `remove_predicates()` twice
     /// on the same `Nfa` is probably a bad idea.
-    pub fn remove_predicates(&mut self, max_states: usize) -> Result<(), error::Error> {
+    pub fn remove_predicates(&mut self) {
         self.init_at_start.clear();
         self.init_at_start.insert(0);
 
@@ -153,13 +153,9 @@ impl Nfa {
 
         let mut changed = self.remove_predicates_once(&mut initial_preds);
         while changed {
-            if self.states.len() > max_states {
-                return Err(error::Error::TooManyStates);
-            }
             changed = self.remove_predicates_once(&mut initial_preds);
         }
         self.init_after_char = initial_preds.group();
-        Ok(())
     }
 
     // This is the algorithm for removing predicates, which we run repeatedly until
@@ -459,7 +455,6 @@ mod tests {
     use bit_set::BitSet;
     use nfa::Nfa;
     use char_map::{CharMap, CharRange, CharSet};
-    use std::usize;
     use transition::{Accept, PredicatePart};
 
     #[test]
@@ -468,7 +463,7 @@ mod tests {
         // There should be a beginning predicate between states 0 and 4, an eps transition from 1
         // to 2, and 'a' transitions from 2 to 3 and 4 to 3.
         assert_eq!(nfa.states.len(), 4);
-        nfa.remove_predicates(usize::MAX);
+        nfa.remove_predicates();
         assert_eq!(nfa.states.len(), 5);
 
         let mut target = Nfa::with_capacity(6);
@@ -514,7 +509,7 @@ mod tests {
         // 1 to 2, and 'a' transitions from 2 to 3 and 5 to 3. There will also be a useless state
         // 4.
         assert_eq!(nfa.states.len(), 4);
-        nfa.remove_predicates(usize::MAX);
+        nfa.remove_predicates();
         assert_eq!(nfa.states.len(), 6);
 
         let mut target = Nfa::with_capacity(6);
@@ -537,7 +532,7 @@ mod tests {
     fn test_word_boundary_end() {
         let mut nfa = Nfa::from_regex(r"a\b").unwrap();
         assert_eq!(nfa.states.len(), 4);
-        nfa.remove_predicates(usize::MAX);
+        nfa.remove_predicates();
         assert_eq!(nfa.states.len(), 6);
 
         let mut target = Nfa::with_capacity(6);
