@@ -16,6 +16,7 @@ pub trait RegexSearcher {
     fn shortest_match(&self, haystack: &str) -> Option<(usize, usize)>;
 }
 
+// TODO: replace init_after_char with a backwards-running table-based machine.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InitStates {
     pub init_at_start: Option<usize>,
@@ -67,19 +68,36 @@ pub enum Inst {
     Branch(ByteMap),
 }
 
+pub trait Program: Clone + Debug {
+    /// Returns (next_state, accept), where
+    ///   - next_state is the next state to try
+    ///   - accept says how many bytes ago we should have accepted.
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>);
+
+    /// If the program should accept at the end of input in state `state`, returns the index of the
+    /// end of the match.
+    fn check_eoi(&self, state: usize, pos: usize) -> Option<usize>;
+
+    /// If this program matches an empty match at the end of the input, return it.
+    fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)>;
+
+    /// The number of states in this program.
+    fn num_states(&self) -> usize;
+
+    /// The initial state when starting the program.
+    fn init(&self) -> &InitStates;
+}
+
 #[derive(Clone, PartialEq)]
-pub struct Program {
+pub struct VmProgram {
     pub insts: Vec<Inst>,
     pub init: InitStates,
     pub accept_at_eoi: Vec<u8>,
 }
 
-impl Program {
-    /// Returns (next_state, accept), where
-    ///   - next_state is the next state to try
-    ///   - accept says how many bytes ago we should have accepted.
+impl Program for VmProgram {
     #[inline(always)]
-    pub fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>) {
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>) {
         use program::Inst::*;
         match self.insts[state] {
             Acc(a) => {
@@ -105,9 +123,7 @@ impl Program {
         (None, None)
     }
 
-    /// If the program should accept at the end of input in state `state`, returns the index of the
-    /// end of the match.
-    pub fn check_eoi(&self, state: usize, pos: usize) -> Option<usize> {
+    fn check_eoi(&self, state: usize, pos: usize) -> Option<usize> {
         if self.accept_at_eoi[state] != u8::MAX {
             Some(pos.saturating_sub(self.accept_at_eoi[state] as usize))
         } else {
@@ -115,8 +131,7 @@ impl Program {
         }
     }
 
-    /// If this program matches an empty match at the end of the input, return it.
-    pub fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
+    fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
         let pos = input.len();
         if let Some(state) = self.init.state_at_pos(input, pos) {
             if self.accept_at_eoi[state] != u8::MAX {
@@ -125,10 +140,18 @@ impl Program {
         }
         None
     }
+
+    fn num_states(&self) -> usize {
+        self.insts.len()
+    }
+
+    fn init(&self) -> &InitStates {
+        &self.init
+    }
 }
 
 
-impl Debug for Program {
+impl Debug for VmProgram {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
         try!(f.write_fmt(format_args!("Program ({} instructions):\n", self.insts.len())));
 

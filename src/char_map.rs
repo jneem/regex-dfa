@@ -299,6 +299,17 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         CharMap::from_vec(ret)
     }
 
+    /// Counts the number of mapped chars.
+    ///
+    /// This saturates at u32::MAX, even if the map is full. Note that this is not guaranteed to
+    /// reflect the actual number of valid codepoints mapped, since we might be mapping some
+    /// invalid codepoints also.
+    pub fn char_count(&self) -> u32 {
+        self.iter().fold(0, |acc, range| {
+            acc.saturating_add((range.0.end - range.0.start).saturating_add(1))
+        })
+    }
+
     /// Returns the set of mapped chars, forgetting what they are mapped to.
     pub fn to_char_set(&self) -> CharSet {
         CharSet::from_vec(self.elts.iter().map(|x| (x.0, ())).collect())
@@ -389,11 +400,6 @@ impl CharSet {
     /// Iterates over all the included ranges of chars.
     pub fn iter<'a>(&'a self) -> Box<Iterator<Item=&'a CharRange> + 'a> {
         Box::new(self.map.iter().map(|x| &x.0))
-    }
-
-    /// Iterators over all contained chars.
-    pub fn chars<'a>(&'a self) -> Box<Iterator<Item=u32> + 'a> {
-        Box::new(self.map.iter().flat_map(|x| x.0.iter()))
     }
 
     /// Converts this set to a `CharMap` that maps all of the contained characters to the same
@@ -498,11 +504,6 @@ impl CharSet {
         CharSet { map: self.map.intersect(other) }
     }
 
-    /// Checks if the given character is contained in this set.
-    pub fn contains(&self, ch: u32) -> bool {
-        self.map.get(ch).is_some()
-    }
-
     /// Adds the given range of characters to this set. The range must be non-empty.
     ///
     /// See `CharMap::push` for more details.
@@ -511,15 +512,6 @@ impl CharSet {
     ///  - if the range is empty.
     pub fn push(&mut self, r: CharRange) {
         self.map.push(r, &());
-    }
-
-    /// Counts the number of chars in this set.
-    ///
-    /// This saturates at u32::MAX, even if the set is full.
-    pub fn char_count(&self) -> u32 {
-        self.map.iter().fold(0, |acc, range| {
-            acc.saturating_add((range.0.end - range.0.start).saturating_add(1))
-        })
     }
 
     /// Returns the set of all characters that are not in this set.
@@ -703,20 +695,6 @@ mod tests {
         assert_eq!(cm.get(2), None);
         assert_eq!(cm.get(4), None);
         assert_eq!(cm.get(77), None);
-    }
-
-    #[test]
-    fn test_contains() {
-        let mut cs = CharSet::new();
-        cs.push(CharRange::single(1));
-        cs.push(CharRange::new(5, 7));
-        assert!(cs.contains(1));
-        assert!(cs.contains(5));
-        assert!(cs.contains(6));
-        assert!(cs.contains(7));
-        assert!(!cs.contains(0));
-        assert!(!cs.contains(4));
-        assert!(!cs.contains(8));
     }
 
     #[test]

@@ -33,12 +33,12 @@ impl Regex {
 
     pub fn new_bounded(re: &str, max_states: usize) -> Result<Regex, error::Error> {
         let dfa = try!(Dfa::from_regex_bounded(re, max_states));
-        let prog = dfa.to_program();
+        let (prog, pref) = dfa.to_vm_program();
 
         let engine: Box<Engine> = if prog.init.anchored().is_some() || !dfa.has_cycles() {
-            Box::new(BacktrackingEngine::new(prog))
+            Box::new(BacktrackingEngine::new(prog, pref))
         } else {
-            Box::new(ThreadedEngine::new(prog))
+            Box::new(ThreadedEngine::new(prog, pref))
         };
 
         Ok(Regex { engine: engine })

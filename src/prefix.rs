@@ -7,10 +7,10 @@
 // except according to those terms.
 
 use aho_corasick::{Automaton, AcAutomaton, FullAcAutomaton};
-use bytes::{ByteMap, ByteSet};
-use program::Program;
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use bytes::ByteSet;
+use char_map::CharMap;
+use dfa::Dfa;
+use std::collections::VecDeque;
 
 // TODO: these limits are pretty arbitrary (just copied from the regex crate).
 const NUM_PREFIX_LIMIT: usize = 30;
@@ -27,13 +27,10 @@ pub enum Prefix {
 }
 
 impl Prefix {
-    // TODO: extract from the Dfa instead of the Program.
-    pub fn extract(prog: &Program) -> Prefix {
-        use program::Inst::*;
-
-        if let Some(state) = prog.init.constant() {
+    pub fn extract(dfa: &Dfa) -> Prefix {
+        if let Some(state) = dfa.simple_init() {
             let mut prefixes = PrefixSearcher::new(NUM_PREFIX_LIMIT, PREFIX_LEN_LIMIT);
-            prefixes.search(prog, state);
+            prefixes.search(dfa, state);
             if let Some(lit) = prefixes.to_lit() {
                 if lit.len() == 1 {
                     return Prefix::Byte(lit[0], state);
@@ -43,62 +40,51 @@ impl Prefix {
                 return Prefix::Ac(ac, state_map);
             }
 
-            match prog.insts[state] {
-                ByteSet(ref bs) => {
-                    return Prefix::ByteSet(bs.clone(), state);
-                },
-                Branch(ref bm) => {
-                    if let Some(bs) = loop_optimization(bm, state) {
-                        return Prefix::LoopWhile(bs, state);
-                    }
-                    if bm.len() == 1 {
-                        let (b, state) = bm.into_iter().next().unwrap();
-                        return Prefix::Byte(b, state as usize);
-                    }
-                    return Prefix::ByteSet(bm.to_set(), state);
-                },
-                _ => {},
+            let first_trans = dfa.transitions(state);
+
+            if dfa.accept(state).is_never() {
+                if let Some(bs) = loop_optimization(first_trans, state) {
+                    return Prefix::LoopWhile(bs, state);
+                }
+            }
+            if first_trans.char_count() > 1 {
+                return Prefix::ByteSet(ByteSet::from_char_set(&first_trans.to_char_set()), state);
             }
         }
 
         Prefix::Empty
     }
+
+    pub fn map_states<F>(&mut self, mut f: F) where F: FnMut(usize) -> usize {
+        use prefix::Prefix::*;
+
+        match *self {
+            Empty => {},
+            ByteSet(_, ref mut st) => *st = f(*st),
+            Byte(_, ref mut st) => *st = f(*st),
+            LoopWhile(_, ref mut st) => *st = f(*st),
+            Ac(_, ref mut sts) => {
+                for st in sts {
+                    *st = f(*st);
+                }
+            },
+        }
+    }
 }
 
-/// A pair of a `String` and the index of the state that we are in after encountering that string.
-///
-/// Prefixes are ordered by the decreasing length of their string.
+/// A pair of a byte sequence and the index of the state that we are in after encountering that
+/// sequence.
 #[derive(Debug, Clone)]
 struct PrefixPart(pub Vec<u8>, pub usize);
-impl PartialOrd for PrefixPart {
-    fn partial_cmp(&self, other: &PrefixPart) -> Option<Ordering> {
-        self.0.len().partial_cmp(&other.0.len()).map(|x| x.reverse())
-    }
-}
-
-impl Ord for PrefixPart {
-    fn cmp(&self, other: &PrefixPart) -> Ordering {
-        self.partial_cmp(&other).unwrap().reverse()
-    }
-}
-
-impl PartialEq for PrefixPart {
-    fn eq(&self, other: &PrefixPart) -> bool {
-        self.0.len().eq(&other.0.len())
-    }
-}
-
-impl Eq for PrefixPart { }
-
 
 struct PrefixSearcher {
-    active: BinaryHeap<PrefixPart>,
+    active: VecDeque<PrefixPart>,
     current: PrefixPart,
     finished: Vec<PrefixPart>,
 
     // The set of prefixes is complete if:
     //  - we're done with active prefixes before we go over any of our limits, and
-    //  - we didn't encounter any conditional accept statements.
+    //  - we didn't encounter any states that accept conditionally.
     complete: bool,
 
     max_prefixes: usize,
@@ -108,7 +94,7 @@ struct PrefixSearcher {
 impl PrefixSearcher {
     fn new(max_prefixes: usize, max_len: usize) -> PrefixSearcher {
         PrefixSearcher {
-            active: BinaryHeap::new(),
+            active: VecDeque::new(),
             current: PrefixPart(Vec::new(), 0),
             finished: Vec::new(),
             complete: true,
@@ -118,84 +104,53 @@ impl PrefixSearcher {
     }
 
     fn bail_out(&mut self) {
+        // TODO: unnecessary clones
         self.finished.extend(self.active.iter().cloned());
         self.finished.push(self.current.clone());
         self.complete = false;
     }
 
-    // Returns true if we bailed out.
-    fn add(&mut self, new_prefs: Vec<PrefixPart>) -> bool {
-        if new_prefs.len() + self.active.len() + self.finished.len() > self.max_prefixes {
-            self.bail_out();
-            true
-        } else {
-            for p in new_prefs.into_iter() {
-                if p.0.len() >= self.max_len {
-                    self.finished.push(p);
-                } else {
-                    self.active.push(p);
-                }
+    fn add(&mut self, new_prefs: Vec<PrefixPart>) {
+        debug_assert!(new_prefs.len() + self.active.len() + self.finished.len() <= self.max_prefixes);
+
+        for p in new_prefs.into_iter() {
+            if p.0.len() >= self.max_len {
+                self.finished.push(p);
+            } else {
+                self.active.push_back(p);
             }
-            false
         }
     }
 
     fn too_many(&mut self, more: usize) -> bool {
-        if self.active.len() + self.finished.len() + more > self.max_prefixes {
-            self.bail_out();
-            true
-        } else {
-            false
-        }
+        self.active.len() + self.finished.len() + more > self.max_prefixes
     }
 
-    fn search(&mut self, prog: &Program, state: usize) {
-        use program::Inst::*;
-
-        self.active.push(PrefixPart(Vec::new(), state));
+    fn search(&mut self, dfa: &Dfa, state: usize) {
+        self.active.push_back(PrefixPart(Vec::new(), state));
         while !self.active.is_empty() {
-            self.current = self.active.pop().unwrap();
-            match prog.insts[self.current.1] {
-                Byte(b) => {
-                    let mut next_pref = self.current.0.clone();
-                    next_pref.push(b);
-                    let next_pref = PrefixPart(next_pref, self.current.1 + 1);
-                    if self.add(vec![next_pref]) {
-                        break;
-                    }
-                },
-                ByteSet(ref bs) => {
-                    if self.too_many(bs.len()) {
-                        break;
-                    }
-                    let next_prefs = bs.into_iter()
-                        .map(|b| {
-                            let mut next_str = self.current.0.clone();
-                            next_str.push(b);
-                            PrefixPart(next_str, self.current.1 + 1)
-                        }).collect();
-                    if self.add(next_prefs) {
-                        break;
-                    }
-                },
-                Acc(_) => {
-                    self.finished.push(self.current.clone());
-                },
-                Branch(ref bm) => {
-                    if self.too_many(bm.len()) {
-                        break;
-                    }
-                    let next_prefs = bm.into_iter()
-                        .map(|(b, tgt)| {
-                            let mut next_str = self.current.0.clone();
-                            next_str.push(b);
-                            PrefixPart(next_str, tgt as usize)
-                        }).collect();
-                    if self.add(next_prefs) {
-                        break;
-                    }
-                },
+            self.current = self.active.pop_front().unwrap();
+            let trans = dfa.transitions(self.current.1);
+
+            // Stop searching if we have too many prefixes already, or if we've run into an accept
+            // state. In principle, we could continue expanding the other prefixes even after we
+            // run into an accept state, but there doesn't seem much point in having some short
+            // prefixes and other long prefixes.
+            if self.too_many(trans.char_count() as usize) || !dfa.accept(self.current.1).is_never() {
+                self.bail_out();
+                break;
             }
+
+            let mut next_prefs = Vec::new();
+            for (ch, next_state) in trans.pairs() {
+                debug_assert!(ch < 256);
+
+                let mut next_pref = self.current.0.clone();
+                next_pref.push(ch as u8);
+                next_prefs.push(PrefixPart(next_pref, next_state));
+            }
+
+            self.add(next_prefs);
         }
     }
 
@@ -223,10 +178,15 @@ impl PrefixSearcher {
 }
 
 // Given the transitions at state index `st_idx`, checks to see if we should insert a loop
-// searcher. If so, returns the set of characters that are part of the loop.
-fn loop_optimization(bm: &ByteMap, st_idx: usize) -> Option<ByteSet> {
-    if bm.into_iter().any(|x| x.1 as usize == st_idx) {
-        Some(bm.filter_values(|s| s as usize == st_idx))
+// searcher. If so, returns the set of bytes that are part of the loop.
+//
+// Note that the set of bytes we return is guaranteed to contain all or none of the non-ascii
+// bytes. Thus, if we start searching at a character boundary then we are guaranteed to stop
+// at a character boundary also.
+fn loop_optimization(cm: &CharMap<usize>, st_idx: usize) -> Option<ByteSet> {
+    if cm.iter().any(|x| x.1 == st_idx) {
+        let loop_chars = cm.filter_values(|s| *s == st_idx).to_char_set();
+        Some(ByteSet::from_char_set(&loop_chars))
     } else {
         None
     }
@@ -240,9 +200,9 @@ mod tests {
     #[test]
     fn test_search_choice() {
         fn regex_prefix(s: &str) -> Prefix {
-            let prog = Dfa::from_regex_bounded(s, 100).unwrap().to_program();
-            println!("{:?}", prog);
-            Prefix::extract(&prog)
+            let dfa = Dfa::from_regex_bounded(s, 100).unwrap();
+            println!("{:?}", dfa);
+            Prefix::extract(&dfa)
         }
 
         fn is_byte(p: &Prefix) -> bool {
@@ -274,9 +234,9 @@ mod tests {
     #[test]
     fn test_prefixes() {
         fn test_prefix(re_str: &str, answer: Vec<&str>, max_num: usize, max_len: usize) {
-            let re = Dfa::from_regex_bounded(re_str, 100).unwrap().to_program();
+            let dfa = Dfa::from_regex_bounded(re_str, 100).unwrap();
             let mut pref = PrefixSearcher::new(max_num, max_len);
-            pref.search(&re, re.init.init_otherwise.unwrap());
+            pref.search(&dfa, dfa.simple_init().unwrap());
             let mut prefs = pref.finished.into_iter().map(|x| x.0).collect::<Vec<_>>();
             prefs.sort();
 

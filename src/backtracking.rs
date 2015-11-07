@@ -15,14 +15,13 @@ use searcher::{ByteSetIter, ByteIter, LoopIter};
 use std;
 
 #[derive(Clone, Debug)]
-pub struct BacktrackingEngine {
-    prog: Program,
+pub struct BacktrackingEngine<Prog: Program> {
+    prog: Prog,
     prefix: Prefix,
 }
 
-impl BacktrackingEngine {
-    pub fn new(prog: Program) -> BacktrackingEngine {
-        let pref = Prefix::extract(&prog);
+impl<Prog: Program> BacktrackingEngine<Prog> {
+    pub fn new(prog: Prog, pref: Prefix) -> BacktrackingEngine<Prog> {
         BacktrackingEngine {
             prog: prog,
             prefix: pref,
@@ -62,7 +61,7 @@ impl BacktrackingEngine {
 
     fn shortest_match_slow(&self, s: &[u8]) -> Option<(usize, usize)> {
         for pos in std::iter::range_inclusive(0, s.len()) {
-            if let Some(state) = self.prog.init.state_at_pos(s, pos) {
+            if let Some(state) = self.prog.init().state_at_pos(s, pos) {
                 if let Some(end) = self.shortest_match_from(s, pos, state) {
                     return Some((pos, end));
                 }
@@ -73,12 +72,12 @@ impl BacktrackingEngine {
     }
 }
 
-impl Engine for BacktrackingEngine {
+impl<P: Program + 'static> Engine for BacktrackingEngine<P> {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
         let input = s.as_bytes();
-        if self.prog.insts.is_empty() {
+        if self.prog.num_states() == 0 {
             return None;
-        } else if let Some(state) = self.prog.init.anchored() {
+        } else if let Some(state) = self.prog.init().anchored() {
             return self.shortest_match_from(input, 0, state).map(|x| (0, x));
         }
 
@@ -88,8 +87,9 @@ impl Engine for BacktrackingEngine {
             Prefix::Byte(b, state) =>
                 self.shortest_match_from_iter(input, ByteIter::new(input, b, state)),
             Prefix::Ac(ref ac, ref state_table) => {
+                println!("start_positions: {:?}", ac.find_overlapping(input).collect::<Vec<_>>());
                 let iter =
-                    ac.find_overlapping(s)
+                    ac.find_overlapping(input)
                         .map(|m| (m.start, m.end, state_table[m.pati]));
                 self.shortest_match_from_iter(input, iter)
             },

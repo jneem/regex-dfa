@@ -89,16 +89,15 @@ impl ProgThreads {
 }
 
 #[derive(Clone, Debug)]
-pub struct ThreadedEngine {
-    prog: Program,
+pub struct ThreadedEngine<Prog: Program> {
+    prog: Prog,
     threads: RefCell<ProgThreads>,
     prefix: Prefix,
 }
 
-impl ThreadedEngine {
-    pub fn new(prog: Program) -> ThreadedEngine {
-        let len = prog.insts.len();
-        let pref = Prefix::extract(&prog);
+impl<Prog: Program> ThreadedEngine<Prog> {
+    pub fn new(prog: Prog, pref: Prefix) -> ThreadedEngine<Prog> {
+        let len = prog.num_states();
         ThreadedEngine {
             prog: prog,
             threads: RefCell::new(ProgThreads::with_capacity(len)),
@@ -181,9 +180,9 @@ impl ThreadedEngine {
 
 }
 
-impl Engine for ThreadedEngine {
+impl<P: Program + 'static> Engine for ThreadedEngine<P> {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        if self.prog.insts.is_empty() {
+        if self.prog.num_states() == 0 {
             return None;
         }
 
@@ -191,22 +190,22 @@ impl Engine for ThreadedEngine {
         let s = s.as_bytes();
         let ret = match self.prefix {
                 Prefix::ByteSet(ref bs, state) =>
-                    self.shortest_match_(s, SkipToByteSet(bs, state), &self.prog.init),
+                    self.shortest_match_(s, SkipToByteSet(bs, state), self.prog.init()),
                 Prefix::Byte(b, state) =>
-                    self.shortest_match_(s, SkipToByte(b, state), &self.prog.init),
+                    self.shortest_match_(s, SkipToByte(b, state), self.prog.init()),
                     /*
                 Prefix::Lit(ref lit, state) =>
-                    self.shortest_match_(s, SkipToStr(lit, state), &self.prog.init),
+                    self.shortest_match_(s, SkipToStr(lit, state), self.prog.init()),
                     */
                 Prefix::Ac(ref ac, _) =>
                     self.shortest_match_(
                         s,
-                        AcSkipper(ac, self.prog.init.constant().unwrap()),
-                        &self.prog.init),
+                        AcSkipper(ac, self.prog.init().constant().unwrap()),
+                        self.prog.init()),
                 Prefix::LoopWhile(ref bs, state) =>
-                    self.shortest_match_(s, LoopSkipper(bs, state), &self.prog.init),
+                    self.shortest_match_(s, LoopSkipper(bs, state), self.prog.init()),
                 Prefix::Empty =>
-                    self.shortest_match_(s, NoSkipper(&self.prog.init), &self.prog.init),
+                    self.shortest_match_(s, NoSkipper(self.prog.init()), self.prog.init()),
         };
 
         if ret.is_none() {

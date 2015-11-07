@@ -16,7 +16,6 @@ use std;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::mem;
-use std::ops::Deref;
 use std::result::Result;
 use transition::{Accept, NfaTransitions, Predicate, StateSet};
 use utf8_ranges::{Utf8Range, Utf8Sequence, Utf8Sequences};
@@ -119,8 +118,8 @@ pub struct Nfa {
 impl Debug for Nfa {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
+        try!(f.write_fmt(format_args!("Initial: {:?}\n", self.init)));
         if !self.init_at_start.is_empty() {
-            try!(f.write_fmt(format_args!("Initial: {:?}\n", self.init)));
             try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init_at_start)));
         }
 
@@ -185,13 +184,6 @@ impl Nfa {
 
     pub fn add_predicate(&mut self, from: usize, to: usize, pred: Predicate) {
         self.states[from].transitions.predicates.push((pred, to));
-    }
-
-    /// Returns the list of all input-consuming transitions from the given state.
-    ///
-    /// TODO: this would be a prime candidate for using abstract return types, if that ever lands.
-    pub fn transitions_from(&self, from: usize) -> &Vec<(CharRange, usize)> {
-        self.states[from].transitions.consuming.deref()
     }
 
     /// Adds a path from `start_state` to `end_state` for all byte sequences matching `seq`.
@@ -305,8 +297,7 @@ impl Nfa {
     /// to call this if those are already set. In particular, calling `remove_predicates()` twice
     /// on the same `Nfa` is probably a bad idea.
     fn remove_predicates(&mut self) {
-        self.init_at_start.clear();
-        self.init_at_start.insert(0);
+        self.init_at_start = self.init.clone();
 
         // Sometimes an InClasses predicate is attached to the initial state. This map keeps track
         // of such predicates: if `initial_preds` contains the map 'a' -> 3, for example, then if

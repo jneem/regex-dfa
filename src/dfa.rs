@@ -6,15 +6,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bytes::ByteMap;
+use bytes::{ByteMap, ByteSet};
 use char_map::{CharMap, CharMultiMap, CharRange};
 use error;
 use nfa::Nfa;
-use program::{InitStates, Inst, Program};
+use prefix::Prefix;
+use program::{InitStates, Inst, VmProgram};
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
+use std::mem;
 use std::result::Result;
 use transition::{Accept as NfaAccept, StateSet};
 
@@ -91,7 +93,7 @@ impl DfaAccept {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct DfaState {
     // Because we convert the NFA into a byte-consuming machine before making it deterministic,
     // all the ranges here will be byte ranges. In that sense, `CharMap` might not be the most
@@ -128,7 +130,7 @@ pub struct Dfa {
     pub init_after_char: CharMap<usize>,
 
     /// This is the initial state in all other situations.
-    pub init_otherwise: Option<usize>
+    pub init_otherwise: Option<usize>,
 }
 
 impl Dfa {
@@ -152,7 +154,9 @@ impl Dfa {
     pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Dfa, error::Error> {
         let nfa = try!(Nfa::from_regex(re));
         let dfa = try!(nfa.determinize_for_shortest_match(max_states));
-        Ok(dfa.minimize())
+        let mut dfa = dfa.optimize();
+        dfa.sort_states();
+        Ok(dfa)
     }
 
     pub fn add_state(&mut self, accept: DfaAccept) {
@@ -166,6 +170,25 @@ impl Dfa {
     pub fn sort_transitions(&mut self) {
         for st in &mut self.states {
             st.transitions.sort();
+        }
+    }
+
+    /// Get transitions from a given state.
+    pub fn transitions(&self, state: usize) -> &CharMap<usize> {
+        &self.states[state].transitions
+    }
+
+    /// Returns the conditions under which the given state accepts.
+    pub fn accept(&self, state: usize) -> &DfaAccept {
+        &self.states[state].accept
+    }
+
+    /// If there is only one state that is ever the initial state, return it.
+    pub fn simple_init(&self) -> Option<usize> {
+        if self.init_after_char.is_empty() && self.init_otherwise == self.init_at_start {
+            self.init_at_start
+        } else {
+            None
         }
     }
 
@@ -349,24 +372,54 @@ impl Dfa {
         ret
     }
 
-    pub fn to_program(&self) -> Program {
-        let (mut chains, state_map, lengths) = self.chains();
-        let map_state = |s| lengths[*state_map.get(&s).unwrap()];
+    /// Compiles this `Dfa` into a `VmProgram`.
+    ///
+    /// Returns the new program, along with a `Prefix` for quick searching.
+    pub fn to_vm_program(&self) -> (VmProgram, Prefix) {
+        let mut state_map = vec![0usize; self.states.len()];
 
-        // Fix up the indices to refer to the new instructions. Note that only the last instruction
-        // in each chain can be a Branch, so we only need to look at those.
-        for ch in &mut chains {
-            if let Some(inst_acc) = ch.last_mut() {
-                if let &mut Inst::Branch(ref mut bm) = &mut inst_acc.0 {
-                    bm.map_values(&map_state);
+        // Build the state map, and check how many instructions we need.
+        let mut next_inst_idx = 0usize;
+        for (i, st) in self.states.iter().enumerate() {
+            state_map[i] = next_inst_idx;
+            if st.accept.otherwise {
+                next_inst_idx += 1;
+            }
+            next_inst_idx += 1;
+        }
+
+        let map_state = |s: usize| state_map[s];
+        let mut insts = Vec::with_capacity(next_inst_idx);
+        let mut accept_at_eoi = vec![std::u8::MAX; next_inst_idx];
+
+        for st in &self.states {
+            if st.accept.at_eoi {
+                accept_at_eoi[insts.len()] = st.accept.bytes_ago;
+            }
+
+            if st.accept.otherwise {
+                insts.push(Inst::Acc(st.accept.bytes_ago));
+            }
+            if let Some(tgt) = Dfa::single_target(st.transitions.iter()) {
+                if state_map[tgt] == insts.len() + 1 {
+                    // The target state is just immediately after this state -- we don't need a
+                    // branch instruction.
+                    let inst = if let Some(ch) = Dfa::single_char(st.transitions.iter()) {
+                        debug_assert!(ch < 256);
+                        Inst::Byte(ch as u8)
+                    } else {
+                        Inst::ByteSet(ByteSet::from_char_set(&st.transitions.to_char_set()))
+                    };
+                    insts.push(inst);
+                    continue;
                 }
             }
+
+            // If we're still here, we didn't add a Byte or ByteSet instruction, so add a Branch.
+            let mut bm = ByteMap::from_char_map(&st.transitions);
+            bm.map_values(&map_state);
+            insts.push(Inst::Branch(bm));
         }
-        let insts_accepts: Vec<_> = chains.into_iter().flat_map(|c| c.into_iter()).collect();
-        let accept_at_eoi = insts_accepts.iter()
-            .map(|x| if x.1.at_eoi { x.1.bytes_ago } else { std::u8::MAX })
-            .collect();
-        let insts = insts_accepts.into_iter().map(|x| x.0).collect();
 
         // TODO: put this logic in InitStates
         let mut init = InitStates {
@@ -374,37 +427,16 @@ impl Dfa {
             init_at_start: self.init_at_start.map(&map_state),
             init_otherwise: self.init_otherwise.map(&map_state),
         };
-
         init.init_after_char.map_values(&map_state);
-        Program {
+
+        let ret = VmProgram {
             init: init,
             insts: insts,
             accept_at_eoi: accept_at_eoi,
-        }
-    }
-
-    /// Looks for transitions that only have one possible target state and groups them.
-    /// The second return value is a map from the old state index to the element in the first
-    /// return value that represents the same state. The third return value is the accumulated
-    /// lengths of the chains.
-    fn chains(&self) -> (Vec<Vec<(Inst, DfaAccept)>>, HashMap<usize, usize>, Vec<usize>) {
-        let mut chains = Vec::<Vec<_>>::new();
-        let mut map = HashMap::<usize, usize>::new();
-        let mut lengths = Vec::new();
-        let mut cur_length = 0;
-        let rev = self.reversed();
-
-        for st_idx in 0..self.states.len() {
-            if self.is_chain_head(st_idx, &rev) {
-                let new_chain = self.build_chain(st_idx, &rev);
-                map.insert(st_idx, chains.len());
-                lengths.push(cur_length);
-                cur_length += new_chain.len();
-                chains.push(new_chain);
-            }
-        }
-
-        (chains, map, lengths)
+        };
+        let mut prefix = Prefix::extract(self);
+        prefix.map_states(&map_state);
+        (ret, prefix)
     }
 
     fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
@@ -434,74 +466,42 @@ impl Dfa {
         }
     }
 
-    /// Returns true if this state can be merged into its only target.
-    ///
-    /// For this to be true, first this state must have only one target state (and that target
-    /// cannot be this state itself). Moreover, the target cannot be a starting state, and it must
-    /// have only one source state.
-    fn is_chain_link(&self, st_idx: usize, reversed: &Nfa) -> bool {
-        if let Some(tgt) = Dfa::single_target(self.states[st_idx].transitions.iter()) {
-            tgt != st_idx
-                && !self.is_starting(tgt)
-                && Dfa::single_target(reversed.transitions_from(tgt).iter()).is_some()
-        } else {
-            false
+    /// Repeatedly `minimize` and `optimize_for_shortest_match` until we reach a fixed point.
+    fn optimize(&self) -> Dfa {
+        let mut ret = self.minimize();
+        loop {
+            if !ret.optimize_for_shortest_match() {
+                return ret;
+            }
+            let last_len = ret.num_states();
+            ret = ret.minimize();
+            if ret.num_states() == last_len {
+                return ret;
+            }
         }
     }
 
-    fn is_chain_head(&self, st_idx: usize, rev: &Nfa) -> bool {
-        // We're at the head of a chain if either we don't have a parent that is a chain link, or
-        // if we are a starting state.
-        let has_p = if let Some(p) = Dfa::single_target(rev.transitions_from(st_idx).iter()) {
-            self.is_chain_link(p, rev)
-        } else {
-            false
-        };
-        self.is_starting(st_idx) || !has_p
-    }
-
-    fn is_starting(&self, st_idx: usize) -> bool {
-        self.init_at_start == Some(st_idx)
-            || self.init_otherwise == Some(st_idx)
-            || (&self.init_after_char).into_iter().any(|x| x.1 == st_idx)
-    }
-
-    fn build_chain(&self, mut st_idx: usize, rev: &Nfa) -> Vec<(Inst, DfaAccept)> {
-        let mut ret = Vec::new();
-        while self.is_chain_link(st_idx, rev) {
-            let st = &self.states[st_idx];
-            let single_char = Dfa::single_char(st.transitions.iter());
-
+    /// Deletes any transitions after a match. Returns true if anything changed.
+    fn optimize_for_shortest_match(&mut self) -> bool {
+        let mut changed = false;
+        for st in &mut self.states {
             if st.accept.otherwise {
-                ret.push((Inst::Acc(st.accept.bytes_ago), st.accept));
+                changed |= !st.transitions.is_empty();
+                st.transitions = CharMap::new();
             }
-            if let Some(ch) = single_char {
-                ret.push((Inst::Byte(ch as u8), st.accept));
-            } else {
-                let byte_set = ByteMap::from_char_map(&st.transitions).to_set();
-                ret.push((Inst::ByteSet(byte_set), st.accept));
-            }
-
-            // This unwrap is OK because self.is_chain_link(st_idx, rev).
-            st_idx = Dfa::single_target(self.states[st_idx].transitions.iter()).unwrap();
         }
-
-        let st = &self.states[st_idx];
-        if st.accept.otherwise {
-            ret.push((Inst::Acc(st.accept.bytes_ago), st.accept));
-        }
-
-        // Add a branch instruction, even if it's empty (an empty branch is basically a reject).
-        ret.push((Inst::Branch(ByteMap::from_char_map(&st.transitions)), st.accept));
-        ret
+        changed
     }
 
-    /// Checks whether this DFA has any cycles.
+    /// Does a depth-first search of this `Dfa`.
     ///
-    /// If not, it's a good candidate for the backtracking engine.
-    pub fn has_cycles(&self) -> bool {
+    /// Every time the search visits a new state, `visit` will be called. Every time the search
+    /// detects a loop, `cycle` will be called. If either of these calls returns `false`, the
+    /// search will terminate early.
+    fn dfs<Visit, Cycle>(&self, mut visit: Visit, mut cycle: Cycle)
+    where Visit: FnMut(usize) -> bool, Cycle: FnMut(&[usize]) -> bool {
         if self.states.is_empty() {
-            return false;
+            return;
         }
 
         // Pairs of (state, children_left_to_explore).
@@ -509,9 +509,21 @@ impl Dfa {
         let mut visiting: Vec<bool> = vec![false; self.states.len()];
         let mut done: Vec<bool> = vec![false; self.states.len()];
 
-        for start_idx in 0..self.states.len() {
+        // For nodes that we are currently visiting, this is their position on the stack.
+        let mut stack_pos: Vec<usize> = vec![0; self.states.len()];
+
+        // An iterator over all start states (possibly with lots of repetitions)
+        let start_states = self.init_after_char.iter()
+            .map(|x| &x.1)
+            .chain(self.init_at_start.iter())
+            .chain(self.init_otherwise.iter());
+
+        for &start_idx in start_states {
             if !done[start_idx] {
+                if !visit(start_idx) { return; }
                 stack.push((start_idx, self.states[start_idx].transitions.iter()));
+                visiting[start_idx] = true;
+                stack_pos[start_idx] = 0;
 
                 while !stack.is_empty() {
                     let (cur, next_child) = {
@@ -520,26 +532,80 @@ impl Dfa {
                     };
 
                     if let Some(&(_, child)) = next_child {
-                        if !self.states[cur].accept.otherwise {
-                            // Push the child onto the stack.
-                            if visiting[child] {
-                                return true;
-                            } else if !done[child] {
-                                stack.push((child, self.states[child].transitions.iter()));
-                                visiting[child] = true;
-                            }
-                            continue;
+                        if visiting[child] {
+                            // We found a cycle: report it (and maybe terminate early).
+                            let cyc: Vec<_> = stack[stack_pos[child]..].iter()
+                                .map(|x| x.0)
+                                .collect();
+
+                            if !cycle(&cyc) { return; }
+                        } else if !done[child] {
+                            // This is a new state: report it and push it onto the stack (and maybe
+                            // terminate early).
+                            if !visit(child) { return; }
+
+                            stack.push((child, self.states[child].transitions.iter()));
+                            visiting[child] = true;
+                            stack_pos[child] = stack.len() - 1;
                         }
+                        continue;
                     }
 
-                    // Pop the current node from the stack.
+                    // If we got this far, the current node is out of children. Pop it from the
+                    // stack.
                     visiting[cur] = false;
                     done[cur] = true;
                     stack.pop();
                 }
             }
         }
-        false
+    }
+
+    /// Returns a list of states, visited in depth-first order.
+    fn dfs_order(&self) -> Vec<usize> {
+        let mut ret: Vec<usize> = Vec::new();
+        self.dfs(|st| { ret.push(st); true }, |_| true);
+        ret
+    }
+
+    /// Sorts states in depth-first alphabetical order.
+    ///
+    /// This has the following advantages:
+    /// - the construction of a `Dfa` becomes deterministic: without sorting, the states aren't in
+    ///   deterministic order because `minimize` using hashing.
+    /// - better locality: after sorting, many transitions just go straight to the next state.
+    /// - we prune unreachable states.
+    fn sort_states(&mut self) {
+        let sorted = self.dfs_order();
+
+        // Not every old state will necessary get mapped to a new one (unreachable states won't).
+        let mut state_map: Vec<Option<usize>> = vec![None; self.states.len()];
+        let mut old_states = vec![DfaState::new(DfaAccept::never()); self.states.len()];
+        mem::swap(&mut old_states, &mut self.states);
+
+        for (new_idx, old_idx) in sorted.into_iter().enumerate() {
+            state_map[old_idx] = Some(new_idx);
+            mem::swap(&mut old_states[old_idx], &mut self.states[new_idx]);
+        }
+
+        // Fix the transitions and initialization to point to the new states. The `unwrap` here is
+        // basically the assertion that all reachable states should be mapped to new states.
+        let map_state = |s: usize| { state_map[s].unwrap() };
+        for st in &mut self.states {
+            st.transitions.map_values(&map_state);
+        }
+        self.init_otherwise = self.init_otherwise.map(&map_state);
+        self.init_at_start = self.init_at_start.map(&map_state);
+        self.init_after_char.map_values(&map_state);
+    }
+
+    /// Checks whether this DFA has any cycles.
+    ///
+    /// If not, it's a good candidate for the backtracking engine.
+    pub fn has_cycles(&self) -> bool {
+        let mut found = false;
+        self.dfs(|_| true, |_| { found = true; false });
+        found
     }
 }
 
@@ -645,5 +711,21 @@ mod tests {
         cyc!("(ab*|cde)f", true);
         cyc!("(abc)*", false);
         cyc!("(abc)*def", true);
+    }
+
+    #[test]
+    fn optimize_for_shortest_match() {
+        macro_rules! eq {
+            ($re1:expr, $re2:expr) => {
+                {
+                    let dfa1 = Dfa::from_regex_bounded($re1, usize::MAX).unwrap();
+                    let dfa2 = Dfa::from_regex_bounded($re2, usize::MAX).unwrap();
+                    assert_eq!(dfa1, dfa2);
+                }
+            };
+        }
+        eq!("(a|aa)", "a");
+        //eq!("a*", ""); // TODO: figure out how empty regexes should behave
+        eq!("abcb*", "abc");
     }
 }

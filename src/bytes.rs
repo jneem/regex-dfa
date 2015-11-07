@@ -6,15 +6,31 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use char_map::CharMap;
+use char_map::{CharMap, CharSet};
+use std::fmt;
 use std::u32;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ByteSet(pub Box<[bool]>);
 
 impl ByteSet {
-    pub fn len(&self) -> usize {
-        self.into_iter().count()
+    /// Converts from `CharSet` to `ByteSet`. The values in the `CharSet` are interpreted as
+    /// bytes, not codepoints.
+    ///
+    /// # Panics
+    ///  - if `cs` contains any elements bigger than `255`.
+    pub fn from_char_set(cs: &CharSet) -> ByteSet {
+        let mut ret = Box::new([false; 256]);
+        for range in cs {
+            for b in range.iter() {
+                if b > 256 {
+                    panic!("tried to convert a non-byte CharSet into a ByteSet");
+                }
+                ret[b as usize] = true;
+            }
+        }
+
+        ByteSet(ret)
     }
 }
 
@@ -26,7 +42,19 @@ impl<'a> IntoIterator for &'a ByteSet {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl fmt::Debug for ByteSet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let s = self.into_iter()
+            .map(|x| format!("{}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
+        try!(f.write_fmt(format_args!("ByteSet ({})", s)));
+        Ok(())
+    }
+}
+
+
+#[derive(Clone, PartialEq)]
 pub struct ByteMap(pub Box<[u32]>);
 
 impl ByteMap {
@@ -43,24 +71,6 @@ impl ByteMap {
         }
 
         ByteMap(ret)
-    }
-
-    pub fn len(&self) -> usize {
-        self.into_iter().count()
-    }
-
-    pub fn to_set(&self) -> ByteSet {
-        self.filter_values(|x| x != u32::MAX)
-    }
-
-    pub fn filter_values<F: FnMut(u32) -> bool>(&self, mut f: F) -> ByteSet {
-        let mut ret = Box::new([false; 256]);
-        for (i, &state) in self.0.iter().enumerate() {
-            if f(state) {
-                ret[i] = true;
-            }
-        }
-        ByteSet(ret)
     }
 
     pub fn map_values<F: FnMut(usize) -> usize>(&mut self, mut f: F) {
@@ -83,4 +93,16 @@ impl<'a> IntoIterator for &'a ByteMap {
                 .map(|(a, &b)| (a as u8, b)))
     }
 }
+
+impl fmt::Debug for ByteMap {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let s = self.into_iter()
+            .map(|x| format!("{} -> {}", x.0, x.1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        try!(f.write_fmt(format_args!("ByteMap ({})", s)));
+        Ok(())
+    }
+}
+
 
