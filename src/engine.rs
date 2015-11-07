@@ -10,5 +10,6 @@ use std::fmt::Debug;
 
 pub trait Engine: Debug {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)>;
+    fn clone_box(&self) -> Box<Engine>;
 }
 

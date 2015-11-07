@@ -6,25 +6,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use backtracking::BacktrackingEngine;
+use dfa::Dfa;
 use engine::Engine;
 use error;
-use program::Program;
 use std;
+use threaded::ThreadedEngine;
 
 #[derive(Debug)]
 pub struct Regex {
     engine: Box<Engine>,
 }
 
-/*
 impl Clone for Regex {
     fn clone(&self) -> Regex {
         Regex {
-            engine: Box::new(self.engine.clone()),
+            engine: self.engine.clone_box(),
         }
     }
 }
-*/
 
 impl Regex {
     pub fn new(re: &str) -> Result<Regex, error::Error> {
@@ -32,8 +32,16 @@ impl Regex {
     }
 
     pub fn new_bounded(re: &str, max_states: usize) -> Result<Regex, error::Error> {
-        let prog = try!(Program::from_regex_bounded(re, max_states));
-        Ok(Regex { engine: prog.to_engine() })
+        let dfa = try!(Dfa::from_regex_bounded(re, max_states));
+        let (prog, pref) = dfa.to_vm_program();
+
+        let engine: Box<Engine> = if prog.init.anchored().is_some() || !dfa.has_cycles() {
+            Box::new(BacktrackingEngine::new(prog, pref))
+        } else {
+            Box::new(ThreadedEngine::new(prog, pref))
+        };
+
+        Ok(Regex { engine: engine })
     }
 
     /// Returns the index range of the first shortest match, if there is a match. The indices

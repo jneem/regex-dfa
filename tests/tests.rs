@@ -28,6 +28,7 @@ fn external_tests() {
             );
 
             let re = Regex::new(re_str).unwrap();
+            println!("compiled re: {:?}", re);
             let result = re.shortest_match(text);
             assert!(result.is_some());
             let result = result.unwrap();

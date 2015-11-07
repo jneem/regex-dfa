@@ -1,6 +1,6 @@
 [package]
 name = "regex_dfa"
-version = "0.2.0"
+version = "0.4.0"
 authors = ["Joe Neeman <joeneeman@gmail.com>"]
 description = "A crate for turning regexes into DFAs."
 documentation = "http://jneem.github.io/regex-dfa"
@@ -10,11 +10,13 @@ readme = "README.md"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-aho-corasick = { git = "https://github.com/jneem/aho-corasick.git" }
+aho-corasick = "0.4"
 ascii_set = "0.1.0"
 regex-syntax = "0.2.2"
 bit-set = "0.2.0"
 memchr = "0.1.6"
+utf8-ranges = "0.1.3"
+itertools = "0.4"
 
 [dev-dependencies]
 regex = "0.1.41"

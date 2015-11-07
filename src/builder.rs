@@ -72,6 +72,9 @@ impl NfaBuilder {
             }
         }
 
+        if self.len() > 0 {
+            ret.add_init_state(0);
+        }
         ret
     }
 

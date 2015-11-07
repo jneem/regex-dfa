@@ -9,18 +9,18 @@
 use engine::Engine;
 use prefix::Prefix;
 use program::{Program, InitStates};
-use searcher::{Skipper, SkipToAsciiSet, SkipToByte, SkipToStr, AcSkipper, LoopSkipper, NoSkipper};
+use searcher::{Skipper, SkipToByteSet, SkipToByte, AcSkipper, LoopSkipper, NoSkipper};
 use std::mem;
 use std::cell::RefCell;
 use std::ops::DerefMut;
 
 trait Initter {
-    fn init_state(&self, last_char: Option<char>) -> Option<usize>;
+    fn init_state(&self, input: &[u8], pos: usize) -> Option<usize>;
 }
 
 impl<'a> Initter for &'a InitStates {
-    fn init_state(&self, last_char: Option<char>) -> Option<usize> {
-        self.state_after(last_char)
+    fn init_state(&self, input: &[u8], pos: usize) -> Option<usize> {
+        self.state_at_pos(input, pos)
     }
 }
 
@@ -89,16 +89,15 @@ impl ProgThreads {
 }
 
 #[derive(Clone, Debug)]
-pub struct ThreadedEngine {
-    prog: Program,
+pub struct ThreadedEngine<Prog: Program> {
+    prog: Prog,
     threads: RefCell<ProgThreads>,
     prefix: Prefix,
 }
 
-impl ThreadedEngine {
-    pub fn new(prog: Program) -> ThreadedEngine {
-        let len = prog.insts.len();
-        let pref = Prefix::extract(&prog);
+impl<Prog: Program> ThreadedEngine<Prog> {
+    pub fn new(prog: Prog, pref: Prefix) -> ThreadedEngine<Prog> {
+        let len = prog.num_states();
         ThreadedEngine {
             prog: prog,
             threads: RefCell::new(ProgThreads::with_capacity(len)),
@@ -110,32 +109,32 @@ impl ThreadedEngine {
             threads: &mut ProgThreads,
             acc: &mut Option<(usize, usize)>,
             i: usize,
-            ch: char,
-            end: usize) {
+            input: &[u8],
+            pos: usize) {
         let state = threads.cur.threads[i].state;
         let start_idx = threads.cur.threads[i].start_idx;
         threads.cur.states[state] = 0;
 
-        let (mut next_state, accept, retry) = self.prog.step(state, ch);
-        if accept && (acc.is_none() || start_idx < acc.unwrap().0) {
-            *acc = Some((start_idx, end));
-        }
-        // We're assuming here that we won't be asked to retry twice in a row, and if we
-        // are asked to retry then there is no possibility of accepting afterwards.
-        if retry {
-            next_state = self.prog.step(next_state.unwrap(), ch).0;
+        let (next_state, accept) = self.prog.step(state, &input[pos..]);
+        if let Some(bytes_ago) = accept {
+            // We need to use saturating_sub here because Nfa::determinize_for_shortest_match
+            // makes it so that bytes_ago can be positive even when start_idx == 0.
+            let acc_idx = start_idx.saturating_sub(bytes_ago as usize);
+            if acc.is_none() || acc_idx < acc.unwrap().0 {
+                *acc = Some((acc_idx, pos));
+            }
         }
         if let Some(next_state) = next_state {
             threads.next.add(next_state, start_idx);
         }
     }
 
-    fn shortest_match_<'a, Skip, Init>(&'a self, s: &str, skip: Skip, init: Init)
+    fn shortest_match_<'a, Skip, Init>(&'a self, s: &[u8], skip: Skip, init: Init)
     -> Option<(usize, usize)>
     where Skip: Skipper + 'a, Init: Initter + 'a,
     {
         let mut acc: Option<(usize, usize)> = None;
-        let (first_start_pos, mut pos, start_state) = match skip.skip(s, 0, None) {
+        let (first_start_pos, mut pos, start_state) = match skip.skip(s, 0) {
             Some(x) => x,
             None => return None,
         };
@@ -145,10 +144,8 @@ impl ThreadedEngine {
         threads.clear();
         threads.cur.threads.push(Thread { state: start_state, start_idx: first_start_pos });
         while pos < s.len() {
-            let ch = s.char_at(pos);
-
             for i in 0..threads.cur.threads.len() {
-                self.advance_thread(threads, &mut acc, i, ch, pos);
+                self.advance_thread(threads, &mut acc, i, s, pos);
             }
             threads.swap();
 
@@ -160,22 +157,22 @@ impl ThreadedEngine {
 
             // If we're out of threads, skip ahead to the next good position (but be sure to
             // always advance the input by at least one char).
-            pos += ch.len_utf8();
+            pos += 1;
             if threads.cur.threads.is_empty() {
-                if let Some((next_start_pos, next_pos, state)) = skip.skip(s, pos, Some(ch)) {
+                if let Some((next_start_pos, next_pos, state)) = skip.skip(s, pos) {
                     pos = next_pos;
                     threads.cur.add(state, next_start_pos);
                 } else {
                     return None
                 }
-            } else if let Some(state) = init.init_state(Some(ch)) {
+            } else if let Some(state) = init.init_state(s, pos) {
                 threads.cur.add(state, pos);
             }
         }
 
         for th in &threads.cur.threads {
-            if self.prog.check_eoi(th.state) {
-                return Some((th.start_idx, s.len()));
+            if let Some(end) = self.prog.check_eoi(th.state, s.len()) {
+                return Some((th.start_idx, end));
             }
         }
         None
@@ -183,29 +180,43 @@ impl ThreadedEngine {
 
 }
 
-impl Engine for ThreadedEngine {
+impl<P: Program + 'static> Engine for ThreadedEngine<P> {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        if self.prog.insts.is_empty() {
+        if self.prog.num_states() == 0 {
             return None;
         }
 
         // TODO: see if we get better performance by specializing Initter
-        match self.prefix {
-            Prefix::AsciiChar(ref cs, state) =>
-                self.shortest_match_(s, SkipToAsciiSet(cs.clone(), state), &self.prog.init),
-            Prefix::Byte(b, state) =>
-                self.shortest_match_(s, SkipToByte(b, state), &self.prog.init),
-            Prefix::Lit(ref lit, state) =>
-                self.shortest_match_(s, SkipToStr(lit, state), &self.prog.init),
-            Prefix::Ac(ref ac, _) =>
-                self.shortest_match_(
-                    s,
-                    AcSkipper(ac, self.prog.init.constant().unwrap()),
-                    &self.prog.init),
-            Prefix::LoopUntil(ref cs, state) =>
-                self.shortest_match_(s, LoopSkipper(cs.clone(), state), &self.prog.init),
-            Prefix::Empty => self.shortest_match_(s, NoSkipper(&self.prog.init), &self.prog.init),
+        let s = s.as_bytes();
+        let ret = match self.prefix {
+                Prefix::ByteSet(ref bs, state) =>
+                    self.shortest_match_(s, SkipToByteSet(bs, state), self.prog.init()),
+                Prefix::Byte(b, state) =>
+                    self.shortest_match_(s, SkipToByte(b, state), self.prog.init()),
+                    /*
+                Prefix::Lit(ref lit, state) =>
+                    self.shortest_match_(s, SkipToStr(lit, state), self.prog.init()),
+                    */
+                Prefix::Ac(ref ac, _) =>
+                    self.shortest_match_(
+                        s,
+                        AcSkipper(ac, self.prog.init().constant().unwrap()),
+                        self.prog.init()),
+                Prefix::LoopWhile(ref bs, state) =>
+                    self.shortest_match_(s, LoopSkipper(bs, state), self.prog.init()),
+                Prefix::Empty =>
+                    self.shortest_match_(s, NoSkipper(self.prog.init()), self.prog.init()),
+        };
+
+        if ret.is_none() {
+            self.prog.check_empty_match_at_end(s)
+        } else {
+            ret
         }
+    }
+
+    fn clone_box(&self) -> Box<Engine> {
+        Box::new(self.clone())
     }
 }
 

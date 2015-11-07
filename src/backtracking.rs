@@ -11,80 +11,59 @@ use engine::Engine;
 use prefix::Prefix;
 use program::Program;
 // TODO: rename to skipper
-use searcher::{AsciiSetIter, ByteIter, LoopIter, StrIter};
+use searcher::{ByteSetIter, ByteIter, LoopIter};
+use std;
 
 #[derive(Clone, Debug)]
-pub struct BacktrackingEngine {
-    prog: Program,
+pub struct BacktrackingEngine<Prog: Program> {
+    prog: Prog,
     prefix: Prefix,
 }
 
-impl BacktrackingEngine {
-    pub fn new(prog: Program) -> BacktrackingEngine {
-        let pref = Prefix::extract(&prog);
+impl<Prog: Program> BacktrackingEngine<Prog> {
+    pub fn new(prog: Prog, pref: Prefix) -> BacktrackingEngine<Prog> {
         BacktrackingEngine {
             prog: prog,
             prefix: pref,
         }
     }
 
-    fn shortest_match_from<'a>(&self, s: &'a str, mut state: usize) -> Option<usize> {
-        let mut chars = s.char_indices().peekable();
-        let mut next = chars.next();
-        while let Some((pos, ch)) = next {
-            let (next_state, accepted, retry) = self.prog.step(state, ch);
-            if accepted {
-                return Some(pos);
+    fn shortest_match_from<'a>(&self, input: &[u8], pos: usize, mut state: usize)
+    -> Option<usize> {
+        for pos in pos..input.len() {
+            let (next_state, accepted) = self.prog.step(state, &input[pos..]);
+            if let Some(bytes_ago) = accepted {
+                // We need to use saturating_sub here because Nfa::determinize_for_shortest_match
+                // makes it so that bytes_ago can be positive even when start_idx == 0.
+                return Some(pos.saturating_sub(bytes_ago as usize));
             } else if let Some(next_state) = next_state {
                 state = next_state;
-                if !retry {
-                    next = chars.next();
-                }
             } else {
                 return None;
             }
         }
 
-        if self.prog.check_eoi(state) {
-            Some(s.len())
-        } else {
-            None
-        }
+        self.prog.check_eoi(state, input.len())
     }
 
     /// `positions` iterates over `(prefix_start, prog_start, state)`
-    fn shortest_match_from_iter<I>(&self, input: &str, positions: I) -> Option<(usize, usize)>
+    fn shortest_match_from_iter<I>(&self, input: &[u8], positions: I) -> Option<(usize, usize)>
         where I: Iterator<Item=(usize, usize, usize)>
     {
         for (pref_start, prog_start, state) in positions {
-            if let Some(end) = self.shortest_match_from(&input[prog_start..], state) {
-                return Some((pref_start, prog_start + end));
+            if let Some(end) = self.shortest_match_from(input, prog_start, state) {
+                return Some((pref_start, end));
             }
         }
-        None
+
+        self.prog.check_empty_match_at_end(input)
     }
 
-
-    fn shortest_match_slow(&self, s: &str) -> Option<(usize, usize)> {
-        if let Some(state) = self.prog.init.init_at_start {
-            if let Some(end) = self.shortest_match_from(s, state) {
-                return Some((0, end))
-            }
-        }
-
-        // Skip looping through the string if we know that the match has to start
-        // at the beginning.
-        if self.prog.init.init_otherwise.is_none() && self.prog.init.init_after_char.is_empty() {
-            return None;
-        }
-
-        let mut pos: usize = 0;
-        for ch in s.chars() {
-            pos += ch.len_utf8();
-
-            if let Some(state) = self.prog.init.state_after(Some(ch)) {
-                if let Some(end) = self.shortest_match_from(&s[pos..], state) {
-                    return Some((pos, pos + end));
+    fn shortest_match_slow(&self, s: &[u8]) -> Option<(usize, usize)> {
+        for pos in std::iter::range_inclusive(0, s.len()) {
+            if let Some(state) = self.prog.init().state_at_pos(s, pos) {
+                if let Some(end) = self.shortest_match_from(s, pos, state) {
+                    return Some((pos, end));
                 }
             }
         }
@@ -93,26 +72,34 @@ impl BacktrackingEngine {
     }
 }
 
-impl Engine for BacktrackingEngine {
+impl<P: Program + 'static> Engine for BacktrackingEngine<P> {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        if self.prog.insts.is_empty() {
+        let input = s.as_bytes();
+        if self.prog.num_states() == 0 {
             return None;
+        } else if let Some(state) = self.prog.init().anchored() {
+            return self.shortest_match_from(input, 0, state).map(|x| (0, x));
         }
 
         match self.prefix {
-            Prefix::AsciiChar(ref cs, state) =>
-                self.shortest_match_from_iter(s, AsciiSetIter::new(s, cs.clone(), state)),
+            Prefix::ByteSet(ref bs, state) =>
+                self.shortest_match_from_iter(input, ByteSetIter::new(input, bs, state)),
             Prefix::Byte(b, state) =>
-                self.shortest_match_from_iter(s, ByteIter::new(s, b, state)),
-            Prefix::Lit(ref lit, state) =>
-                self.shortest_match_from_iter(s, StrIter::new(s, lit, state)),
+                self.shortest_match_from_iter(input, ByteIter::new(input, b, state)),
             Prefix::Ac(ref ac, ref state_table) => {
-                let iter = ac.find_overlapping(s).map(|m| (m.start, m.end, state_table[m.pati]));
-                self.shortest_match_from_iter(s, iter)
+                println!("start_positions: {:?}", ac.find_overlapping(input).collect::<Vec<_>>());
+                let iter =
+                    ac.find_overlapping(input)
+                        .map(|m| (m.start, m.end, state_table[m.pati]));
+                self.shortest_match_from_iter(input, iter)
             },
-            Prefix::LoopUntil(ref cs, state) =>
-                self.shortest_match_from_iter(s, LoopIter::new(s, cs.clone(), state)),
-            Prefix::Empty => self.shortest_match_slow(s),
+            Prefix::LoopWhile(ref bs, state) =>
+                self.shortest_match_from_iter(input, LoopIter::new(input, bs, state)),
+            Prefix::Empty => self.shortest_match_slow(input),
         }
+    }
+
+    fn clone_box(&self) -> Box<Engine> {
+        Box::new(self.clone())
     }
 }

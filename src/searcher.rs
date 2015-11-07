@@ -21,13 +21,13 @@ might conceivably be the start of a match. Just about everything in this module 
  */
 
 use aho_corasick::{Automaton, FullAcAutomaton};
-use ascii_set::AsciiSet;
+use bytes::ByteSet;
 use memchr::memchr;
-use prefix::ExtAsciiSet;
 use program::InitStates;
+use std;
 
 pub trait Skipper {
-    fn skip(&self, s: &str, pos: usize, last_char: Option<char>) -> Option<(usize, usize, usize)>;
+    fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)>;
 }
 
 /* TODO: see whether specialization gives better performance than boxing. If it doesn't
@@ -50,23 +50,19 @@ impl Skipper {
 
 /// An iterator that searchest for a given byte. The second position is position of the byte.
 pub struct ByteIter<'a> {
-    input: &'a str,
+    input: &'a [u8],
     byte: u8,
     pos: usize,
     state: usize,
 }
 
 impl<'a> ByteIter<'a> {
-    pub fn new(s: &'a str, b: u8, state: usize) -> ByteIter<'a> {
-        if b >= 128 {
-            panic!("can only use ASCII bytes");
-        } else {
-            ByteIter {
-                input: s,
-                byte: b,
-                pos: 0,
-                state: state,
-            }
+    pub fn new(s: &'a [u8], b: u8, state: usize) -> ByteIter<'a> {
+        ByteIter {
+            input: s,
+            byte: b,
+            pos: 0,
+            state: state,
         }
     }
 }
@@ -76,7 +72,7 @@ impl<'a> Iterator for ByteIter<'a> {
 
     fn next(&mut self) -> Option<(usize, usize, usize)> {
         let ret =
-        memchr(self.byte, &self.input.as_bytes()[self.pos..])
+        memchr(self.byte, &self.input[self.pos..])
             .map(|pos| {
                 self.pos += pos + 1;
                 (self.pos - 1, self.pos - 1, self.state)
@@ -85,6 +81,7 @@ impl<'a> Iterator for ByteIter<'a> {
     }
 }
 
+/*
 /// An iterator over (possibly overlapping) matches of a string. The second position is the one
 /// at the start of the match.
 pub struct StrIter<'hay, 'needle> {
@@ -119,35 +116,36 @@ impl<'hay, 'needle> Iterator for StrIter<'hay, 'needle> {
         }
     }
 }
+*/
 
 /// An iterator over all non-overlapping (but possibly empty) strings of chars belonging to a given
 /// set. The second position is the one after the end of the match.
-pub struct LoopIter<'a> {
-    chars: ExtAsciiSet,
-    input: &'a str,
+pub struct LoopIter<'a, 'b> {
+    input: &'a [u8],
+    bytes: &'b ByteSet,
     pos: usize,
     state: usize,
 }
 
-impl<'a> LoopIter<'a> {
-    pub fn new(input: &'a str, chars: ExtAsciiSet, state: usize) -> LoopIter<'a> {
+impl<'a, 'b> LoopIter<'a, 'b> {
+    pub fn new(input: &'a [u8], bytes: &'b ByteSet, state: usize) -> LoopIter<'a, 'b> {
         LoopIter {
-            chars: chars,
             input: input,
+            bytes: bytes,
             pos: 0,
             state: state,
         }
     }
 }
 
-impl<'a> Iterator for LoopIter<'a> {
+impl<'a, 'b> Iterator for LoopIter<'a, 'b> {
     type Item = (usize, usize, usize);
 
     fn next(&mut self) -> Option<(usize, usize, usize)> {
-        if let Some(pos) = self.input.as_bytes()[self.pos..].iter()
-                .position(|c| self.chars.contains_byte(*c)) {
+        if let Some(pos) = self.input[self.pos..].iter()
+                .position(|c| !self.bytes.0[*c as usize]) {
             let ret = Some((self.pos, self.pos + pos, self.state));
-            self.pos += pos + self.input.char_at(pos).len_utf8();
+            self.pos += pos + 1;
             ret
         } else {
             None
@@ -155,32 +153,32 @@ impl<'a> Iterator for LoopIter<'a> {
     }
 }
 
-/// An iterator over all characters belonging to a certain ASCII set. The second position is the
+/// An iterator over all characters belonging to a certain set of bytes. The second position is the
 /// position of the match.
-pub struct AsciiSetIter<'a> {
-    chars: AsciiSet,
-    input: &'a str,
+pub struct ByteSetIter<'a, 'b> {
+    input: &'a [u8],
+    bytes: &'b ByteSet,
     pos: usize,
     state: usize,
 }
 
-impl<'a> AsciiSetIter<'a> {
-    pub fn new(input: &'a str, chars: AsciiSet, state: usize) -> AsciiSetIter<'a> {
-        AsciiSetIter {
-            chars: chars,
+impl<'a, 'b> ByteSetIter<'a, 'b> {
+    pub fn new(input: &'a [u8], bytes: &'b ByteSet, state: usize) -> ByteSetIter<'a, 'b> {
+        ByteSetIter {
             input: input,
+            bytes: bytes,
             pos: 0,
             state: state,
         }
     }
 }
 
-impl<'a> Iterator for AsciiSetIter<'a> {
+impl<'a, 'b> Iterator for ByteSetIter<'a, 'b> {
     type Item = (usize, usize, usize);
 
     fn next(&mut self) -> Option<(usize, usize, usize)> {
-        if let Some(pos) = self.input.as_bytes()[self.pos..].iter()
-                .position(|c| self.chars.contains_byte(*c)) {
+        if let Some(pos) = self.input[self.pos..].iter()
+                .position(|c| self.bytes.0[*c as usize]) {
             self.pos += pos + 1;
             Some((self.pos - 1, self.pos - 1, self.state))
         } else {
@@ -191,14 +189,10 @@ impl<'a> Iterator for AsciiSetIter<'a> {
 
 pub struct NoSkipper<'a>(pub &'a InitStates);
 impl<'a> Skipper for NoSkipper<'a> {
-    fn skip(&self, s: &str, pos: usize, ch: Option<char>) -> Option<(usize, usize, usize)> {
-        if let Some(state) = self.0.state_after(ch) {
-            return Some((pos, pos, state));
-        }
-        for (offset, ch) in s[pos..].char_indices() {
-            if let Some(state) = self.0.state_after(Some(ch)) {
-                let ret_pos = pos + offset + ch.len_utf8();
-                return Some((ret_pos, ret_pos, state));
+    fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
+        for pos in pos..s.len() {
+            if let Some(state) = self.0.state_at_pos(s, pos) {
+                return Some((pos, pos, state));
             }
         }
         None
@@ -207,8 +201,8 @@ impl<'a> Skipper for NoSkipper<'a> {
 
 pub struct SkipToByte(pub u8, pub usize);
 impl Skipper for SkipToByte {
-    fn skip(&self, s: &str, pos: usize, _: Option<char>) -> Option<(usize, usize, usize)> {
-        if let Some(offset) = memchr(self.0, &s.as_bytes()[pos..]) {
+    fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
+        if let Some(offset) = memchr(self.0, &s[pos..]) {
             Some((pos + offset, pos + offset, self.1))
         } else {
             None
@@ -216,6 +210,7 @@ impl Skipper for SkipToByte {
     }
 }
 
+/*
 pub struct SkipToStr<'a>(pub &'a str, pub usize);
 impl<'a> Skipper for SkipToStr<'a> {
     fn skip(&self, s: &str, pos: usize, _: Option<char>) -> Option<(usize, usize, usize)> {
@@ -226,11 +221,12 @@ impl<'a> Skipper for SkipToStr<'a> {
         }
     }
 }
+*/
 
-pub struct SkipToAsciiSet(pub AsciiSet, pub usize);
-impl Skipper for SkipToAsciiSet {
-    fn skip(&self, s: &str, pos: usize, _: Option<char>) -> Option<(usize, usize, usize)> {
-        if let Some(offset) = s[pos..].as_bytes().iter().position(|c| self.0.contains_byte(*c)) {
+pub struct SkipToByteSet<'a>(pub &'a ByteSet, pub usize);
+impl<'a> Skipper for SkipToByteSet<'a> {
+    fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
+        if let Some(offset) = s[pos..].iter().position(|c| (self.0).0[*c as usize]) {
             Some((pos + offset, pos + offset, self.1))
         } else {
             None
@@ -238,10 +234,10 @@ impl Skipper for SkipToAsciiSet {
     }
 }
 
-pub struct LoopSkipper(pub ExtAsciiSet, pub usize);
-impl Skipper for LoopSkipper {
-    fn skip(&self, s: &str, pos: usize, _: Option<char>) -> Option<(usize, usize, usize)> {
-        if let Some(offset) = s[pos..].as_bytes().iter().position(|c| self.0.contains_byte(*c)) {
+pub struct LoopSkipper<'a>(pub &'a ByteSet, pub usize);
+impl<'a> Skipper for LoopSkipper<'a> {
+    fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
+        if let Some(offset) = s[pos..].iter().position(|c| !(self.0).0[*c as usize]) {
             Some((pos, pos + offset, self.1))
         } else {
             None
@@ -249,10 +245,11 @@ impl Skipper for LoopSkipper {
     }
 }
 
-pub struct AcSkipper<'a>(pub &'a FullAcAutomaton<String>, pub usize);
+pub struct AcSkipper<'a>(pub &'a FullAcAutomaton<Vec<u8>>, pub usize);
 impl<'a> Skipper for AcSkipper<'a> {
-    fn skip(&self, s: &str, pos: usize, _: Option<char>) -> Option<(usize, usize, usize)> {
-        if let Some(mat) = self.0.find(&s[pos..]).next() {
+    fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
+        let ac_input = unsafe { std::str::from_utf8_unchecked(&s[pos..]) };
+        if let Some(mat) = self.0.find(ac_input).next() {
             Some((pos + mat.start, pos + mat.start, self.1))
         } else {
             None
@@ -263,16 +260,16 @@ impl<'a> Skipper for AcSkipper<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ascii_set::AsciiSet;
-    use prefix::ExtAsciiSet;
+    //use prefix::ExtAsciiSet;
 
     #[test]
     fn test_byte_iter() {
-        let bi = ByteIter::new("abcaba", 'a' as u8, 5);
+        let bi = ByteIter::new("abcaba".as_bytes(), 'a' as u8, 5);
         assert_eq!(bi.collect::<Vec<_>>(),
             vec![(0, 0, 5), (3, 3, 5), (5, 5, 5)]);
     }
 
+    /*
     #[test]
     fn test_str_iter() {
         let si = StrIter::new("abcaba", "ab", 5);
@@ -302,4 +299,5 @@ mod tests {
         assert_eq!(asi.collect::<Vec<_>>(),
             vec![(0, 0, 5), (2, 2, 5), (4, 4, 5)]);
     }
+    */
 }
