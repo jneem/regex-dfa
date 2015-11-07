@@ -1,6 +1,6 @@
 [package]
 name = "regex_dfa"
-version = "0.2.0"
+version = "0.4.0"
 authors = ["Joe Neeman <joeneeman@gmail.com>"]
 description = "A crate for turning regexes into DFAs."
 documentation = "http://jneem.github.io/regex-dfa"
