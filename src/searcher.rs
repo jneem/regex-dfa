@@ -23,6 +23,7 @@ might conceivably be the start of a match. Just about everything in this module 
 use aho_corasick::{Automaton, FullAcAutomaton};
 use bytes::ByteSet;
 use memchr::memchr;
+use memmem::{Searcher, TwoWaySearcher};
 use program::InitStates;
 use std;
 
@@ -81,21 +82,20 @@ impl<'a> Iterator for ByteIter<'a> {
     }
 }
 
-/*
 /// An iterator over (possibly overlapping) matches of a string. The second position is the one
 /// at the start of the match.
 pub struct StrIter<'hay, 'needle> {
-    input: &'hay str,
-    needle: &'needle str,
+    input: &'hay [u8],
+    searcher: TwoWaySearcher<'needle>,
     pos: usize,
     state: usize,
 }
 
 impl<'hay, 'needle> StrIter<'hay, 'needle> {
-    pub fn new(hay: &'hay str, needle: &'needle str, state: usize) -> StrIter<'hay, 'needle> {
+    pub fn new(hay: &'hay [u8], needle: &'needle [u8], state: usize) -> StrIter<'hay, 'needle> {
         StrIter {
             input: hay,
-            needle: needle,
+            searcher: TwoWaySearcher::new(needle),
             pos: 0,
             state: state,
         }
@@ -106,17 +106,15 @@ impl<'hay, 'needle> Iterator for StrIter<'hay, 'needle> {
     type Item = (usize, usize, usize);
 
     fn next(&mut self) -> Option<(usize, usize, usize)> {
-        if let Some(pos) = self.input[self.pos..].find(self.needle) {
-            self.pos += pos;
-            let ret = Some((self.pos, self.pos, self.state));
-            self.pos += self.input.char_at(pos).len_utf8();
+        if let Some(pos) = self.searcher.search_in(&self.input[self.pos..]) {
+            let ret = Some((self.pos + pos, self.pos + pos, self.state));
+            self.pos += pos + 1;
             ret
         } else {
             None
         }
     }
 }
-*/
 
 /// An iterator over all non-overlapping (but possibly empty) strings of chars belonging to a given
 /// set. The second position is the one after the end of the match.
@@ -210,18 +208,21 @@ impl Skipper for SkipToByte {
     }
 }
 
-/*
-pub struct SkipToStr<'a>(pub &'a str, pub usize);
+pub struct SkipToStr<'a>(pub TwoWaySearcher<'a>, pub usize);
+impl<'a> SkipToStr<'a> {
+    pub fn new(needle: &'a [u8], state: usize) -> SkipToStr<'a> {
+        SkipToStr(TwoWaySearcher::new(needle), state)
+    }
+}
 impl<'a> Skipper for SkipToStr<'a> {
-    fn skip(&self, s: &str, pos: usize, _: Option<char>) -> Option<(usize, usize, usize)> {
-        if let Some(offset) = s[pos..].find(self.0) {
+    fn skip(&self, hay: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
+        if let Some(offset) = self.0.search_in(&hay[pos..]) {
             Some((pos + offset, pos + offset, self.1))
         } else {
             None
         }
     }
 }
-*/
 
 pub struct SkipToByteSet<'a>(pub &'a ByteSet, pub usize);
 impl<'a> Skipper for SkipToByteSet<'a> {

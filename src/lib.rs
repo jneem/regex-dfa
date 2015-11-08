@@ -32,9 +32,9 @@ necessarily find the exact same match that a standard regex engine will.
 #![feature(iter_arith, range_inclusive, slice_splits, str_char, test)]
 
 extern crate aho_corasick;
-extern crate ascii_set;
 extern crate itertools;
 extern crate memchr;
+extern crate memmem;
 extern crate regex_syntax;
 extern crate test;
 extern crate utf8_ranges;

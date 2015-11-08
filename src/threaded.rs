@@ -9,7 +9,7 @@
 use engine::Engine;
 use prefix::Prefix;
 use program::{Program, InitStates};
-use searcher::{Skipper, SkipToByteSet, SkipToByte, AcSkipper, LoopSkipper, NoSkipper};
+use searcher::{Skipper, SkipToByteSet, SkipToByte, SkipToStr, AcSkipper, LoopSkipper, NoSkipper};
 use std::mem;
 use std::cell::RefCell;
 use std::ops::DerefMut;
@@ -193,10 +193,8 @@ impl<P: Program + 'static> Engine for ThreadedEngine<P> {
                     self.shortest_match_(s, SkipToByteSet(bs, state), self.prog.init()),
                 Prefix::Byte(b, state) =>
                     self.shortest_match_(s, SkipToByte(b, state), self.prog.init()),
-                    /*
                 Prefix::Lit(ref lit, state) =>
-                    self.shortest_match_(s, SkipToStr(lit, state), self.prog.init()),
-                    */
+                    self.shortest_match_(s, SkipToStr::new(&lit, state), self.prog.init()),
                 Prefix::Ac(ref ac, _) =>
                     self.shortest_match_(
                         s,

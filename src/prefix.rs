@@ -21,7 +21,7 @@ pub enum Prefix {
     Empty,
     ByteSet(ByteSet, usize),
     Byte(u8, usize),
-    //Lit(String, usize),
+    Lit(Vec<u8>, usize),
     Ac(FullAcAutomaton<Vec<u8>>, Vec<usize>),
     LoopWhile(ByteSet, usize),
 }
@@ -34,6 +34,8 @@ impl Prefix {
             if let Some(lit) = prefixes.to_lit() {
                 if lit.len() == 1 {
                     return Prefix::Byte(lit[0], state);
+                } else {
+                    return Prefix::Lit(lit, state);
                 }
             }
             if let Some((ac, state_map)) = prefixes.to_ac() {
@@ -62,6 +64,7 @@ impl Prefix {
             Empty => {},
             ByteSet(_, ref mut st) => *st = f(*st),
             Byte(_, ref mut st) => *st = f(*st),
+            Lit(_, ref mut st) => *st = f(*st),
             LoopWhile(_, ref mut st) => *st = f(*st),
             Ac(_, ref mut sts) => {
                 for st in sts {
@@ -168,7 +171,7 @@ impl PrefixSearcher {
     }
 
     fn to_lit(&self) -> Option<Vec<u8>> {
-        if self.finished.len() == 1 {
+        if self.finished.len() == 1 && !self.finished[0].0.is_empty() {
             Some(self.finished[0].0.clone())
         } else {
             None
@@ -202,17 +205,17 @@ mod tests {
         fn regex_prefix(s: &str) -> Prefix {
             let dfa = Dfa::from_regex_bounded(s, 100).unwrap();
             println!("{:?}", dfa);
-            Prefix::extract(&dfa)
+            let ret = Prefix::extract(&dfa);
+            println!("{:?}", ret);
+            ret
         }
 
         fn is_byte(p: &Prefix) -> bool {
             if let &Prefix::Byte(_, _) = p { true } else { false }
         }
-        /*
         fn is_lit(p: &Prefix) -> bool {
             if let &Prefix::Lit(_, _) = p { true } else { false }
         }
-        */
         fn is_loop(p: &Prefix) -> bool {
             if let &Prefix::LoopWhile(_, _) = p { true } else { false }
         }
@@ -224,7 +227,7 @@ mod tests {
         }
 
         assert!(is_byte(&regex_prefix("a.*b")));
-        assert!(is_ac(&regex_prefix("abc.*b")));
+        assert!(is_lit(&regex_prefix("abc.*b")));
         assert!(is_loop(&regex_prefix(".*abc")));
         assert!(is_ac(&regex_prefix("[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ$")));
         assert!(is_set(&regex_prefix("[ab].*cd")));

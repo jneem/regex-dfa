@@ -11,7 +11,7 @@ use engine::Engine;
 use prefix::Prefix;
 use program::Program;
 // TODO: rename to skipper
-use searcher::{ByteSetIter, ByteIter, LoopIter};
+use searcher::{ByteSetIter, ByteIter, LoopIter, StrIter};
 use std;
 
 #[derive(Clone, Debug)]
@@ -86,8 +86,9 @@ impl<P: Program + 'static> Engine for BacktrackingEngine<P> {
                 self.shortest_match_from_iter(input, ByteSetIter::new(input, bs, state)),
             Prefix::Byte(b, state) =>
                 self.shortest_match_from_iter(input, ByteIter::new(input, b, state)),
+            Prefix::Lit(ref lit, state) =>
+                self.shortest_match_from_iter(input, StrIter::new(input, &lit, state)),
             Prefix::Ac(ref ac, ref state_table) => {
-                println!("start_positions: {:?}", ac.find_overlapping(input).collect::<Vec<_>>());
                 let iter =
                     ac.find_overlapping(input)
                         .map(|m| (m.start, m.end, state_table[m.pati]));
