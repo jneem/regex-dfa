@@ -166,3 +166,59 @@ impl Debug for VmProgram {
         Ok(())
     }
 }
+
+pub type TableStateIdx = u32;
+
+/// A DFA program implemented as a lookup table.
+#[derive(Clone, Debug)]
+pub struct TableProgram {
+    /// A `256 x num_instructions`-long table.
+    pub table: Vec<TableStateIdx>,
+    /// If `accept[st]` is not `u8::MAX`, then it gives the number of bytes ago that we should have
+    /// matched the input when we're in state `st`.
+    pub accept: Vec<u8>,
+    /// Similar to `accept`, but only applies when we're at the end of the input.
+    pub accept_at_eoi: Vec<u8>,
+    /// Tells us which state to start in.
+    pub init: InitStates,
+}
+
+impl Program for TableProgram {
+    #[inline(always)]
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>) {
+        let accept = self.accept[state];
+        let next_state = self.table[state * 256 + input[0] as usize];
+
+        let accept = if accept != u8::MAX { Some(accept) } else { None };
+        let next_state = if next_state != u32::MAX { Some(next_state as usize) } else { None };
+
+        (next_state, accept)
+    }
+
+    fn check_eoi(&self, state: usize, pos: usize) -> Option<usize> {
+        if self.accept_at_eoi[state] != u8::MAX {
+            Some(pos.saturating_sub(self.accept_at_eoi[state] as usize))
+        } else {
+            None
+        }
+    }
+
+    fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
+        let pos = input.len();
+        if let Some(state) = self.init.state_at_pos(input, pos) {
+            if self.accept_at_eoi[state] != u8::MAX {
+                return Some((pos, pos));
+            }
+        }
+        None
+    }
+
+    fn num_states(&self) -> usize {
+        self.accept.len()
+    }
+
+    fn init(&self) -> &InitStates {
+        &self.init
+    }
+}
+

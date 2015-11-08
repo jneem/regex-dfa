@@ -56,5 +56,5 @@ mod transition;
 mod unicode;
 
 pub use error::Error;
-pub use regex::Regex;
+pub use regex::{Engine, Program, Regex};
 

@@ -11,13 +11,14 @@ use char_map::{CharMap, CharMultiMap, CharRange};
 use error;
 use nfa::Nfa;
 use prefix::Prefix;
-use program::{InitStates, Inst, VmProgram};
+use program::{InitStates, Inst, TableProgram, VmProgram};
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
 use std::result::Result;
+use std::{u8, u32};
 use transition::{Accept as NfaAccept, StateSet};
 
 trait PopArbitrary<T> {
@@ -171,6 +172,13 @@ impl Dfa {
         for st in &mut self.states {
             st.transitions.sort();
         }
+    }
+
+    /// Returns true if this `Dfa` only matches things at the beginning of the input.
+    pub fn is_anchored(&self) -> bool {
+        self.init_after_char.is_empty()
+            && self.init_otherwise.is_none()
+            && self.init_at_start.is_some()
     }
 
     /// Get transitions from a given state.
@@ -421,22 +429,51 @@ impl Dfa {
             insts.push(Inst::Branch(bm));
         }
 
-        // TODO: put this logic in InitStates
-        let mut init = InitStates {
-            init_after_char: self.init_after_char.clone(),
-            init_at_start: self.init_at_start.map(&map_state),
-            init_otherwise: self.init_otherwise.map(&map_state),
-        };
-        init.init_after_char.map_values(&map_state);
-
         let ret = VmProgram {
-            init: init,
+            init: self.make_init_states(&map_state),
             insts: insts,
             accept_at_eoi: accept_at_eoi,
         };
         let mut prefix = Prefix::extract(self);
         prefix.map_states(&map_state);
         (ret, prefix)
+    }
+
+    pub fn to_table_program(&self) -> (TableProgram, Prefix) {
+        let mut table = vec![u32::MAX; 256 * self.num_states()];
+        let accept: Vec<u8> = self.states.iter()
+            .map(|st| if st.accept.otherwise { st.accept.bytes_ago } else { u8::MAX })
+            .collect();
+        let accept_at_eoi: Vec<u8> = self.states.iter()
+            .map(|st| if st.accept.at_eoi { st.accept.bytes_ago } else { u8::MAX })
+            .collect();
+
+        for (idx, st) in self.states.iter().enumerate() {
+            for &(range, tgt_state) in &st.transitions {
+                for ch in range.iter() {
+                    debug_assert!(ch < 256);
+                    table[idx * 256 + ch as usize] = tgt_state as u32;
+                }
+            }
+        }
+
+        let prog = TableProgram {
+            init: self.make_init_states(|x| x),
+            accept: accept,
+            accept_at_eoi: accept_at_eoi,
+            table: table,
+        };
+        (prog, Prefix::extract(self))
+    }
+
+    fn make_init_states<F: Fn(usize) -> usize>(&self, map_state: F) -> InitStates {
+        let mut init = InitStates {
+            init_after_char: self.init_after_char.clone(),
+            init_at_start: self.init_at_start.map(&map_state),
+            init_otherwise: self.init_otherwise.map(&map_state),
+        };
+        init.init_after_char.map_values(&map_state);
+        init
     }
 
     fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
