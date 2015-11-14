@@ -662,8 +662,9 @@ impl Nfa {
     ///
     /// Only transitions that consume output are returned. In particular, you
     /// probably want `states` to already be eps-closed.
-    pub fn transitions(&self, states: &StateSet) -> CharMap<StateSet> {
-        let trans = states.iter()
+    pub fn transitions<'a, I>(&self, states: I) -> CharMap<StateSet>
+    where I: IntoIterator<Item=&'a usize> {
+        let trans = states.into_iter()
             .flat_map(|s| self.states[*s].transitions.consuming.iter().cloned())
             .collect();
         let trans = CharMultiMap::from_vec(trans).group();

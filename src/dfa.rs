@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use bytes::{ByteMap, ByteSet};
-use char_map::{CharMap, CharMultiMap, CharRange};
+use char_map::{CharMap, CharRange, CharSet};
 use error;
 use nfa::Nfa;
 use prefix::Prefix;
@@ -15,43 +15,10 @@ use program::{InitStates, Inst, TableProgram, VmProgram};
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
-use std::hash::Hash;
 use std::mem;
 use std::result::Result;
 use std::{u8, u32};
 use transition::{Accept as NfaAccept, StateSet};
-
-trait PopArbitrary<T> {
-    /// Removes and returns an arbitrary member of this collection.
-    ///
-    /// If the collection is empty, this panics.
-    fn pop_arbitrary(&mut self) -> T;
-}
-
-impl<T: Eq + Clone + Hash> PopArbitrary<T> for HashSet<T> {
-    fn pop_arbitrary(&mut self) -> T {
-        let elt = self.iter().next().unwrap().clone();
-        self.remove(&elt);
-        elt
-    }
-}
-
-trait SplitSet: Sized {
-    /// If this set has a non-trivial intersection with the other set, returns the intersetion and
-    /// the difference.
-    fn split(&self, other: &Self) -> Option<(Self, Self)>;
-}
-
-impl SplitSet for StateSet {
-    fn split(&self, other: &StateSet) -> Option<(StateSet, StateSet)> {
-        if !self.is_disjoint(other) && !self.is_subset(other) {
-            Some((self.intersection(other).cloned().collect(),
-                self.difference(other).cloned().collect()))
-        } else {
-            None
-        }
-    }
-}
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct DfaAccept {
@@ -157,6 +124,7 @@ impl Dfa {
         let dfa = try!(nfa.determinize_for_shortest_match(max_states));
         let mut dfa = dfa.optimize();
         dfa.sort_states();
+        dfa.normalize_transitions();
         Ok(dfa)
     }
 
@@ -200,163 +168,18 @@ impl Dfa {
         }
     }
 
-    /// Partitions the given states according to what characters they accept.
-    fn reject_partition(&self, states: &StateSet) -> Vec<StateSet> {
-        if states.is_empty() {
-            // Return the empty partition instead of a partition consisting of the empty set.
-            return Vec::new();
-        }
-
-        // Gets the set of chars rejected from a given state.
-        let rejects = |idx: usize| -> CharMap<usize> {
-            self.states[idx].transitions.to_char_set().negated().to_char_map(idx)
-        };
-
-        // If state `i` rejects char `c` then this will map `c` to `i`.
-        let all_rejects = CharMultiMap::from_vec(
-            states.iter()
-                .flat_map(|idx| rejects(*idx).into_iter())
-                .collect()
-        );
-
-        // This is the collection of sets whose refinement forms the partition we're looking for.
-        let sets = all_rejects.group().into_iter().map(|x| x.1);
-
-        // Now build the refinement.
-        let mut ret = vec![states.clone()];
-        for s in sets {
-            let mut next_ret = Vec::new();
-            for part in ret {
-                if let Some((p1, p2)) = part.split(&s) {
-                    next_ret.push(p1);
-                    next_ret.push(p2);
-                } else {
-                    next_ret.push(part);
-                }
-            }
-            ret = next_ret;
-        }
-
-        ret
-    }
-
     /// Returns an equivalent DFA with a minimal number of states.
     ///
     /// Uses Hopcroft's algorithm.
     fn minimize(&self) -> Dfa {
-        let (never_states, acc_state_partition) = self.accept_partition();
-        let reject_partition = self.reject_partition(&never_states);
-        let mut partition = Vec::<StateSet>::new();
-        let mut distinguishers = HashSet::<StateSet>::new();
-        let reversed = self.reversed();
-
-        // This is a little conservative -- we don't actually have to add everything to the set of
-        // distinguishers.  But it won't affect the running time much, since the extra
-        // distinguishers will just cause a few more no-op loops.
-        for state_set in acc_state_partition.into_iter().chain(reject_partition.into_iter()) {
-            partition.push(state_set.clone());
-            distinguishers.insert(state_set);
-        }
-
-        while distinguishers.len() > 0 {
-            let dist = distinguishers.pop_arbitrary();
-            let sets: Vec<StateSet> = reversed.transitions(&dist)
-                                            .into_iter()
-                                            .map(|(_, x)| x)
-                                            .collect();
-
-            // For each set in our partition so far, split it if
-            // some element of `sets` reveals it to contain more than
-            // one equivalence class.
-            for s in &sets {
-                let mut next_partition = Vec::<StateSet>::new();
-
-                for y in partition.iter() {
-                    if let Some((y0, y1)) = y.split(s) {
-                        if distinguishers.contains(y) {
-                            distinguishers.remove(y);
-                            distinguishers.insert(y0.clone());
-                            distinguishers.insert(y1.clone());
-                        } else if y0.len() < y1.len() {
-                            distinguishers.insert(y0.clone());
-                        } else {
-                            distinguishers.insert(y1.clone());
-                        }
-
-                        next_partition.push(y0);
-                        next_partition.push(y1);
-                    } else {
-                        next_partition.push(y.clone());
-                    }
-                }
-
-                partition = next_partition;
-            }
-        }
-
-        let mut ret = Dfa::new();
-
-        // We need to re-index the states: build a map that maps old indices to
-        // new indices.
-        let mut old_state_to_new = vec![0; self.states.len()];
-        for part in partition.iter() {
-            // This unwrap is safe because we don't allow any empty sets into the partition.
-            let rep_idx = *part.iter().next().unwrap();
-            let rep = &self.states[rep_idx];
-            ret.states.push(DfaState::new(rep.accept.clone()));
-
-            for &state in part.iter() {
-                old_state_to_new[state] = ret.states.len() - 1;
-            }
-        }
-
-        // Fix the indices in all transitions to refer to the new state numbering.
-        for part in partition.iter() {
-            // This unwrap is safe because we don't allow any empty sets into the partition.
-            let old_src_idx = *part.iter().next().unwrap();
-            let new_src_idx = old_state_to_new[old_src_idx];
-
-            for &(ref range, old_tgt_idx) in self.states[old_src_idx].transitions.iter() {
-                let new_tgt_idx = old_state_to_new[old_tgt_idx];
-                ret.add_transition(new_src_idx, new_tgt_idx, *range);
-            }
-        }
-
-        // Fix the initial states to refer to the new numbering.
-        if let Some(s) = self.init_at_start {
-            ret.init_at_start = Some(old_state_to_new[s])
-        }
-        if let Some(s) = self.init_otherwise {
-            ret.init_otherwise = Some(old_state_to_new[s])
-        }
-        for &(ref range, state) in self.init_after_char.iter() {
-            ret.init_after_char.push(range.clone(), &old_state_to_new[state]);
-        }
-
-        ret.normalize_transitions();
-        ret
+        let mut min = Minimizer::new(self);
+        min.minimize()
     }
 
     fn normalize_transitions(&mut self) {
         for st in &mut self.states {
             st.transitions.normalize();
         }
-    }
-
-    /// Returns a partition of states according to their accept value. The first tuple element is
-    /// the set of states that never accept; the other element is a partition of the remaining
-    /// states.
-    fn accept_partition(&self) -> (StateSet, Vec<StateSet>) {
-        let mut partition = HashMap::<DfaAccept, StateSet>::new();
-        for (idx, st) in self.states.iter().enumerate() {
-            partition.entry(st.accept).or_insert(StateSet::new()).insert(idx);
-        }
-        let nevers = partition.get(&DfaAccept::never()).cloned().unwrap_or_else(|| StateSet::new());
-        let others = partition.into_iter()
-                              .filter(|&(key, _)| !key.is_never())
-                              .map(|(_, val)| val)
-                              .collect();
-        (nevers, others)
     }
 
     /// Returns the automaton with all its transitions reversed.  Its states will have the same
@@ -666,6 +489,167 @@ impl Debug for Dfa {
             }
         }
         Ok(())
+    }
+}
+
+struct Minimizer<'a> {
+    partition: Vec<Vec<usize>>,
+    // If rev_partition[i] == j then i is in partition[j].
+    rev_partition: Vec<usize>,
+    distinguishers: HashSet<Vec<usize>>,
+    dfa: &'a Dfa,
+    // The reverse of the dfa.
+    rev_dfa: Nfa,
+    active_sets: HashSet<usize>,
+}
+
+impl<'a> Minimizer<'a> {
+    fn initial_partition(dfa: &'a Dfa) -> HashSet<Vec<usize>> {
+        let mut part: HashMap<(DfaAccept, CharSet), Vec<usize>> = HashMap::new();
+        for (idx, st) in dfa.states.iter().enumerate() {
+            let chars = st.transitions.to_char_set();
+            part.entry((st.accept, chars)).or_insert(Vec::new()).push(idx);
+        }
+        part.into_iter().map(|x| x.1).collect()
+    }
+
+    fn split_set(splittee: &Vec<usize>, splitter: &Vec<usize>) -> (Vec<usize>, Vec<usize>) {
+        let mut int = Vec::new(); // splittee intersected with splitter
+        let mut diff = Vec::new(); // splittee minus splitter
+
+        let mut iter = splittee.iter().cloned().peekable();
+        for &next_splitter in splitter {
+            // Everything in splittee strictly before next_splitter goes in `diff`. If we have
+            // something matching next_splitter, put it in `int`.
+            while let Some(&x) = iter.peek() {
+                if x < next_splitter {
+                    diff.push(x);
+                } else if x == next_splitter {
+                    int.push(x);
+                } else {
+                    break;
+                }
+                iter.next();
+            }
+        }
+
+        // We're done going through splitter. Everthing else belongs to the difference.
+        diff.extend(iter);
+        (int, diff)
+    }
+
+    // Refine the current partition based on the fact that everything in `splitter` is distinct
+    // from everything not in it.
+    fn refine(&mut self, splitter: &Vec<usize>) {
+        self.active_sets.clear();
+        for &state in splitter {
+            self.active_sets.insert(self.rev_partition[state]);
+        }
+
+        for &set_idx in &self.active_sets {
+            let (int, diff) = Minimizer::split_set(&self.partition[set_idx], splitter);
+            if !int.is_empty() && !diff.is_empty() {
+                // Update the set of distunguishers.
+                if self.distinguishers.contains(&self.partition[set_idx]) {
+                    self.distinguishers.remove(&self.partition[set_idx]);
+                    self.distinguishers.insert(int.clone());
+                    self.distinguishers.insert(diff.clone());
+                } else if int.len() < diff.len() {
+                    self.distinguishers.insert(int.clone());
+                } else {
+                    self.distinguishers.insert(diff.clone());
+                }
+
+                // Refine the partition.
+                for &state_idx in &diff {
+                    self.rev_partition[state_idx] = self.partition.len();
+                }
+                self.partition[set_idx] = int;
+                self.partition.push(diff);
+            }
+        }
+    }
+
+    fn next_distinguisher(&mut self) -> Option<Vec<usize>> {
+        // TODO: if HashSet::take becomes stable, we can avoid the clone.
+        let elt = self.distinguishers.iter().next().cloned();
+        if let Some(ref elt_ref) = elt {
+            self.distinguishers.remove(elt_ref);
+        }
+        elt
+    }
+
+    fn compute_partition(&mut self) {
+        while let Some(dist) = self.next_distinguisher() {
+            let sets: Vec<StateSet> = self.rev_dfa.transitions(&dist)
+                .into_iter()
+                .map(|(_, x)| x)
+                .collect();
+            let sets: HashSet<Vec<usize>> = sets.into_iter()
+                .map(|set| {
+                    let mut vec_set: Vec<_> = set.into_iter().collect();
+                    vec_set.sort();
+                    vec_set
+                }).collect();
+
+            for set in &sets {
+                self.refine(set);
+            }
+        }
+    }
+
+    fn minimize(&mut self) -> Dfa {
+        self.compute_partition();
+
+        let mut ret = Dfa::new();
+
+        // We need to re-index the states: build a map that maps old indices to
+        // new indices.
+        let mut old_state_to_new = vec![0; self.dfa.num_states()];
+        for part in self.partition.iter() {
+            // This unwrap is safe because we don't allow any empty sets into the partition.
+            let rep_idx = *part.iter().next().unwrap();
+            ret.states.push(self.dfa.states[rep_idx].clone());
+
+            for &state in part.iter() {
+                old_state_to_new[state] = ret.states.len() - 1;
+            }
+        }
+
+        // Fix the indices in all transitions to refer to the new state numbering.
+        let map_state = |i: usize| old_state_to_new[i];
+        for st in &mut ret.states {
+            st.transitions.map_values(&map_state);
+        }
+        ret.init_at_start = self.dfa.init_at_start.map(&map_state);
+        ret.init_otherwise = self.dfa.init_otherwise.map(&map_state);
+        ret.init_after_char = self.dfa.init_after_char.clone();
+        ret.init_after_char.map_values(&map_state);
+
+        ret.normalize_transitions();
+        ret
+}
+
+    // Note: for the initial partition to be accurate, `dfa`'s transitions should be normalized.
+    fn new(dfa: &'a Dfa) -> Minimizer<'a> {
+        let dist = Minimizer::initial_partition(dfa);
+        let part: Vec<Vec<usize>> = dist.iter().map(|x| x.clone()).collect();
+        let mut rev_partition = vec![0; dfa.num_states()];
+
+        for (set_idx, set) in part.iter().enumerate() {
+            for &idx in set {
+                rev_partition[idx] = set_idx;
+            }
+        }
+
+        Minimizer {
+            partition: part,
+            rev_partition: rev_partition,
+            distinguishers: dist,
+            dfa: dfa,
+            rev_dfa: dfa.reversed(),
+            active_sets: HashSet::with_capacity(dfa.num_states()),
+        }
     }
 }
 

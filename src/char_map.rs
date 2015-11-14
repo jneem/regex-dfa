@@ -129,6 +129,8 @@ pub struct CharMap<T: Clone + Debug + PartialEq> {
     elts: Vec<(CharRange, T)>,
 }
 
+impl<T: Clone + Debug + PartialEq + Eq> Eq for CharMap<T> {}
+
 impl<T: Clone + Debug + PartialEq> IntoIterator for CharMap<T> {
     type Item = (CharRange, T);
     type IntoIter = std::vec::IntoIter<(CharRange, T)>;
@@ -336,6 +338,8 @@ pub struct CharSet {
     map: CharMap<()>,
 }
 
+impl Eq for CharSet {}
+
 impl<'a> IntoIterator for &'a CharSet {
     type Item = &'a CharRange;
 
@@ -395,17 +399,6 @@ impl CharSet {
         let mut ret = CharSet { map: CharMap { elts: vec } };
         ret.sort();
         ret
-    }
-
-    /// Iterates over all the included ranges of chars.
-    pub fn iter<'a>(&'a self) -> Box<Iterator<Item=&'a CharRange> + 'a> {
-        Box::new(self.map.iter().map(|x| &x.0))
-    }
-
-    /// Converts this set to a `CharMap` that maps all of the contained characters to the same
-    /// data.
-    pub fn to_char_map<T: Clone + Debug + PartialEq>(&self, data: T) -> CharMap<T> {
-        CharMap::from_vec(self.iter().map(|r| (*r, data.clone())).collect())
     }
 
     /// Returns the union between `self` and `other`.

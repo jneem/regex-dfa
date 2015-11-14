@@ -22,6 +22,11 @@ fn bench_assert_match(b: &mut Bencher, re: ::Regex, text: &str) {
 }
 
 #[bench]
+fn compile_word_boundary(b: &mut Bencher) {
+    b.iter(|| regex!(r"\btest\b"));
+}
+
+#[bench]
 fn literal(b: &mut Bencher) {
     let re = regex!("y");
     let text = format!("{}y", repeat("x").take(50).collect::<String>());
