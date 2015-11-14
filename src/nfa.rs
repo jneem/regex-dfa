@@ -13,11 +13,11 @@ use error;
 use itertools::Itertools;
 use regex_syntax;
 use std;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::mem;
 use std::result::Result;
-use transition::{Accept, NfaTransitions, Predicate, StateSet};
+use transition::{Accept, NfaTransitions, Predicate, SetOps, StateSet};
 use utf8_ranges::{Utf8Range, Utf8Sequence, Utf8Sequences};
 
 struct MergedUtf8Sequences {
@@ -167,7 +167,8 @@ impl Nfa {
         if st > self.states.len() - 1 {
             panic!("invalid initial state");
         }
-        self.init.insert(st);
+        self.init.push(st);
+        self.init.sort();
     }
 
     pub fn add_transition(&mut self, from: usize, to: usize, r: CharRange) {
@@ -357,7 +358,9 @@ impl Nfa {
                 // If the `in_states` were a possible starting state at the beginning
                 // of the input, maybe make the new state also a starting state.
                 if pred.0.at_boundary && !in_states.is_disjoint(&self.init_at_start) {
-                    self.init_at_start.insert(new_idx);
+                    self.init_at_start.push(new_idx);
+                    // No need to re-sort, since the new one is the largest index in the whole
+                    // Nfa.
                 }
 
                 // If the `in_states` are a possible starting state in the middle of the input,
@@ -481,8 +484,8 @@ impl Nfa {
 
     /// Returns the set of all states that can be reached from some initial state.
     fn reachable_from(&self, states: &StateSet) -> StateSet {
-        let mut active = states.clone();
-        let mut next_active = StateSet::new();
+        let mut active: HashSet<usize> = states.iter().cloned().collect();
+        let mut next_active: HashSet<usize> = HashSet::new();
         let mut ret = active.clone();
 
         while !active.is_empty() {
@@ -511,6 +514,8 @@ impl Nfa {
             next_active.clear();
         }
 
+        let mut ret: Vec<_> = ret.into_iter().collect();
+        ret.sort();
         ret
     }
 
@@ -518,21 +523,23 @@ impl Nfa {
     /// some accepting state.
     pub fn reachable_states(&self) -> StateSet {
         let mut init_states = self.init.clone();
-        init_states = init_states.union(&self.init_at_start).cloned().collect();
+        init_states.extend(&self.init_at_start);
         for &(_, ref s) in &self.init_after_char {
-            init_states = init_states.union(s).cloned().collect();
+            init_states.extend(s);
         }
+        init_states.sort();
 
         let mut final_states = StateSet::new();
         for (idx, s) in self.states.iter().enumerate() {
             if !s.accept.is_never() {
-                final_states.insert(idx);
+                final_states.push(idx);
             }
         }
 
-        let forward = self.reachable_from(&init_states);
+        let mut forward = self.reachable_from(&init_states);
         let backward = self.reversed().reachable_from(&final_states);
-        forward.intersection(&backward).cloned().collect()
+        forward.intersect_with(&backward);
+        forward
     }
 
     /// Creates a deterministic automaton that can be used to find the shortest strings matching
@@ -596,7 +603,7 @@ impl Nfa {
 
         for &(range, ref states) in &self.init_after_char {
             let mut init = self.eps_closure(states);
-            init = init.union(&init_other).cloned().collect();
+            init.union_with(&init_other);
             if !init.is_empty() {
                 let idx = try!(add_state(init, &mut ret, &mut active_states, &mut state_map));
                 ret.init_after_char.push(range, &idx);
@@ -619,9 +626,9 @@ impl Nfa {
     }
 
     fn eps_closure(&self, states: &StateSet) -> StateSet {
-        let mut ret = states.clone();
-        let mut new_states = states.clone();
-        let mut next_states = StateSet::new();
+        let mut ret: HashSet<usize> = states.iter().cloned().collect();
+        let mut new_states = ret.clone();
+        let mut next_states = HashSet::new();
 
         while !new_states.is_empty() {
             for &s in &new_states {
@@ -637,12 +644,14 @@ impl Nfa {
             next_states.clear();
         }
 
+        let mut ret: Vec<_> = ret.into_iter().collect();
+        ret.sort();
         ret
     }
 
     fn eps_closure_single(&self, state: usize) -> StateSet {
         let mut set = StateSet::new();
-        set.insert(state);
+        set.push(state);
         self.eps_closure(&set)
     }
 
@@ -704,9 +713,9 @@ mod tests {
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(4, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
-        target.init.insert(0);
-        target.init_at_start.insert(0);
-        target.init_at_start.insert(4);
+        target.init.push(0);
+        target.init_at_start.push(0);
+        target.init_at_start.push(4);
         assert_eq!(nfa, target)
     }
 
@@ -716,9 +725,9 @@ mod tests {
     fn word_char_map(word_state: usize, non_word_state: usize) -> CharMap<StateSet> {
         let mut ret = CharMap::new();
         let mut word_states = StateSet::new();
-        word_states.insert(word_state);
+        word_states.push(word_state);
         let mut non_word_states = StateSet::new();
-        non_word_states.insert(non_word_state);
+        non_word_states.push(non_word_state);
 
         let chs = word_chars();
         for &range in &chs {
@@ -752,9 +761,9 @@ mod tests {
         target.add_transition(2, 3, CharRange::single('a' as u32));
         target.add_transition(5, 3, CharRange::single('a' as u32));
         target.add_eps(1, 2);
-        target.init.insert(0);
-        target.init_at_start.insert(0);
-        target.init_at_start.insert(5);
+        target.init.push(0);
+        target.init_at_start.push(0);
+        target.init_at_start.push(5);
         target.init_after_char = word_char_map(4, 5);
         assert_eq!(nfa, target)
     }
@@ -776,8 +785,8 @@ mod tests {
         target.add_transition(0, 1, CharRange::single('a' as u32));
         target.add_transition(0, 4, CharRange::single('a' as u32));
         target.add_eps(1, 2);
-        target.init.insert(0);
-        target.init_at_start.insert(0);
+        target.init.push(0);
+        target.init_at_start.push(0);
         assert_eq!(nfa, target)
     }
 

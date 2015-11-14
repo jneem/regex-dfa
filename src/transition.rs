@@ -7,7 +7,6 @@
 // except according to those terms.
 
 use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
-use std::collections::BTreeSet;
 use std::fmt::Debug;
 use unicode::PERLW;
 
@@ -16,7 +15,58 @@ use unicode::PERLW;
 /// - it should be reasonably fast even when there are thousands of states (this knocks out
 ///   BitSet), and
 /// - it should be hashable (this knocks out HashSet).
-pub type StateSet = BTreeSet<usize>;
+///
+/// Note that efficient insertion and O(1) queries are not important. Therefore, we use a sorted
+/// Vec. (But be careful to keep it sorted!)
+pub type StateSet = Vec<usize>;
+
+pub trait SetOps {
+    fn union_with(&mut self, other: &Self);
+    fn intersect_with(&mut self, other: &Self);
+    fn is_disjoint(&self, other: &Self) -> bool;
+}
+
+impl SetOps for StateSet {
+    fn union_with(&mut self, other: &StateSet) {
+        self.extend(other);
+        self.sort();
+    }
+
+    fn intersect_with(&mut self, other: &Self) {
+        let mut write_idx = 0;
+        let mut read_idx = 0;
+
+        for &x in other {
+            while read_idx < self.len() && self[read_idx] < x {
+                read_idx += 1;
+            }
+            if read_idx < self.len() && self[read_idx] == x {
+                self[write_idx] = self[read_idx];
+                write_idx += 1;
+                read_idx += 1;
+            }
+        }
+
+        self.truncate(write_idx);
+    }
+
+    fn is_disjoint(&self, other: &StateSet) -> bool {
+        let mut my_iter = self.iter().peekable();
+        let mut other_iter = other.iter();
+
+        while let Some(&x) = other_iter.next() {
+            while let Some(&&y) = my_iter.peek() {
+                if y == x {
+                    return false;
+                } else if y > x {
+                    break;
+                }
+                my_iter.next();
+            }
+        }
+        true
+    }
+}
 
 /// A predicate is a transition that doesn't consume any input, but that can only be traversed if
 /// the previous char and the next char satisfy some condition.

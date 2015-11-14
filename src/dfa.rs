@@ -628,7 +628,7 @@ impl<'a> Minimizer<'a> {
 
         ret.normalize_transitions();
         ret
-}
+    }
 
     // Note: for the initial partition to be accurate, `dfa`'s transitions should be normalized.
     fn new(dfa: &'a Dfa) -> Minimizer<'a> {

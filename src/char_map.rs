@@ -651,10 +651,14 @@ impl CharMultiMap<usize> {
     pub fn group(&self) -> CharMap<StateSet> {
         let mut map = HashMap::<CharRange, StateSet>::new();
         for (range, state) in self.split().elts.into_iter() {
-            map.entry(range).or_insert(StateSet::new()).insert(state);
+            map.entry(range).or_insert(StateSet::new()).push(state);
         }
 
         let mut vec: Vec<(CharRange, StateSet)> = map.into_iter().collect();
+        for &mut (_, ref mut set) in &mut vec {
+            set.sort();
+            set.dedup();
+        }
         vec.sort_by(|&(r1, _), &(r2, _)| r1.start.cmp(&r2.start));
         CharMap { elts: vec }
     }
