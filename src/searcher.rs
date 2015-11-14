@@ -25,7 +25,6 @@ use bytes::ByteSet;
 use memchr::memchr;
 use memmem::{Searcher, TwoWaySearcher};
 use program::InitStates;
-use std;
 
 pub trait Skipper {
     fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)>;
@@ -249,8 +248,7 @@ impl<'a> Skipper for LoopSkipper<'a> {
 pub struct AcSkipper<'a>(pub &'a FullAcAutomaton<Vec<u8>>, pub usize);
 impl<'a> Skipper for AcSkipper<'a> {
     fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
-        let ac_input = unsafe { std::str::from_utf8_unchecked(&s[pos..]) };
-        if let Some(mat) = self.0.find(ac_input).next() {
+        if let Some(mat) = self.0.find(&s[pos..]).next() {
             Some((pos + mat.start, pos + mat.start, self.1))
         } else {
             None
