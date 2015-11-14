@@ -6,18 +6,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use backwards_char_map::BackCharMap;
 use bytes::{ByteMap, ByteSet};
 use char_map::{CharMap, CharRange, CharSet};
 use error;
 use nfa::Nfa;
 use prefix::Prefix;
-use program::{InitStates, Inst, TableProgram, VmProgram};
+use program::{InitStates, Inst, Program, TableInsts, VmInsts};
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::mem;
 use std::result::Result;
-use std::{u8, u32};
+use std::u32;
 use transition::{Accept as NfaAccept, StateSet};
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -25,7 +26,7 @@ pub struct DfaAccept {
     pub at_eoi: bool,
     // If at_eoi is true, this must be true also.
     pub otherwise: bool,
-    pub bytes_ago: u8,
+    pub bytes_ago: usize,
 }
 
 impl DfaAccept {
@@ -41,7 +42,7 @@ impl DfaAccept {
         !self.at_eoi && !self.otherwise
     }
 
-    pub fn accept(bytes_ago: u8) -> DfaAccept {
+    pub fn accept(bytes_ago: usize) -> DfaAccept {
         DfaAccept {
             at_eoi: true,
             otherwise: true,
@@ -120,8 +121,13 @@ impl Dfa {
     /// Creates a `Dfa` from a regex string, bailing out if more than `max_states` states were
     /// required.
     pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Dfa, error::Error> {
-        let nfa = try!(Nfa::from_regex(re));
-        let dfa = try!(nfa.determinize_for_shortest_match(max_states));
+        let mut nfa = try!(Nfa::from_regex(re));
+        try!(nfa.convert_to_byte_automaton(max_states));
+        Dfa::from_nfa_bounded(&nfa, max_states)
+    }
+
+    pub fn from_nfa_bounded(nfa: &Nfa, max_states: usize) -> Result<Dfa, error::Error> {
+        let dfa = try!(nfa.determinize(max_states));
         let mut dfa = dfa.optimize();
         dfa.sort_states();
         dfa.normalize_transitions();
@@ -206,7 +212,7 @@ impl Dfa {
     /// Compiles this `Dfa` into a `VmProgram`.
     ///
     /// Returns the new program, along with a `Prefix` for quick searching.
-    pub fn to_vm_program(&self) -> (VmProgram, Prefix) {
+    pub fn to_vm_program(&self) -> (Program<VmInsts>, Prefix) {
         let mut state_map = vec![0usize; self.states.len()];
 
         // Build the state map, and check how many instructions we need.
@@ -221,7 +227,7 @@ impl Dfa {
 
         let map_state = |s: usize| state_map[s];
         let mut insts = Vec::with_capacity(next_inst_idx);
-        let mut accept_at_eoi = vec![std::u8::MAX; next_inst_idx];
+        let mut accept_at_eoi = vec![std::usize::MAX; next_inst_idx];
 
         for st in &self.states {
             if st.accept.at_eoi {
@@ -252,23 +258,20 @@ impl Dfa {
             insts.push(Inst::Branch(bm));
         }
 
-        let ret = VmProgram {
+        let ret = Program {
             init: self.make_init_states(&map_state),
-            insts: insts,
             accept_at_eoi: accept_at_eoi,
+            instructions: VmInsts { insts: insts },
         };
         let mut prefix = Prefix::extract(self);
         prefix.map_states(&map_state);
         (ret, prefix)
     }
 
-    pub fn to_table_program(&self) -> (TableProgram, Prefix) {
+    pub fn to_table_insts(&self) -> TableInsts {
         let mut table = vec![u32::MAX; 256 * self.num_states()];
-        let accept: Vec<u8> = self.states.iter()
-            .map(|st| if st.accept.otherwise { st.accept.bytes_ago } else { u8::MAX })
-            .collect();
-        let accept_at_eoi: Vec<u8> = self.states.iter()
-            .map(|st| if st.accept.at_eoi { st.accept.bytes_ago } else { u8::MAX })
+        let accept: Vec<usize> = self.states.iter()
+            .map(|st| if st.accept.otherwise { st.accept.bytes_ago } else { std::usize::MAX })
             .collect();
 
         for (idx, st) in self.states.iter().enumerate() {
@@ -280,23 +283,43 @@ impl Dfa {
             }
         }
 
-        let prog = TableProgram {
-            init: self.make_init_states(|x| x),
+        TableInsts {
             accept: accept,
-            accept_at_eoi: accept_at_eoi,
             table: table,
+        }
+    }
+
+    pub fn to_table_program(&self) -> (Program<TableInsts>, Prefix) {
+        let accept_at_eoi: Vec<usize> = self.states.iter()
+            .map(|st| if st.accept.at_eoi { st.accept.bytes_ago } else { std::usize::MAX })
+            .collect();
+        let prog = Program {
+            init: self.make_init_states(|x| x),
+            accept_at_eoi: accept_at_eoi,
+            instructions: self.to_table_insts(),
         };
         (prog, Prefix::extract(self))
     }
 
     fn make_init_states<F: Fn(usize) -> usize>(&self, map_state: F) -> InitStates {
-        let mut init = InitStates {
-            init_after_char: self.init_after_char.clone(),
-            init_at_start: self.init_at_start.map(&map_state),
-            init_otherwise: self.init_otherwise.map(&map_state),
-        };
-        init.init_after_char.map_values(&map_state);
-        init
+        if self.init_after_char.is_empty() && self.init_at_start.is_some() {
+            if self.init_at_start == self.init_otherwise {
+                return InitStates::Constant(map_state(self.init_at_start.unwrap()));
+            } else if self.init_otherwise.is_none() {
+                return InitStates::Anchored(map_state(self.init_at_start.unwrap()));
+            }
+        }
+
+        let mut init_cm = self.init_after_char.clone();
+        init_cm.map_values(&map_state);
+        let mut bcm = BackCharMap::from_char_map(&init_cm);
+        if let Some(s) = self.init_at_start {
+            bcm.set_eoi(map_state(s));
+        }
+        if let Some(s) = self.init_otherwise {
+            bcm.set_fallback(map_state(s));
+        }
+        InitStates::General(bcm)
     }
 
     fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
@@ -327,7 +350,7 @@ impl Dfa {
     }
 
     /// Repeatedly `minimize` and `optimize_for_shortest_match` until we reach a fixed point.
-    fn optimize(&self) -> Dfa {
+    pub fn optimize(&self) -> Dfa {
         let mut ret = self.minimize();
         loop {
             if !ret.optimize_for_shortest_match() {
@@ -661,7 +684,9 @@ mod tests {
 
     // Like Dfa::from_regex, but doesn't minimize.
     fn make_dfa(re: &str) -> Dfa {
-        Nfa::from_regex(re).unwrap().determinize_for_shortest_match(usize::MAX).unwrap()
+        let mut nfa = Nfa::from_regex(re).unwrap();
+        nfa.convert_to_byte_automaton(usize::MAX).unwrap();
+        nfa.determinize(usize::MAX).unwrap()
     }
 
     #[test]

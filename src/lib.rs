@@ -29,7 +29,7 @@ greedy repetition operators). This information is lost when moving to a DFA, so 
 necessarily find the exact same match that a standard regex engine will.
 */
 
-#![feature(iter_arith, range_inclusive, slice_splits, str_char, test)]
+#![feature(iter_arith, range_inclusive, slice_splits, test)]
 
 extern crate aho_corasick;
 extern crate itertools;
@@ -40,6 +40,7 @@ extern crate test;
 extern crate utf8_ranges;
 
 mod backtracking;
+mod backwards_char_map;
 mod builder;
 mod bytes;
 mod char_map;

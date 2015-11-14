@@ -6,98 +6,116 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use backwards_char_map::BackCharMap;
 use bytes::{ByteSet, ByteMap};
-use char_map::CharMap;
-use std;
 use std::fmt::{Debug, Formatter, Error as FmtError};
-use std::{u8, u32};
+use std::{u32, usize};
 
 pub trait RegexSearcher {
     fn shortest_match(&self, haystack: &str) -> Option<(usize, usize)>;
 }
 
-// TODO: replace init_after_char with a backwards-running table-based machine.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InitStates {
-    pub init_at_start: Option<usize>,
-    pub init_after_char: CharMap<usize>,
-    pub init_otherwise: Option<usize>,
+#[derive(Clone, Debug)]
+pub enum InitStates {
+    Anchored(usize),
+    Constant(usize),
+    General(BackCharMap),
 }
 
 impl InitStates {
-    /// If we can start only at the beginning of the input, return the start state.
-    pub fn anchored(&self) -> Option<usize> {
-        if self.init_after_char.is_empty() && self.init_otherwise.is_none() {
-            self.init_at_start
-        } else {
-            None
-        }
-    }
-
-    /// If the start state is always the same, return it.
-    pub fn constant(&self) -> Option<usize> {
-        if self.init_after_char.is_empty() && self.init_otherwise == self.init_at_start {
-            self.init_at_start
-        } else {
-            None
-        }
-    }
-
     /// Returns the starting state if we are at the given pos in the input.
     pub fn state_at_pos(&self, input: &[u8], pos: usize) -> Option<usize> {
-        if pos == 0 {
-            self.init_at_start
-        } else {
-            let s = unsafe { std::str::from_utf8_unchecked(input) };
-            if s.is_char_boundary(pos) {
-                let ch = s.char_at_reverse(pos);
-                self.init_after_char.get(ch as u32).cloned().or(self.init_otherwise)
-            } else {
-                None
-            }
+        use program::InitStates::*;
+
+        match self {
+            &Anchored(s) => if pos == 0 { Some(s) } else { None },
+            &Constant(s) => Some(s),
+            &General(ref bcm) => bcm.run(input, pos),
         }
     }
+
+    /// If we can start only at the beginning of the input, return the start state.
+    pub fn anchored(&self) -> Option<usize> {
+        match self {
+            &InitStates::Anchored(s) => Some(s),
+            _ => None,
+        }
+    }
+
 }
 
-// TODO: write a better debug impl that doesn't print usize::MAX millions of times.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Inst {
     Byte(u8),
     ByteSet(ByteSet),
-    Acc(u8),
+    Acc(usize),
     Branch(ByteMap),
 }
 
-pub trait Program: Clone + Debug {
+pub trait Instructions: Clone + Debug {
     /// Returns (next_state, accept), where
     ///   - next_state is the next state to try
-    ///   - accept says how many bytes ago we should have accepted.
-    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>);
-
-    /// If the program should accept at the end of input in state `state`, returns the index of the
-    /// end of the match.
-    fn check_eoi(&self, state: usize, pos: usize) -> Option<usize>;
-
-    /// If this program matches an empty match at the end of the input, return it.
-    fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)>;
+    ///   - accept gives some data associated with the acceptance.
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<usize>);
 
     /// The number of states in this program.
     fn num_states(&self) -> usize;
+}
+
+#[derive(Clone, Debug)]
+pub struct Program<Insts: Instructions> {
+    pub init: InitStates,
+    pub accept_at_eoi: Vec<usize>,
+    pub instructions: Insts,
+}
+
+impl<Insts: Instructions> Instructions for Program<Insts> {
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<usize>) {
+        self.instructions.step(state, input)
+    }
+
+    fn num_states(&self) -> usize {
+        self.instructions.num_states()
+    }
+}
+
+impl<Insts: Instructions> Program<Insts> {
+    /// If the program should accept at the end of input in state `state`, returns the data
+    /// associated with the match.
+    pub fn check_eoi(&self, state: usize) -> Option<usize> {
+        if self.accept_at_eoi[state] != usize::MAX {
+            Some(self.accept_at_eoi[state])
+        } else {
+            None
+        }
+    }
+
+    /// If this program matches an empty match at the end of the input, return it.
+    pub fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
+        let pos = input.len();
+        if let Some(state) = self.init.state_at_pos(input, pos) {
+            if self.accept_at_eoi[state] != usize::MAX {
+                return Some((pos, pos));
+            }
+        }
+        None
+    }
+
 
     /// The initial state when starting the program.
-    fn init(&self) -> &InitStates;
+    pub fn init(&self) -> &InitStates {
+        &self.init
+    }
 }
 
 #[derive(Clone, PartialEq)]
-pub struct VmProgram {
+pub struct VmInsts {
     pub insts: Vec<Inst>,
-    pub init: InitStates,
-    pub accept_at_eoi: Vec<u8>,
 }
 
-impl Program for VmProgram {
+impl Instructions for VmInsts {
     #[inline(always)]
-    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>) {
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<usize>) {
         use program::Inst::*;
         match self.insts[state] {
             Acc(a) => {
@@ -123,42 +141,15 @@ impl Program for VmProgram {
         (None, None)
     }
 
-    fn check_eoi(&self, state: usize, pos: usize) -> Option<usize> {
-        if self.accept_at_eoi[state] != u8::MAX {
-            Some(pos.saturating_sub(self.accept_at_eoi[state] as usize))
-        } else {
-            None
-        }
-    }
-
-    fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
-        let pos = input.len();
-        if let Some(state) = self.init.state_at_pos(input, pos) {
-            if self.accept_at_eoi[state] != u8::MAX {
-                return Some((pos, pos));
-            }
-        }
-        None
-    }
-
     fn num_states(&self) -> usize {
         self.insts.len()
-    }
-
-    fn init(&self) -> &InitStates {
-        &self.init
     }
 }
 
 
-impl Debug for VmProgram {
+impl Debug for VmInsts {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
         try!(f.write_fmt(format_args!("Program ({} instructions):\n", self.insts.len())));
-
-        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init.init_at_start)));
-        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init.init_after_char)));
-        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init.init_otherwise)));
-        try!(f.write_fmt(format_args!("Accept_at_eoi: {:?}\n", self.accept_at_eoi)));
 
         for (idx, inst) in self.insts.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
@@ -170,55 +161,30 @@ impl Debug for VmProgram {
 pub type TableStateIdx = u32;
 
 /// A DFA program implemented as a lookup table.
+// TODO: give a better debug impl
 #[derive(Clone, Debug)]
-pub struct TableProgram {
+pub struct TableInsts {
     /// A `256 x num_instructions`-long table.
     pub table: Vec<TableStateIdx>,
-    /// If `accept[st]` is not `u8::MAX`, then it gives the number of bytes ago that we should have
-    /// matched the input when we're in state `st`.
-    pub accept: Vec<u8>,
-    /// Similar to `accept`, but only applies when we're at the end of the input.
-    pub accept_at_eoi: Vec<u8>,
-    /// Tells us which state to start in.
-    pub init: InitStates,
+    /// If `accept[st]` is not `usize::MAX`, then it gives some data to return if we match the
+    /// input when we're in state `st`.
+    pub accept: Vec<usize>,
 }
 
-impl Program for TableProgram {
+impl Instructions for TableInsts {
     #[inline(always)]
-    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<u8>) {
+    fn step(&self, state: usize, input: &[u8]) -> (Option<usize>, Option<usize>) {
         let accept = self.accept[state];
         let next_state = self.table[state * 256 + input[0] as usize];
 
-        let accept = if accept != u8::MAX { Some(accept) } else { None };
+        let accept = if accept != usize::MAX { Some(accept) } else { None };
         let next_state = if next_state != u32::MAX { Some(next_state as usize) } else { None };
 
         (next_state, accept)
     }
 
-    fn check_eoi(&self, state: usize, pos: usize) -> Option<usize> {
-        if self.accept_at_eoi[state] != u8::MAX {
-            Some(pos.saturating_sub(self.accept_at_eoi[state] as usize))
-        } else {
-            None
-        }
-    }
-
-    fn check_empty_match_at_end(&self, input: &[u8]) -> Option<(usize, usize)> {
-        let pos = input.len();
-        if let Some(state) = self.init.state_at_pos(input, pos) {
-            if self.accept_at_eoi[state] != u8::MAX {
-                return Some((pos, pos));
-            }
-        }
-        None
-    }
-
     fn num_states(&self) -> usize {
         self.accept.len()
-    }
-
-    fn init(&self) -> &InitStates {
-        &self.init
     }
 }
 

@@ -8,21 +8,11 @@
 
 use engine::Engine;
 use prefix::Prefix;
-use program::{Program, InitStates};
+use program::{Program, InitStates, Instructions};
 use searcher::{Skipper, SkipToByteSet, SkipToByte, SkipToStr, AcSkipper, LoopSkipper, NoSkipper};
 use std::mem;
 use std::cell::RefCell;
 use std::ops::DerefMut;
-
-trait Initter {
-    fn init_state(&self, input: &[u8], pos: usize) -> Option<usize>;
-}
-
-impl<'a> Initter for &'a InitStates {
-    fn init_state(&self, input: &[u8], pos: usize) -> Option<usize> {
-        self.state_at_pos(input, pos)
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 struct Thread {
@@ -89,14 +79,14 @@ impl ProgThreads {
 }
 
 #[derive(Clone, Debug)]
-pub struct ThreadedEngine<Prog: Program> {
-    prog: Prog,
+pub struct ThreadedEngine<Insts: Instructions> {
+    prog: Program<Insts>,
     threads: RefCell<ProgThreads>,
     prefix: Prefix,
 }
 
-impl<Prog: Program> ThreadedEngine<Prog> {
-    pub fn new(prog: Prog, pref: Prefix) -> ThreadedEngine<Prog> {
+impl<Insts: Instructions> ThreadedEngine<Insts> {
+    pub fn new(prog: Program<Insts>, pref: Prefix) -> ThreadedEngine<Insts> {
         let len = prog.num_states();
         ThreadedEngine {
             prog: prog,
@@ -129,9 +119,9 @@ impl<Prog: Program> ThreadedEngine<Prog> {
         }
     }
 
-    fn shortest_match_<'a, Skip, Init>(&'a self, s: &[u8], skip: Skip, init: Init)
+    fn shortest_match_<'a, Skip>(&'a self, s: &[u8], skip: Skip, init: &InitStates)
     -> Option<(usize, usize)>
-    where Skip: Skipper + 'a, Init: Initter + 'a,
+    where Skip: Skipper + 'a
     {
         let mut acc: Option<(usize, usize)> = None;
         let (first_start_pos, mut pos, start_state) = match skip.skip(s, 0) {
@@ -165,14 +155,14 @@ impl<Prog: Program> ThreadedEngine<Prog> {
                 } else {
                     return None
                 }
-            } else if let Some(state) = init.init_state(s, pos) {
+            } else if let Some(state) = init.state_at_pos(s, pos) {
                 threads.cur.add(state, pos);
             }
         }
 
         for th in &threads.cur.threads {
-            if let Some(end) = self.prog.check_eoi(th.state, s.len()) {
-                return Some((th.start_idx, end));
+            if let Some(bytes_ago) = self.prog.check_eoi(th.state) {
+                return Some((th.start_idx, s.len().saturating_sub(bytes_ago)));
             }
         }
         None
@@ -180,13 +170,12 @@ impl<Prog: Program> ThreadedEngine<Prog> {
 
 }
 
-impl<P: Program + 'static> Engine for ThreadedEngine<P> {
+impl<I: Instructions + 'static> Engine for ThreadedEngine<I> {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
         if self.prog.num_states() == 0 {
             return None;
         }
 
-        // TODO: see if we get better performance by specializing Initter
         let s = s.as_bytes();
         let ret = match self.prefix {
                 Prefix::ByteSet(ref bs, state) =>
@@ -198,7 +187,7 @@ impl<P: Program + 'static> Engine for ThreadedEngine<P> {
                 Prefix::Ac(ref ac, _) =>
                     self.shortest_match_(
                         s,
-                        AcSkipper(ac, self.prog.init().constant().unwrap()),
+                        AcSkipper(ac, self.prog.init()),
                         self.prog.init()),
                 Prefix::LoopWhile(ref bs, state) =>
                     self.shortest_match_(s, LoopSkipper(bs, state), self.prog.init()),

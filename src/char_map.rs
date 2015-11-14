@@ -270,14 +270,6 @@ impl<T: Clone + Debug + PartialEq> CharMap<T> {
         }
     }
 
-    /// Looks up a character in the map.
-    pub fn get(&self, ch: u32) -> Option<&T> {
-        match self.elts.binary_search_by(|&(r, _)| r.partial_cmp(&ch).unwrap()) {
-            Ok(idx) => { Some(&self.elts[idx].1) },
-            Err(_) => { None },
-        }
-    }
-
     /// Intersects this map with another set of characters.
     pub fn intersect(&self, other: &CharSet) -> CharMap<T> {
         let mut ret = Vec::new();
@@ -677,24 +669,6 @@ mod tests {
     use std::u32::MAX;
 
     #[test]
-    fn test_get() {
-        let mut cm = CharMap::new();
-        cm.push(CharRange::single(1), &10);
-        cm.push(CharRange::single(3), &11);
-        cm.push(CharRange::new(5, 7), &12);
-        cm.push(CharRange::single(9), &13);
-        assert_eq!(cm.get(1), Some(&10));
-        assert_eq!(cm.get(3), Some(&11));
-        assert_eq!(cm.get(5), Some(&12));
-        assert_eq!(cm.get(6), Some(&12));
-        assert_eq!(cm.get(9), Some(&13));
-        assert_eq!(cm.get(0), None);
-        assert_eq!(cm.get(2), None);
-        assert_eq!(cm.get(4), None);
-        assert_eq!(cm.get(77), None);
-    }
-
-    #[test]
     fn test_except() {
         assert_eq!(CharSet::except(""), CharSet::full());
         assert_eq!(CharSet::except("\0"), CharSet::from_vec(vec![(CharRange::new(1, MAX), ())]));
@@ -825,25 +799,6 @@ mod tests {
         assert_eq!(
             make_mm(&[(1, 5, 1), (3, 4, 2), (0, 1, 3)]).split(),
             make_mm(&[(1, 1, 1), (2, 2, 1), (3, 4, 1), (5, 5, 1), (3, 4, 2), (0, 0, 3), (1, 1, 3)]));
-    }
-
-    use test::Bencher;
-    #[bench]
-    fn bench_in_class(b: &mut Bencher) {
-        let map = CharMap::from_vec(vec![
-            (CharRange::new('a' as u32, 'd' as u32), 0),
-            (CharRange::new('w' as u32, 'w' as u32), 1),
-        ]);
-        b.iter(|| assert!(map.get('b' as u32).is_some()));
-    }
-
-    #[bench]
-    fn bench_not_in_class(b: &mut Bencher) {
-        let map = CharMap::from_vec(vec![
-            (CharRange::new('a' as u32, 'd' as u32), 0),
-            (CharRange::new('w' as u32, 'w' as u32), 1),
-        ]);
-        b.iter(|| assert!(map.get('x' as u32).is_none()));
     }
 }
 

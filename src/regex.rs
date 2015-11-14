@@ -83,7 +83,7 @@ impl Regex {
             Engine::Threaded
         };
         let eng = eng.unwrap_or(default_eng);
-        let prog = prog.unwrap_or(Program::Table);
+        let prog = prog.unwrap_or(Program::Vm);
 
         let engine: Box<engine::Engine> = match prog {
             Program::Table => {

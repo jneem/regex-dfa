@@ -9,19 +9,19 @@
 use aho_corasick::Automaton;
 use engine::Engine;
 use prefix::Prefix;
-use program::Program;
+use program::{Instructions, Program};
 // TODO: rename to skipper
 use searcher::{ByteSetIter, ByteIter, LoopIter, StrIter};
 use std;
 
 #[derive(Clone, Debug)]
-pub struct BacktrackingEngine<Prog: Program> {
-    prog: Prog,
+pub struct BacktrackingEngine<Insts: Instructions> {
+    prog: Program<Insts>,
     prefix: Prefix,
 }
 
-impl<Prog: Program> BacktrackingEngine<Prog> {
-    pub fn new(prog: Prog, pref: Prefix) -> BacktrackingEngine<Prog> {
+impl<Insts: Instructions> BacktrackingEngine<Insts> {
+    pub fn new(prog: Program<Insts>, pref: Prefix) -> BacktrackingEngine<Insts> {
         BacktrackingEngine {
             prog: prog,
             prefix: pref,
@@ -35,7 +35,7 @@ impl<Prog: Program> BacktrackingEngine<Prog> {
             if let Some(bytes_ago) = accepted {
                 // We need to use saturating_sub here because Nfa::determinize_for_shortest_match
                 // makes it so that bytes_ago can be positive even when start_idx == 0.
-                return Some(pos.saturating_sub(bytes_ago as usize));
+                return Some(pos.saturating_sub(bytes_ago));
             } else if let Some(next_state) = next_state {
                 state = next_state;
             } else {
@@ -43,7 +43,11 @@ impl<Prog: Program> BacktrackingEngine<Prog> {
             }
         }
 
-        self.prog.check_eoi(state, input.len())
+        if let Some(bytes_ago) = self.prog.check_eoi(state) {
+            Some(input.len().saturating_sub(bytes_ago))
+        } else {
+            None
+        }
     }
 
     /// `positions` iterates over `(prefix_start, prog_start, state)`
@@ -72,7 +76,7 @@ impl<Prog: Program> BacktrackingEngine<Prog> {
     }
 }
 
-impl<P: Program + 'static> Engine for BacktrackingEngine<P> {
+impl<I: Instructions + 'static> Engine for BacktrackingEngine<I> {
     fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
         let input = s.as_bytes();
         if self.prog.num_states() == 0 {

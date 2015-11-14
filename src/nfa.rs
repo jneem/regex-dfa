@@ -154,6 +154,10 @@ impl Nfa {
         Ok(NfaBuilder::from_expr(&expr).to_automaton())
     }
 
+    pub fn new() -> Nfa {
+        Nfa::with_capacity(0)
+    }
+
     pub fn with_capacity(n: usize) -> Nfa {
         Nfa {
             states: Vec::with_capacity(n),
@@ -171,6 +175,14 @@ impl Nfa {
         self.init.sort();
     }
 
+    pub fn add_init_at_start_state(&mut self, st: usize) {
+        if st > self.states.len() - 1 {
+            panic!("invalid initial state");
+        }
+        self.init_at_start.push(st);
+        self.init_at_start.sort();
+    }
+
     pub fn add_transition(&mut self, from: usize, to: usize, r: CharRange) {
         self.states[from].transitions.consuming.push(r, &to);
     }
@@ -185,6 +197,14 @@ impl Nfa {
 
     pub fn add_predicate(&mut self, from: usize, to: usize, pred: Predicate) {
         self.states[from].transitions.predicates.push((pred, to));
+    }
+
+    pub fn num_states(&self) -> usize {
+        self.states.len()
+    }
+
+    pub fn set_byte_accept(&mut self, st: usize, accept: DfaAccept) {
+        self.states[st].dfa_accept = accept;
     }
 
     /// Adds a path from `start_state` to `end_state` for all byte sequences matching `seq`.
@@ -214,7 +234,7 @@ impl Nfa {
         } else {
             self.add_state(Accept::never());
             let e = self.states.len() - 1;
-            self.states[e].dfa_accept = DfaAccept::accept(seq.head.len() as u8 + 1);
+            self.states[e].dfa_accept = DfaAccept::accept(seq.head.len() + 1);
             e
         };
 
@@ -544,8 +564,8 @@ impl Nfa {
 
     /// Creates a deterministic automaton that can be used to find the shortest strings matching
     /// this language.
-    pub fn determinize_for_shortest_match(mut self, max_states: usize)
-    -> Result<Dfa, error::Error> {
+    pub fn convert_to_byte_automaton(&mut self, max_states: usize)
+    -> Result<(), error::Error> {
         // Technically, we only need to optimize_for_shortest_match once at the end. But
         // doing it more times is cheap, and it can help prevent remove_predicates and byte_me
         // from unnecessarily adding many states.
@@ -555,16 +575,14 @@ impl Nfa {
         try!(self.byte_me(max_states));
         try!(self.byte_accept(max_states));
 
-        // Don't optimize again after byte_me, because it switches from accept to dfa_accept
-        // and therefore messes up reachable_states.
-        self.determinize(max_states)
+        Ok(())
     }
 
     /// Creates a deterministic automaton representing the same language.
     ///
     /// This assumes that we have no transition predicates -- if there are any, you must call
     /// `remove_predicates` before calling `determinize`.
-    fn determinize(&self, max_states: usize) -> Result<Dfa, error::Error> {
+    pub fn determinize(&self, max_states: usize) -> Result<Dfa, error::Error> {
         if self.states.is_empty() {
             return Ok(Dfa::new());
         }

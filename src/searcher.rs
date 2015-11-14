@@ -18,7 +18,9 @@ might conceivably be the start of a match. Just about everything in this module 
     if it encountered the prefix we found. In that case, there is no need for the DFA to go back
     and re-examine the prefix. This should always be at a character boundary.
   - The third `usize` is the state that the DFA should start in.
- */
+
+  TODO: This module has grown somewhat organically. Revisit it.
+*/
 
 use aho_corasick::{Automaton, FullAcAutomaton};
 use bytes::ByteSet;
@@ -245,14 +247,15 @@ impl<'a> Skipper for LoopSkipper<'a> {
     }
 }
 
-pub struct AcSkipper<'a>(pub &'a FullAcAutomaton<Vec<u8>>, pub usize);
-impl<'a> Skipper for AcSkipper<'a> {
+pub struct AcSkipper<'a, 'b>(pub &'a FullAcAutomaton<Vec<u8>>, pub &'b InitStates);
+impl<'a, 'b> Skipper for AcSkipper<'a, 'b> {
     fn skip(&self, s: &[u8], pos: usize) -> Option<(usize, usize, usize)> {
-        if let Some(mat) = self.0.find(&s[pos..]).next() {
-            Some((pos + mat.start, pos + mat.start, self.1))
-        } else {
-            None
+        for mat in self.0.find_overlapping(&s[pos..]) {
+            if let Some(state) = self.1.state_at_pos(s, pos + mat.start) {
+                return Some((pos + mat.start, pos + mat.start, state));
+            }
         }
+        None
     }
 }
 
