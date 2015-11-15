@@ -149,7 +149,7 @@ impl Instructions for VmInsts {
 
 impl Debug for VmInsts {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-        try!(f.write_fmt(format_args!("Program ({} instructions):\n", self.insts.len())));
+        try!(f.write_fmt(format_args!("VmInsts ({} instructions):\n", self.insts.len())));
 
         for (idx, inst) in self.insts.iter().enumerate() {
             try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
@@ -161,8 +161,7 @@ impl Debug for VmInsts {
 pub type TableStateIdx = u32;
 
 /// A DFA program implemented as a lookup table.
-// TODO: give a better debug impl
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TableInsts {
     /// A `256 x num_instructions`-long table.
     pub table: Vec<TableStateIdx>,
@@ -170,6 +169,32 @@ pub struct TableInsts {
     /// input when we're in state `st`.
     pub accept: Vec<usize>,
 }
+
+impl Debug for TableInsts {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
+        try!(f.write_fmt(format_args!("TableInsts ({} instructions):\n", self.accept.len())));
+
+        for idx in 0..self.accept.len() {
+            try!(f.write_fmt(format_args!("State {}:\n", idx)));
+            try!(f.debug_map()
+                .entries((0usize..255)
+                    .map(|c| (c, self.table[idx * 256 + c]))
+                    .filter(|x| x.1 != u32::MAX))
+                .finish());
+            try!(f.write_str("\n"));
+        }
+
+        try!(f.write_str("Accept: "));
+        for idx in 0..self.accept.len() {
+            let val = self.accept[idx];
+            if val != usize::MAX {
+                try!(f.write_fmt(format_args!("{} -> {}, ", idx, val)));
+            }
+        }
+        Ok(())
+    }
+}
+
 
 impl Instructions for TableInsts {
     #[inline(always)]

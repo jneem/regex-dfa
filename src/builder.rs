@@ -263,7 +263,7 @@ impl NfaBuilder {
             },
             &NotWordBoundary => {
                 self.add_predicate(PredicatePart::word_char(), PredicatePart::word_char());
-                self.extra_predicate(PredicatePart::not_word_char(), PredicatePart::word_char());
+                self.extra_predicate(PredicatePart::not_word_char(), PredicatePart::not_word_char());
             },
 
             // We don't support capture groups, so there is no need to keep track of
