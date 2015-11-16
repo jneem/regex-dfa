@@ -34,25 +34,14 @@ impl ByteSet {
     }
 }
 
-impl<'a> IntoIterator for &'a ByteSet {
-    type IntoIter = Box<Iterator<Item=u8> + 'a>;
-    type Item = u8;
-    fn into_iter(self) -> Self::IntoIter {
-        Box::new(self.0.iter().enumerate().filter(|x| *x.1).map(|x| x.0 as u8))
-    }
-}
-
 impl fmt::Debug for ByteSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let s = self.into_iter()
-            .map(|x| format!("{}", x))
-            .collect::<Vec<_>>()
-            .join(", ");
-        try!(f.write_fmt(format_args!("ByteSet ({})", s)));
+        try!(f.debug_set()
+            .entries(self.0.iter().enumerate().filter(|x| *x.1).map(|x| x.0))
+            .finish());
         Ok(())
     }
 }
-
 
 #[derive(Clone, PartialEq)]
 pub struct ByteMap(pub Box<[u32]>);
@@ -82,25 +71,11 @@ impl ByteMap {
     }
 }
 
-impl<'a> IntoIterator for &'a ByteMap {
-    type IntoIter = Box<Iterator<Item=(u8, u32)> + 'a>;
-    type Item = (u8, u32);
-    fn into_iter(self) -> Self::IntoIter {
-        Box::new(
-            self.0.iter()
-                .enumerate()
-                .filter(|x| *x.1 != u32::MAX)
-                .map(|(a, &b)| (a as u8, b)))
-    }
-}
-
 impl fmt::Debug for ByteMap {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let s = self.into_iter()
-            .map(|x| format!("{} -> {}", x.0, x.1))
-            .collect::<Vec<_>>()
-            .join(", ");
-        try!(f.write_fmt(format_args!("ByteMap ({})", s)));
+        try!(f.debug_map()
+            .entries(self.0.iter().enumerate().filter(|x| *x.1 != u32::MAX))
+            .finish());
         Ok(())
     }
 }
