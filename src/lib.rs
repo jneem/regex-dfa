@@ -26,7 +26,37 @@ self-explanatory but the second index should be used with caution because it is 
 ending index you will get from running a standard regex engine. This is because a regex specifies
 not only a language, but also a preferred execution order (for example, by specifying lazy or
 greedy repetition operators). This information is lost when moving to a DFA, so we cannot
-necessarily find the exact same match that a standard regex engine will.
+necessarily find the exact same match that a standard regex engine will. Having said that, see the
+next example.
+
+# Example: scanning with `regex_dfa` and then matching with `regex`
+
+Probably the most useful way to use this crate is as a preprocessor for a real regex engine. The
+idea is to use `regex_dfa` for finding the start of a match, and then to use another engine for
+doing the rest (e.g. replacing text, finding capture groups, etc.).
+
+```rust
+# extern crate regex;
+# extern crate regex_dfa;
+
+use regex::Regex;
+use regex_dfa::{Regex as RegexDfa};
+
+# fn main() {
+let digits_dfa = RegexDfa::new("[0-9]+").unwrap();
+let digits = Regex::new("^[0-9]+").unwrap(); // Note the '^'!
+
+let find_digits = |s: &str| {
+    // First, quickly find the beginning of a match.
+    if let Some((start, _)) = digits_dfa.shortest_match(s) {
+        // Now use the real regex engine to do the rest.
+        digits.find(&s[start..]).map(|(x, y)| (x + start, y + start))
+    } else {
+        None
+    }
+};
+# }
+```
 */
 
 #![feature(iter_arith, range_inclusive, slice_splits, test)]
