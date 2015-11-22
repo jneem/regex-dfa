@@ -6,11 +6,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use itertools::Itertools;
 use regex_syntax;
 use std;
 use std::char;
 use std::cmp::{max, min, Ordering};
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::iter::RangeInclusive;
 use std::fmt::{Debug, Formatter};
@@ -22,13 +22,11 @@ const DISPLAY_LIMIT: usize = 10;
 /// A range of code points, including the endpoints.
 ///
 /// If `start` is strictly larger than `end` then this represents an empty range.
-#[derive(PartialEq, Debug, Copy, Clone, Hash)]
+#[derive(PartialEq, PartialOrd, Ord, Eq, Debug, Copy, Clone, Hash)]
 pub struct CharRange {
     pub start: u32,
     pub end: u32,
 }
-
-impl Eq for CharRange {}
 
 impl CharRange {
     /// Creates a new `CharRange` with the given start and endpoints (inclusive).
@@ -641,17 +639,16 @@ impl CharMultiMap<usize> {
     /// Makes the ranges sorted and non-overlapping. The data associated with each range will
     /// be a set of `usize`s instead of a single `usize`.
     pub fn group(&self) -> CharMap<StateSet> {
-        let mut map = HashMap::<CharRange, StateSet>::new();
-        for (range, state) in self.split().elts.into_iter() {
-            map.entry(range).or_insert(StateSet::new()).push(state);
-        }
+        let mut split = self.split().elts;
+        split.sort();
+        split.dedup();
 
-        let mut vec: Vec<(CharRange, StateSet)> = map.into_iter().collect();
-        for &mut (_, ref mut set) in &mut vec {
-            set.sort();
-            set.dedup();
+        let mut vec: Vec<(CharRange, StateSet)> = Vec::new();
+        let grouped = split.into_iter().group_by_lazy(|&(range, _)| range);
+        for (range, mappings) in grouped.into_iter() {
+            let state_set: StateSet = mappings.map(|x| x.1).collect();
+            vec.push((range, state_set));
         }
-        vec.sort_by(|&(r1, _), &(r2, _)| r1.start.cmp(&r2.start));
         CharMap { elts: vec }
     }
 }
