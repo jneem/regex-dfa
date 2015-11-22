@@ -59,12 +59,13 @@ let find_digits = |s: &str| {
 ```
 */
 
-#![feature(iter_arith, range_inclusive, slice_splits, test)]
+#![feature(iter_arith, range_inclusive, test)]
 
 extern crate aho_corasick;
 extern crate itertools;
 extern crate memchr;
 extern crate memmem;
+extern crate refinery;
 extern crate regex_syntax;
 extern crate test;
 extern crate utf8_ranges;

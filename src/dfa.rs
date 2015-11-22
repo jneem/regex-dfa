@@ -13,6 +13,7 @@ use error;
 use nfa::Nfa;
 use prefix::Prefix;
 use program::{InitStates, Inst, Program, TableInsts, VmInsts};
+use refinery::Partition;
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
@@ -516,18 +517,15 @@ impl Debug for Dfa {
 }
 
 struct Minimizer<'a> {
-    partition: Vec<Vec<usize>>,
-    // If rev_partition[i] == j then i is in partition[j].
-    rev_partition: Vec<usize>,
+    partition: Partition,
     distinguishers: HashSet<Vec<usize>>,
     dfa: &'a Dfa,
     // The reverse of the dfa.
     rev_dfa: Nfa,
-    active_sets: HashSet<usize>,
 }
 
 impl<'a> Minimizer<'a> {
-    fn initial_partition(dfa: &'a Dfa) -> HashSet<Vec<usize>> {
+    fn initial_partition(dfa: &'a Dfa) -> Vec<Vec<usize>> {
         let mut part: HashMap<(DfaAccept, CharSet), Vec<usize>> = HashMap::new();
         for (idx, st) in dfa.states.iter().enumerate() {
             let chars = st.transitions.to_char_set();
@@ -536,61 +534,22 @@ impl<'a> Minimizer<'a> {
         part.into_iter().map(|x| x.1).collect()
     }
 
-    fn split_set(splittee: &Vec<usize>, splitter: &Vec<usize>) -> (Vec<usize>, Vec<usize>) {
-        let mut int = Vec::new(); // splittee intersected with splitter
-        let mut diff = Vec::new(); // splittee minus splitter
-
-        let mut iter = splittee.iter().cloned().peekable();
-        for &next_splitter in splitter {
-            // Everything in splittee strictly before next_splitter goes in `diff`. If we have
-            // something matching next_splitter, put it in `int`.
-            while let Some(&x) = iter.peek() {
-                if x < next_splitter {
-                    diff.push(x);
-                } else if x == next_splitter {
-                    int.push(x);
-                } else {
-                    break;
-                }
-                iter.next();
-            }
-        }
-
-        // We're done going through splitter. Everthing else belongs to the difference.
-        diff.extend(iter);
-        (int, diff)
-    }
-
     // Refine the current partition based on the fact that everything in `splitter` is distinct
     // from everything not in it.
-    fn refine(&mut self, splitter: &Vec<usize>) {
-        self.active_sets.clear();
-        for &state in splitter {
-            self.active_sets.insert(self.rev_partition[state]);
-        }
+    fn refine(&mut self, splitter: &[usize]) {
+        let dists = &mut self.distinguishers;
 
-        for &set_idx in &self.active_sets {
-            let (int, diff) = Minimizer::split_set(&self.partition[set_idx], splitter);
-            if !int.is_empty() && !diff.is_empty() {
-                // Update the set of distunguishers.
-                if self.distinguishers.contains(&self.partition[set_idx]) {
-                    self.distinguishers.remove(&self.partition[set_idx]);
-                    self.distinguishers.insert(int.clone());
-                    self.distinguishers.insert(diff.clone());
-                } else if int.len() < diff.len() {
-                    self.distinguishers.insert(int.clone());
-                } else {
-                    self.distinguishers.insert(diff.clone());
-                }
-
-                // Refine the partition.
-                for &state_idx in &diff {
-                    self.rev_partition[state_idx] = self.partition.len();
-                }
-                self.partition[set_idx] = int;
-                self.partition.push(diff);
+        self.partition.refine_with_callback(splitter, |orig, (int, diff)| {
+            if dists.contains(orig) {
+                dists.remove(orig);
+                dists.insert(int.to_vec());
+                dists.insert(diff.to_vec());
+            } else if int.len() < diff.len() {
+                dists.insert(int.to_vec());
+            } else {
+                dists.insert(diff.to_vec());
             }
-        }
+        });
     }
 
     fn next_distinguisher(&mut self) -> Option<Vec<usize>> {
@@ -604,16 +563,15 @@ impl<'a> Minimizer<'a> {
 
     fn compute_partition(&mut self) {
         while let Some(dist) = self.next_distinguisher() {
-            let sets: Vec<StateSet> = self.rev_dfa.transitions(&dist)
+            let mut sets: Vec<StateSet> = self.rev_dfa.transitions(&dist)
                 .into_iter()
                 .map(|(_, x)| x)
                 .collect();
-            let sets: HashSet<Vec<usize>> = sets.into_iter()
-                .map(|set| {
-                    let mut vec_set: Vec<_> = set.into_iter().collect();
-                    vec_set.sort();
-                    vec_set
-                }).collect();
+            for set in &mut sets {
+                set.sort();
+            }
+            sets.sort();
+            sets.dedup();
 
             for set in &sets {
                 self.refine(set);
@@ -656,22 +614,13 @@ impl<'a> Minimizer<'a> {
     // Note: for the initial partition to be accurate, `dfa`'s transitions should be normalized.
     fn new(dfa: &'a Dfa) -> Minimizer<'a> {
         let dist = Minimizer::initial_partition(dfa);
-        let part: Vec<Vec<usize>> = dist.iter().map(|x| x.clone()).collect();
-        let mut rev_partition = vec![0; dfa.num_states()];
-
-        for (set_idx, set) in part.iter().enumerate() {
-            for &idx in set {
-                rev_partition[idx] = set_idx;
-            }
-        }
+        let part = Partition::new(dist.iter().map(|set| set.iter().cloned()), dfa.num_states());
 
         Minimizer {
             partition: part,
-            rev_partition: rev_partition,
-            distinguishers: dist,
+            distinguishers: dist.into_iter().collect(),
             dfa: dfa,
             rev_dfa: dfa.reversed(),
-            active_sets: HashSet::with_capacity(dfa.num_states()),
         }
     }
 }
