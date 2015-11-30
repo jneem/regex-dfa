@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use char_map::{CharMap, CharSet};
+use range_map::{RangeMap, RangeSet};
 use std::fmt;
 use std::u32;
 
@@ -14,20 +14,11 @@ use std::u32;
 pub struct ByteSet(pub Box<[bool]>);
 
 impl ByteSet {
-    /// Converts from `CharSet` to `ByteSet`. The values in the `CharSet` are interpreted as
-    /// bytes, not codepoints.
-    ///
-    /// # Panics
-    ///  - if `cs` contains any elements bigger than `255`.
-    pub fn from_char_set(cs: &CharSet) -> ByteSet {
+    /// Converts from `RangeSet` to `ByteSet`.
+    pub fn from_range_set(set: &RangeSet<u8>) -> ByteSet {
         let mut ret = Box::new([false; 256]);
-        for range in cs {
-            for b in range.iter() {
-                if b > 256 {
-                    panic!("tried to convert a non-byte CharSet into a ByteSet");
-                }
-                ret[b as usize] = true;
-            }
+        for b in set.elements() {
+            ret[b as usize] = true;
         }
 
         ByteSet(ret)
@@ -47,16 +38,11 @@ impl fmt::Debug for ByteSet {
 pub struct ByteMap(pub Box<[u32]>);
 
 impl ByteMap {
-    pub fn from_char_map(cm: &CharMap<usize>) -> ByteMap {
+    pub fn from_range_map(map: &RangeMap<u8, usize>) -> ByteMap {
         let mut ret = Box::new([u32::MAX; 256]);
 
-        for &(range, state) in cm {
-            for b in range.iter() {
-                if b > 256 {
-                    panic!("tried to convert a non-byte CharMap into a ByteMap");
-                }
-                ret[b as usize] = state as u32;
-            }
+        for (b, &state) in map.keys_values() {
+            ret[b as usize] = state as u32;
         }
 
         ByteMap(ret)

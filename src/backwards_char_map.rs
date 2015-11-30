@@ -6,13 +6,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use char_map::{CharMap, CharRange};
 use dfa::{Dfa, DfaAccept};
+use itertools::Itertools;
 use nfa::Nfa;
 use program::TableInsts;
+use range_map::{Range, RangeMap};
 use transition::Accept;
 use std::usize;
-use utf8_ranges::Utf8Sequences;
+use utf8::MergedUtf8Sequences;
 
 #[derive(Clone, Debug)]
 pub struct BackCharMap {
@@ -22,25 +23,35 @@ pub struct BackCharMap {
 }
 
 impl BackCharMap {
-    pub fn from_char_map(cm: &CharMap<usize>) -> BackCharMap {
+    pub fn from_range_map(map: &RangeMap<u32, usize>) -> BackCharMap {
         let mut nfa = Nfa::new();
         nfa.add_state(Accept::never());
         nfa.add_init_at_start_state(0);
 
-        for &(range, state) in cm {
-            if let Some((start, end)) = range.to_char_pair() {
-                for seq in Utf8Sequences::new(start, end) {
-                    let mut last = 0usize;
-                    for byte_range in seq.into_iter().rev() {
-                        nfa.add_state(Accept::never());
+        let mut map_copy: Vec<_> = map.ranges_values().collect();
+        map_copy.sort_by(|x, y| x.1.cmp(&y.1)); // Sort by the target state.
+        let grouped = map_copy.into_iter().group_by_lazy(|pair| pair.1);
 
-                        let target = nfa.num_states() - 1;
-                        let range = CharRange::new(byte_range.start as u32, byte_range.end as u32);
-                        nfa.add_transition(last, target, range);
-                        last = target;
-                    }
-                    let target = nfa.num_states() - 1;
-                    nfa.set_byte_accept(target, DfaAccept::accept(state));
+        // Iterator over (state, Iterator over Range<u32>)
+        let states_ranges = grouped.into_iter().map(|(v, rv)| (v, rv.map(|x| x.0)));
+
+        for (state, ranges) in states_ranges {
+            for seq in MergedUtf8Sequences::from_ranges(ranges) {
+                let mut last = 0usize;
+
+                for range in seq.head.iter() {
+                    nfa.add_state(Accept::never());
+                    let new_idx = nfa.num_states() - 1;
+                    let range = Range::new(range.start as u32, range.end as u32);
+                    nfa.add_transition(last, new_idx, range);
+                    last = new_idx;
+                }
+
+                for range in seq.last_byte.iter() {
+                    nfa.add_dfa_state(DfaAccept::accept(state));
+                    let new_idx = nfa.num_states() - 1;
+                    let range = Range::new(range.start as u32, range.end as u32);
+                    nfa.add_transition(last, new_idx, range);
                 }
             }
         }

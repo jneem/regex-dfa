@@ -7,10 +7,10 @@
 // except according to those terms.
 
 use builder::NfaBuilder;
-use char_map::{CharMap, CharMultiMap, CharRange};
 use dfa::{Dfa, DfaAccept};
 use error;
 use itertools::Itertools;
+use range_map::{Range, RangeMap, RangeMultiMap};
 use regex_syntax;
 use std;
 use std::collections::{HashMap, HashSet};
@@ -18,50 +18,28 @@ use std::fmt::{Debug, Formatter};
 use std::mem;
 use std::result::Result;
 use transition::{Accept, NfaTransitions, Predicate, SetOps, StateSet};
-use utf8_ranges::{Utf8Range, Utf8Sequence, Utf8Sequences};
+use utf8::MergedUtf8Sequences;
 
-struct MergedUtf8Sequences {
-    head: Vec<Utf8Range>,
-    last_byte: Vec<Utf8Range>,
-}
-
-impl MergedUtf8Sequences {
-    // Panics if not all the input sequences have the same leading byte ranges.
-    fn merge<I: Iterator<Item=Utf8Sequence>>(iter: I) -> MergedUtf8Sequences {
-        let mut head = Vec::new();
-        let mut last_byte = Vec::new();
-
-        for seq in iter {
-            let len = seq.len();
-            let h = &seq.as_slice()[..len-1];
-            if head.is_empty() {
-                head.extend(h);
-            } else if &head[..] != h {
-                panic!("invalid sequences to merge");
-            }
-
-            last_byte.push(seq.as_slice()[len-1]);
-        }
-
-        MergedUtf8Sequences {
-            head: head,
-            last_byte: last_byte,
-        }
-    }
-
-    fn merge_all<I: Iterator<Item=Utf8Sequence>>(iter: I) -> Vec<MergedUtf8Sequences> {
-        let mut ret = Vec::new();
-        let head = |u: &Utf8Sequence| {
-            let len = u.len();
-            u.as_slice()[..len-1].to_owned()
-        };
-
-        for (_, seqs) in &iter.group_by_lazy(head) {
-            ret.push(MergedUtf8Sequences::merge(seqs));
-        }
-        ret
-    }
-}
+// Variations of `Nfa`:
+//  - it can have predicate transitions or not
+//  - it can have start state depending on the preceding char (lookbehind)
+//  - it can have accept state depending on the following char (lookahead). If not, it stores
+//    bytes_ago.
+//  - it can be byte-based or char-based
+//
+// Transformations:
+//  - remove_predicates takes a machine that has predicate transitions but no lookbehind and turns
+//    it into a machine without predicated transitions, but with lookbehind and lookahead.
+//  - remove_lookbehind (potential name) takes a machine with lookbehind and gets rid of it (but it
+//    also loses information about the start of the match)
+//  - remove_lookahead (potential name) takes a machine with lookahead and gets rid of it
+//  - byte_me takes a char machine and turns it into a byte machine
+//
+// Differences in storing these variations:
+//  - the transitions might need predicates
+//  - the accept struct might change
+//  - we might have to store a table of prev_char -> start_state
+//  - the transitions might be indexed by different things (bytes vs chars)
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct NfaState {
@@ -112,7 +90,7 @@ pub struct Nfa {
     /// boundaries.) This is represented by `init_after_char`: if the char before the current
     /// position (call it `ch`) is in `init_after_char` then we start in all the states in
     /// `init_after_char.get(ch)`.
-    init_after_char: CharMap<StateSet>,
+    init_after_char: RangeMap<u32, StateSet>,
 }
 
 impl Debug for Nfa {
@@ -163,7 +141,7 @@ impl Nfa {
             states: Vec::with_capacity(n),
             init: StateSet::new(),
             init_at_start: StateSet::new(),
-            init_after_char: CharMap::new(),
+            init_after_char: RangeMap::new(),
         }
     }
 
@@ -183,8 +161,8 @@ impl Nfa {
         self.init_at_start.sort();
     }
 
-    pub fn add_transition(&mut self, from: usize, to: usize, r: CharRange) {
-        self.states[from].transitions.consuming.push(r, &to);
+    pub fn add_transition(&mut self, from: usize, to: usize, r: Range<u32>) {
+        self.states[from].transitions.consuming.insert(r, to);
     }
 
     pub fn add_state(&mut self, accept: Accept) {
@@ -203,8 +181,9 @@ impl Nfa {
         self.states.len()
     }
 
-    pub fn set_byte_accept(&mut self, st: usize, accept: DfaAccept) {
-        self.states[st].dfa_accept = accept;
+    pub fn add_dfa_state(&mut self, accept: DfaAccept) {
+        self.states.push(NfaState::new(Accept::never()));
+        self.states.last_mut().unwrap().dfa_accept = accept;
     }
 
     /// Adds a path from `start_state` to `end_state` for all byte sequences matching `seq`.
@@ -223,7 +202,7 @@ impl Nfa {
         for range in &seq.head {
             self.add_state(Accept::never());
             let cur_state = self.states.len() - 1;
-            let range = CharRange::new(range.start as u32, range.end as u32);
+            let range = Range::new(range.start as u32, range.end as u32);
 
             self.add_transition(last_state, cur_state, range);
             last_state = cur_state;
@@ -239,7 +218,7 @@ impl Nfa {
         };
 
         for range in &seq.last_byte {
-            let range = CharRange::new(range.start as u32, range.end as u32);
+            let range = Range::new(range.start as u32, range.end as u32);
             self.add_transition(last_state, end_state, range);
         }
     }
@@ -251,19 +230,12 @@ impl Nfa {
         target: Option<usize>,
         max_states: usize)
     -> Result<(), error::Error>
-    where I: Iterator<Item=CharRange> {
-        let utf8_seqs = ranges
-            .filter_map(|r| r.to_char_pair())
-            .flat_map(|(start, end)| Utf8Sequences::new(start, end));
-        let merged = MergedUtf8Sequences::merge_all(utf8_seqs);
-
-        let len: usize = merged.iter().map(|m| m.head.len()).sum();
-        if self.states.len() + len > max_states {
-            return Err(error::Error::TooManyStates);
-        }
-
-        for m in merged {
+    where I: Iterator<Item=Range<u32>> {
+        for m in MergedUtf8Sequences::from_ranges(ranges) {
             self.add_utf8_sequence(start_state, target, m);
+            if self.states.len() > max_states {
+                return Err(error::Error::TooManyStates);
+            }
         }
         Ok(())
     }
@@ -274,7 +246,7 @@ impl Nfa {
     /// first.
     fn byte_me(&mut self, max_states: usize) -> Result<(), error::Error> {
         for i in 0..self.states.len() {
-            let mut trans = CharMultiMap::new();
+            let mut trans = RangeMultiMap::new();
             mem::swap(&mut trans, &mut self.states[i].transitions.consuming);
 
             // Group transitions by the target state, and add them in batches. Most of the time, we
@@ -304,7 +276,7 @@ impl Nfa {
                 let ranges = self.states[i].accept.at_char.clone();
                 try!(self.add_utf8_sequences(
                         i,
-                        ranges.into_iter().cloned(),
+                        ranges.ranges(),
                         None,
                         max_states));
             }
@@ -323,7 +295,7 @@ impl Nfa {
         // Sometimes an InClasses predicate is attached to the initial state. This map keeps track
         // of such predicates: if `initial_preds` contains the map 'a' -> 3, for example, then if
         // we just saw the character 'a' we should start in the state 3.
-        let mut initial_preds = CharMultiMap::<usize>::new();
+        let mut initial_preds = RangeMultiMap::<u32, usize>::new();
 
         let mut changed = self.remove_predicates_once(&mut initial_preds);
         while changed {
@@ -349,7 +321,7 @@ impl Nfa {
     // TODO: this function is pretty generous about adding extra states. We could be much more
     // stingy about extra states, e.g. at predicates only matching the beginning or end of input.
     // (Although this is rather less crucial now that we are trimming unreachable states.)
-    fn remove_predicates_once(&mut self, initial_preds: &mut CharMultiMap<usize>) -> bool {
+    fn remove_predicates_once(&mut self, initial_preds: &mut RangeMultiMap<u32, usize>) -> bool {
         let orig_len = self.states.len();
         let mut reversed = self.reversed();
 
@@ -385,16 +357,17 @@ impl Nfa {
 
                 // If the `in_states` are a possible starting state in the middle of the input,
                 // maybe make the new state a conditional starting state.
-                let mut init_chars = initial_preds.filter_values(|x| in_states.contains(&x));
+                let mut init_chars = initial_preds.clone();
+                init_chars.retain_values(|x| in_states.contains(x));
                 if !in_states.is_disjoint(&self.init) {
-                    init_chars.push(CharRange::full(), &0);
+                    init_chars.insert(Range::full(), 0); // FIXME: why 0 here and not the new state?
                 }
-                init_chars = init_chars.intersect(&pred.0.chars);
-                for (range, _) in init_chars {
-                    initial_preds.push(range, &new_idx);
+                init_chars = init_chars.intersection(&pred.0.chars);
+                for &(range, _) in init_chars.ranges_values() {
+                    initial_preds.insert(range, new_idx);
                 }
 
-                for (range, ref sources) in in_trans.into_iter() {
+                for &(range, ref sources) in in_trans.ranges_values() {
                     for &source in sources {
                         self.add_transition(source, new_idx, range);
                         reversed.add_transition(new_idx, source, range);
@@ -406,7 +379,7 @@ impl Nfa {
                         reversed.add_predicate(new_idx, source, p);
                     }
                 }
-                for (range, ref targets) in out_trans.into_iter() {
+                for &(range, ref targets) in out_trans.ranges_values() {
                     for &target in targets {
                         self.add_transition(new_idx, target, range);
                         reversed.add_transition(target, new_idx, range);
@@ -436,7 +409,7 @@ impl Nfa {
             let eps_closure = self.eps_closure_single(st_idx);
             if self.accept(&eps_closure).is_always() {
                 self.states[st_idx].transitions.predicates.clear();
-                self.states[st_idx].transitions.consuming = CharMultiMap::new();
+                self.states[st_idx].transitions.consuming = RangeMultiMap::new();
             }
         }
 
@@ -465,8 +438,8 @@ impl Nfa {
             .map(|(x, y)| (*y, x))
             .collect();
         let map_state = |x: usize| -> Option<usize> { old_to_new.get(&x).cloned() };
-        let map_state_set = |x: StateSet| -> StateSet {
-            x.into_iter().filter_map(&map_state).collect()
+        let map_state_set = |x: &StateSet| -> StateSet {
+            x.iter().cloned().filter_map(&map_state).collect()
         };
 
         for i in 0..self.states.len() {
@@ -488,7 +461,7 @@ impl Nfa {
         }
 
         for (idx, st) in self.states.iter().enumerate() {
-            for &(ref range, target) in st.transitions.consuming.iter() {
+            for &(ref range, target) in st.transitions.consuming.ranges_values() {
                 ret.add_transition(target, idx, *range);
             }
             for &target in st.transitions.eps.iter() {
@@ -516,7 +489,7 @@ impl Nfa {
                         next_active.insert(t);
                     }
                 }
-                for &(_, t) in self.states[s].transitions.consuming.iter() {
+                for &(_, t) in self.states[s].transitions.consuming.ranges_values() {
                     if !ret.contains(&t) {
                         ret.insert(t);
                         next_active.insert(t);
@@ -544,7 +517,7 @@ impl Nfa {
     pub fn reachable_states(&self) -> StateSet {
         let mut init_states = self.init.clone();
         init_states.extend(&self.init_at_start);
-        for &(_, ref s) in &self.init_after_char {
+        for &(_, ref s) in self.init_after_char.ranges_values() {
             init_states.extend(s);
         }
         init_states.sort();
@@ -562,8 +535,8 @@ impl Nfa {
         forward
     }
 
-    /// Creates a deterministic automaton that can be used to find the shortest strings matching
-    /// this language.
+    /// Converts this char-based automaton into a byte-based one that can be used to find the
+    /// shortest strings matching this language.
     pub fn convert_to_byte_automaton(&mut self, max_states: usize)
     -> Result<(), error::Error> {
         // Technically, we only need to optimize_for_shortest_match once at the end. But
@@ -619,27 +592,33 @@ impl Nfa {
             ret.init_at_start = Some(idx);
         }
 
-        for &(range, ref states) in &self.init_after_char {
+        let mut ret_init_after = Vec::new();
+        for &(range, ref states) in self.init_after_char.ranges_values() {
             let mut init = self.eps_closure(states);
             init.union_with(&init_other);
             if !init.is_empty() {
                 let idx = try!(add_state(init, &mut ret, &mut active_states, &mut state_map));
-                ret.init_after_char.push(range, &idx);
+                ret_init_after.push((range, idx));
             }
         }
+        ret.init_after_char = ret_init_after.into_iter().collect();
 
         while active_states.len() > 0 {
             let state = active_states.pop().unwrap();
             let state_idx = *state_map.get(&state).unwrap();
             let trans = self.transitions(&state);
-            for (range, target) in trans.into_iter() {
+
+            let mut dfa_trans = Vec::new();
+            for &(range, ref target) in trans.ranges_values() {
                 let target_idx =
                     try!(add_state(target.clone(), &mut ret, &mut active_states, &mut state_map));
-                ret.add_transition(state_idx, target_idx, range);
-            }
-        }
 
-        ret.sort_transitions();
+                assert!(range.start < 256 && range.end < 256);
+                let range = Range::new(range.start as u8, range.end as u8);
+                dfa_trans.push((range, target_idx));
+            }
+            ret.set_transitions(state_idx, dfa_trans.into_iter().collect());
+        }
         Ok(ret)
     }
 
@@ -689,14 +668,14 @@ impl Nfa {
     ///
     /// Only transitions that consume output are returned. In particular, you
     /// probably want `states` to already be eps-closed.
-    pub fn transitions<'a, I>(&self, states: I) -> CharMap<StateSet>
+    pub fn transitions<'a, I>(&self, states: I) -> RangeMap<u32, StateSet>
     where I: IntoIterator<Item=&'a usize> {
         let trans = states.into_iter()
-            .flat_map(|s| self.states[*s].transitions.consuming.iter().cloned())
+            .flat_map(|s| self.states[*s].transitions.consuming.ranges_values().cloned())
             .collect();
-        let trans = CharMultiMap::from_vec(trans).group();
+        let trans = RangeMultiMap::from_vec(trans).group();
 
-        CharMap::from_vec(trans.into_iter().map(|x| (x.0, self.eps_closure(&x.1))).collect())
+        trans.ranges_values().map(|x| (x.0, self.eps_closure(&x.1))).collect()
     }
 
     /// Finds all predicates transitioning out of the given set of states.
@@ -710,7 +689,7 @@ impl Nfa {
 #[cfg(test)]
 mod tests {
     use nfa::Nfa;
-    use char_map::{CharMap, CharRange, CharSet};
+    use range_map::{Range, RangeMap, RangeSet};
     use transition::{Accept, PredicatePart, StateSet};
 
     #[test]
@@ -728,8 +707,8 @@ mod tests {
         target.add_state(Accept::never());
         target.add_state(Accept::always());
         target.add_state(Accept::never());
-        target.add_transition(2, 3, CharRange::single('a' as u32));
-        target.add_transition(4, 3, CharRange::single('a' as u32));
+        target.add_transition(2, 3, Range::single('a' as u32));
+        target.add_transition(4, 3, Range::single('a' as u32));
         target.add_eps(1, 2);
         target.init.push(0);
         target.init_at_start.push(0);
@@ -737,26 +716,26 @@ mod tests {
         assert_eq!(nfa, target)
     }
 
-    fn word_chars() -> CharSet { PredicatePart::word_char().chars }
-    fn not_word_chars() -> CharSet { PredicatePart::not_word_char().chars }
+    fn word_chars() -> RangeSet<u32> { PredicatePart::word_char().chars }
+    fn not_word_chars() -> RangeSet<u32> { PredicatePart::not_word_char().chars }
 
-    fn word_char_map(word_state: usize, non_word_state: usize) -> CharMap<StateSet> {
-        let mut ret = CharMap::new();
+    fn word_char_map(word_state: usize, non_word_state: usize) -> RangeMap<u32, StateSet> {
+        let mut ret = Vec::new();
         let mut word_states = StateSet::new();
         word_states.push(word_state);
         let mut non_word_states = StateSet::new();
         non_word_states.push(non_word_state);
 
         let chs = word_chars();
-        for &range in &chs {
-            ret.push(range, &word_states);
+        for range in chs.ranges() {
+            ret.push((range, word_states.clone()));
         }
         let chs = not_word_chars();
-        for &range in &chs {
-            ret.push(range, &non_word_states);
+        for range in chs.ranges() {
+            ret.push((range, non_word_states.clone()));
         }
         ret.sort();
-        ret
+        ret.into_iter().collect()
     }
 
     #[test]
@@ -776,8 +755,8 @@ mod tests {
         target.add_state(Accept::always());
         target.add_state(Accept::never());
         target.add_state(Accept::never());
-        target.add_transition(2, 3, CharRange::single('a' as u32));
-        target.add_transition(5, 3, CharRange::single('a' as u32));
+        target.add_transition(2, 3, Range::single('a' as u32));
+        target.add_transition(5, 3, Range::single('a' as u32));
         target.add_eps(1, 2);
         target.init.push(0);
         target.init_at_start.push(0);
@@ -800,8 +779,8 @@ mod tests {
         target.add_state(Accept::always());
         target.add_state(Accept { at_eoi: true, at_char: not_word_chars() });
         target.add_state(Accept { at_eoi: false, at_char: word_chars() });
-        target.add_transition(0, 1, CharRange::single('a' as u32));
-        target.add_transition(0, 4, CharRange::single('a' as u32));
+        target.add_transition(0, 1, Range::single('a' as u32));
+        target.add_transition(0, 4, Range::single('a' as u32));
         target.add_eps(1, 2);
         target.init.push(0);
         target.init_at_start.push(0);
@@ -818,7 +797,7 @@ mod tests {
         nfa.remove_predicates();
         assert!(nfa.clone().byte_me(10).is_ok());
         assert!(nfa.clone().byte_me(5).is_err());
-        assert!(nfa.clone().byte_accept(2000).is_ok());
+        assert!(nfa.clone().byte_accept(4000).is_ok());
         assert!(nfa.clone().byte_accept(500).is_err());
 
         let mut nfa = Nfa::from_regex(r"blah.*\ba\b.*blah").unwrap();

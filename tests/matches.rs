@@ -22,7 +22,6 @@ macro_rules! mat(
             let text = $text;
             let expected: Vec<Option<_>> = vec!($($loc)+);
             let r = Regex::new($re).unwrap();
-            println!("{:?}", r);
             let pos = r.shortest_match(text).map(|x| x.0);
 
             // We don't support capture groups, so just check the whole match.

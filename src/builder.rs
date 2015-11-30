@@ -6,8 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use char_map::CharSet;
 use nfa::Nfa;
+use range_map::{Range, RangeSet};
 use transition::{Accept, Predicate, PredicatePart};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std::ops::Deref;
@@ -18,7 +18,7 @@ use std::ops::Deref;
 /// is always the accepting state, so there is no need to store whether a state is accepting.
 #[derive(Debug, PartialEq)]
 struct BuilderState {
-    chars: CharSet,
+    chars: RangeSet<u32>,
     eps: Vec<usize>,
     predicates: Vec<Predicate>
 }
@@ -26,19 +26,24 @@ struct BuilderState {
 impl BuilderState {
     fn new() -> BuilderState {
         BuilderState {
-            chars: CharSet::new(),
+            chars: RangeSet::new(),
             eps: Vec::new(),
             predicates: Vec::new(),
         }
     }
 
-    fn from_chars(chars: CharSet) -> BuilderState {
+    fn from_chars(chars: RangeSet<u32>) -> BuilderState {
         BuilderState {
             chars: chars,
             eps: Vec::new(),
             predicates: Vec::new(),
         }
     }
+}
+
+// Converts a `CharClass` into a `RangeSet`
+fn class_to_set(cc: &CharClass) -> RangeSet<u32> {
+    cc.iter().map(|r| Range::new(r.start as u32, r.end as u32)).collect()
 }
 
 /// Builds an `Nfa` from a `regex_syntax::Expr`.
@@ -61,8 +66,8 @@ impl NfaBuilder {
             ret_len += 1;
             ret.add_state(if ret_len == self.len() { Accept::always() } else { Accept::never() });
 
-            for ch in &s.chars {
-                ret.add_transition(ret_len - 1, ret_len, *ch);
+            for range in s.chars.ranges() {
+                ret.add_transition(ret_len - 1, ret_len, range);
             }
             for eps in &s.eps {
                 ret.add_eps(ret_len - 1, *eps);
@@ -91,7 +96,7 @@ impl NfaBuilder {
     }
 
     /// Appends two states, with a given transition between them.
-    fn add_single_transition(&mut self, chars: CharSet) {
+    fn add_single_transition(&mut self, chars: RangeSet<u32>) {
         self.states.push(BuilderState::from_chars(chars));
         self.states.push(BuilderState::new());
      }
@@ -104,9 +109,9 @@ impl NfaBuilder {
         for ch in chars {
             let ranges = if case_insensitive {
                 let cc = CharClass::new(vec![ClassRange { start: *ch, end: *ch }]);
-                CharSet::from_char_class(&cc.case_fold())
+                class_to_set(&cc.case_fold())
             } else {
-                CharSet::single(*ch as u32)
+                RangeSet::single(*ch as u32)
             };
             self.states.push(BuilderState::from_chars(ranges));
         }
@@ -237,9 +242,12 @@ impl NfaBuilder {
 
         match expr {
             &Empty => {},
-            &Class(ref c) => self.add_single_transition(CharSet::from_char_class(c)),
-            &AnyChar => self.add_single_transition(CharSet::full()),
-            &AnyCharNoNL => self.add_single_transition(CharSet::except("\n\r")),
+            &Class(ref c) => self.add_single_transition(class_to_set(c)),
+            &AnyChar => self.add_single_transition(RangeSet::full()),
+            &AnyCharNoNL => {
+                let nls = b"\n\r".into_iter().map(|b| *b as u32);
+                self.add_single_transition(RangeSet::except(nls))
+            },
             &Concat(ref es) => self.add_concat_exprs(es),
             &Alternate(ref es) => self.add_alternate_exprs(es),
             &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
@@ -280,7 +288,7 @@ impl NfaBuilder {
     #[cfg(test)]
 mod tests {
     use builder::{NfaBuilder, BuilderState};
-    use char_map::CharRange;
+    use range_map::{Range, RangeSet};
     use regex_syntax;
 
     fn parse(s: &str) -> regex_syntax::Result<NfaBuilder> {
@@ -296,13 +304,17 @@ mod tests {
         ret
     }
 
+    fn set(ranges: &[(char, char)]) -> RangeSet<u32> {
+        ranges.iter().map(|r| Range::new(r.0 as u32, r.1 as u32)).collect()
+    }
+
     #[test]
     fn test_char_class() {
         let builder = parse("[a-z][A-Z]").unwrap();
         let mut target = make_builder(4);
-        target.states[0].chars.push(CharRange::new('a' as u32, 'z' as u32));
+        target.states[0].chars = set(&[('a', 'z')]);
         target.add_eps(1, 2);
-        target.states[2].chars.push(CharRange::new('A' as u32, 'Z' as u32));
+        target.states[2].chars = set(&[('A', 'Z')]);
 
         assert_eq!(builder, target);
     }
@@ -311,8 +323,8 @@ mod tests {
     fn test_literal() {
         let builder = parse("aZ").unwrap();
         let mut target = make_builder(3);
-        target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[1].chars.push(CharRange::single('Z' as u32));
+        target.states[0].chars = RangeSet::single('a' as u32);
+        target.states[1].chars = RangeSet::single('Z' as u32);
 
         assert_eq!(builder, target);
     }
@@ -322,9 +334,9 @@ mod tests {
         let builder = parse("ab*z").unwrap();
         let builder2 = parse("ab{0,}z").unwrap();
         let mut target = make_builder(6);
-        target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('b' as u32));
-        target.states[4].chars.push(CharRange::single('z' as u32));
+        target.states[0].chars = RangeSet::single('a' as u32);
+        target.states[2].chars = RangeSet::single('b' as u32);
+        target.states[4].chars = RangeSet::single('z' as u32);
         target.add_eps(1, 2);
         target.add_eps(2, 3);
         target.add_eps(3, 2);
@@ -339,9 +351,9 @@ mod tests {
         let builder = parse("ab+z").unwrap();
         let builder2 = parse("ab{1,}z").unwrap();
         let mut target = make_builder(6);
-        target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('b' as u32));
-        target.states[4].chars.push(CharRange::single('z' as u32));
+        target.states[0].chars = RangeSet::single('a' as u32);
+        target.states[2].chars = RangeSet::single('b' as u32);
+        target.states[4].chars = RangeSet::single('z' as u32);
         target.add_eps(1, 2);
         target.add_eps(3, 2);
         target.add_eps(3, 4);
@@ -355,9 +367,9 @@ mod tests {
         let builder = parse("ab?z").unwrap();
         let builder2 = parse("ab{0,1}z").unwrap();
         let mut target = make_builder(6);
-        target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('b' as u32));
-        target.states[4].chars.push(CharRange::single('z' as u32));
+        target.states[0].chars = RangeSet::single('a' as u32);
+        target.states[2].chars = RangeSet::single('b' as u32);
+        target.states[4].chars = RangeSet::single('z' as u32);
         target.add_eps(1, 2);
         target.add_eps(2, 3);
         target.add_eps(3, 4);
@@ -370,11 +382,11 @@ mod tests {
     fn test_repeat_exact() {
         let builder = parse("ab{3}z").unwrap();
         let mut target = make_builder(10);
-        target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[2].chars.push(CharRange::single('b' as u32));
-        target.states[4].chars.push(CharRange::single('b' as u32));
-        target.states[6].chars.push(CharRange::single('b' as u32));
-        target.states[8].chars.push(CharRange::single('z' as u32));
+        target.states[0].chars = RangeSet::single('a' as u32);
+        target.states[2].chars = RangeSet::single('b' as u32);
+        target.states[4].chars = RangeSet::single('b' as u32);
+        target.states[6].chars = RangeSet::single('b' as u32);
+        target.states[8].chars = RangeSet::single('z' as u32);
         target.add_eps(1, 2);
         target.add_eps(3, 4);
         target.add_eps(5, 6);
@@ -404,8 +416,8 @@ mod tests {
     fn test_alternate() {
         let builder = parse("a|z").unwrap();
         let mut target = make_builder(6);
-        target.states[1].chars.push(CharRange::single('a' as u32));
-        target.states[3].chars.push(CharRange::single('z' as u32));
+        target.states[1].chars = RangeSet::single('a' as u32);
+        target.states[3].chars = RangeSet::single('z' as u32);
         target.add_eps(0, 1);
         target.add_eps(2, 5);
         target.add_eps(0, 3);
@@ -418,10 +430,8 @@ mod tests {
     fn test_case_insensitive() {
         let builder = parse("(?i)ab").unwrap();
         let mut target = make_builder(3);
-        target.states[0].chars.push(CharRange::single('A' as u32));
-        target.states[0].chars.push(CharRange::single('a' as u32));
-        target.states[1].chars.push(CharRange::single('B' as u32));
-        target.states[1].chars.push(CharRange::single('b' as u32));
+        target.states[0].chars = set(&[('a', 'a'), ('A', 'A')]);
+        target.states[1].chars = set(&[('b', 'b'), ('B', 'B')]);
 
         assert_eq!(builder, target);
     }

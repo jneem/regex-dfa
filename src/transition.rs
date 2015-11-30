@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use char_map::{CharMap, CharMultiMap, CharSet, CharRange};
+use range_map::{Range, RangeMap, RangeMultiMap, RangeSet};
 use std::fmt::Debug;
 use unicode::PERLW;
 
@@ -83,14 +83,14 @@ pub struct PredicatePart {
 
     /// The set of allowed chars (which will be applied to either the previous char or the next
     /// char, depending on whether we are the first or second in the pair).
-    pub chars: CharSet,
+    pub chars: RangeSet<u32>,
 }
 
 impl PredicatePart {
     /// Returns a `PredicatePart` representing the intersection of this one and another one.
     pub fn intersect(&self, other: &PredicatePart) -> PredicatePart {
         PredicatePart {
-            chars: self.chars.intersect(&other.chars),
+            chars: self.chars.intersection(&other.chars),
             at_boundary: self.at_boundary && other.at_boundary,
         }
     }
@@ -103,7 +103,7 @@ impl PredicatePart {
     /// Creates a `PredicatePart` that matches a single char.
     pub fn single_char(ch: char) -> PredicatePart {
         PredicatePart {
-            chars: CharSet::single(ch as u32),
+            chars: RangeSet::single(ch as u32),
             at_boundary: false,
         }
     }
@@ -120,7 +120,7 @@ impl PredicatePart {
     /// Returns a new `PredicatePart` that always matches.
     pub fn full() -> PredicatePart {
         PredicatePart {
-            chars: CharSet::full(),
+            chars: RangeSet::full(),
             at_boundary: true,
         }
     }
@@ -128,27 +128,19 @@ impl PredicatePart {
     /// Returns a new `PredicatePart` that matches at the beginning or end of input.
     pub fn at_boundary() -> PredicatePart {
         PredicatePart {
-            chars: CharSet::new(),
+            chars: RangeSet::new(),
             at_boundary: true,
         }
     }
 
-    /// Returns a new `CharSet` containing all word characters.
-    fn word_chars() -> CharSet {
-        let mut ret = CharSet::new();
-        for &(start, end) in PERLW {
-            ret.push(CharRange::new(start as u32, end as u32));
-        }
-        ret
+    /// Returns a new `RangeSet` containing all word characters.
+    fn word_chars() -> RangeSet<u32> {
+        PERLW.iter().map(|pair| Range::new(pair.0 as u32, pair.1 as u32)).collect()
     }
 
-    /// Returns a new `CharSet` containing all non-word characters.
-    fn not_word_chars() -> CharSet {
-        let mut ret = CharSet::new();
-        for &(start, end) in PERLW {
-            ret.push(CharRange::new(start as u32, end as u32));
-        }
-        ret.negated()
+    /// Returns a new `RangeSet` containing all non-word characters.
+    fn not_word_chars() -> RangeSet<u32> {
+        PredicatePart::word_chars().negated()
     }
 
     /// Returns a new `PredicatePart` that matches all word characters.
@@ -184,12 +176,12 @@ impl Predicate {
 
     /// Given transitions into and out of a state, return only those transitions satisfying this
     /// predicate.
-    pub fn filter_transitions<T: Debug + PartialEq + Clone>
-            (&self, in_trans: &CharMap<T>, out_trans: &CharMap<T>)
-            -> (CharMap<T>, CharMap<T>)
+    pub fn filter_transitions<T: Debug + Eq + Clone>
+            (&self, in_trans: &RangeMap<u32, T>, out_trans: &RangeMap<u32, T>)
+            -> (RangeMap<u32, T>, RangeMap<u32, T>)
     {
         let &Predicate(ref in_pred, ref out_pred) = self;
-        (in_trans.intersect(&in_pred.chars), out_trans.intersect(&out_pred.chars))
+        (in_trans.intersection(&in_pred.chars), out_trans.intersection(&out_pred.chars))
     }
 
     /// Imagine that `self` is a predicate leading to a state with acceptance condition `acc`.
@@ -197,7 +189,7 @@ impl Predicate {
     pub fn filter_accept(&self, acc: &Accept) -> Accept {
         Accept {
             at_eoi: self.1.at_boundary && acc.at_eoi,
-            at_char: self.1.chars.intersect(&acc.at_char),
+            at_char: self.1.chars.intersection(&acc.at_char),
         }
     }
 }
@@ -208,7 +200,7 @@ impl Predicate {
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Accept {
     pub at_eoi: bool,
-    pub at_char: CharSet,
+    pub at_char: RangeSet<u32>,
 }
 
 impl Eq for Accept {}
@@ -218,7 +210,7 @@ impl Accept {
     pub fn always() -> Accept {
         Accept {
             at_eoi: true,
-            at_char: CharSet::full(),
+            at_char: RangeSet::full(),
         }
     }
 
@@ -226,7 +218,7 @@ impl Accept {
     pub fn never() -> Accept {
         Accept {
             at_eoi: false,
-            at_char: CharSet::new(),
+            at_char: RangeSet::new(),
         }
     }
 
@@ -253,7 +245,7 @@ impl Accept {
 #[derive(Clone, PartialEq, Debug)]
 pub struct NfaTransitions {
     /// Transitions that consume input.
-    pub consuming: CharMultiMap<usize>,
+    pub consuming: RangeMultiMap<u32, usize>,
     /// Unconditional transitions that don't consume any input.
     pub eps: Vec<usize>,
     /// Conditional transitions that don't consume any input.
@@ -263,7 +255,7 @@ pub struct NfaTransitions {
 impl NfaTransitions {
     pub fn new() -> NfaTransitions {
         NfaTransitions {
-            consuming: CharMultiMap::new(),
+            consuming: RangeMultiMap::new(),
             eps: Vec::new(),
             predicates: Vec::new(),
         }
@@ -278,13 +270,13 @@ impl NfaTransitions {
 
         map_vec(&mut self.predicates, |x| { x.1 = f(x.1); });
         map_vec(&mut self.eps, |x| { *x = f(*x); });
-        map_vec(self.consuming.vec_ref_mut(), |x| { x.1 = f(x.1) });
+        self.consuming.map_values(|x| f(*x));
     }
 
     pub fn retain_targets<F>(&mut self, mut f: F) where F: FnMut(usize) -> bool {
         self.predicates.retain(|x| f(x.1));
         self.eps.retain(|x| f(*x));
-        self.consuming.vec_ref_mut().retain(|x| f(x.1));
+        self.consuming.retain_values(|x| f(*x));
     }
 
     pub fn filter_map_targets<F>(&mut self, mut f: F) where F: FnMut(usize) -> Option<usize> {
@@ -295,7 +287,7 @@ impl NfaTransitions {
 
 #[cfg(test)]
 mod tests {
-    use char_map::*;
+    use range_map::{Range, RangeMap, RangeSet};
     use transition::*;
 
     #[test]
@@ -307,7 +299,7 @@ mod tests {
         let a = PredicatePart::single_char('a');
         let empty = PredicatePart {
             at_boundary: false,
-            chars: CharSet::new(),
+            chars: RangeSet::new(),
         };
 
         let check = |a: &PredicatePart, b: &PredicatePart, res: &PredicatePart| {
@@ -335,14 +327,16 @@ mod tests {
         let a = PredicatePart::single_char('a');
         let empty = PredicatePart {
             at_boundary: false,
-            chars: CharSet::new(),
+            chars: RangeSet::new(),
         };
 
-        let cm_empty = CharMap::new();
-        let cm_az = CharMap::from_vec(vec![(CharRange::new('a' as u32, 'z' as u32), 1usize)]);
-        let cm_a = CharMap::from_vec(vec![(CharRange::new('a' as u32, 'a' as u32), 1usize)]);
+        let cm_empty = RangeMap::new();
+        let cm_az: RangeMap<u32, usize> =
+            [(Range::new('a' as u32, 'z' as u32), 1usize)].iter().cloned().collect();
+        let cm_a: RangeMap<u32, usize> =
+            [(Range::new('a' as u32, 'a' as u32), 1usize)].iter().cloned().collect();
 
-        let check = |a: &PredicatePart, b: &CharMap<usize>, res: &CharMap<usize>| {
+        let check = |a: &PredicatePart, b: &RangeMap<u32, usize>, res: &RangeMap<u32, usize>| {
             assert_eq!(Predicate(a.clone(), a.clone()).filter_transitions(b, b),
                 (res.clone(), res.clone()));
         };
@@ -364,14 +358,14 @@ mod tests {
     fn test_filter_accept() {
         let e = PredicatePart {
             at_boundary: false,
-            chars: CharSet::new(),
+            chars: RangeSet::new(),
         };
         let a = PredicatePart::single_char('a');
         let full = PredicatePart::full();
         let bdy = PredicatePart::at_boundary();
 
-        let acc_eoi = Accept { at_eoi: true, at_char: CharSet::new() };
-        let acc_a = Accept { at_eoi: false, at_char: CharSet::single('a' as u32) };
+        let acc_eoi = Accept { at_eoi: true, at_char: RangeSet::new() };
+        let acc_a = Accept { at_eoi: false, at_char: RangeSet::single('a' as u32) };
         let always = Accept::always();
         let never = Accept::never();
 
@@ -398,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_union() {
-        let acc_eoi = Accept { at_eoi: true, at_char: CharSet::new() };
+        let acc_eoi = Accept { at_eoi: true, at_char: RangeSet::new() };
         let always = Accept::always();
         let never = Accept::never();
 
@@ -407,12 +401,11 @@ mod tests {
         assert_eq!(Accept::never().union(&acc_eoi), acc_eoi);
         assert_eq!(Accept::always().union(&acc_eoi), always);
 
-        let acc_a = Accept { at_eoi: false, at_char: CharSet::single('a' as u32) };
-        let acc_b = Accept { at_eoi: false, at_char: CharSet::single('b' as u32) };
-        let acc_ab = {
-            let mut cs_ab = CharSet::new();
-            cs_ab.push(CharRange::new('a' as u32, 'b' as u32));
-            Accept { at_eoi: false, at_char: cs_ab }
+        let acc_a = Accept { at_eoi: false, at_char: RangeSet::single('a' as u32) };
+        let acc_b = Accept { at_eoi: false, at_char: RangeSet::single('b' as u32) };
+        let acc_ab = Accept {
+            at_eoi: false,
+            at_char: [Range::new('a' as u32, 'b' as u32)].iter().cloned().collect(),
         };
         assert_eq!(acc_a.union(&acc_b), acc_ab);
         assert_eq!(acc_a.union(&Accept::never()), acc_a);

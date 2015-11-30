@@ -8,11 +8,11 @@
 
 use backwards_char_map::BackCharMap;
 use bytes::{ByteMap, ByteSet};
-use char_map::{CharMap, CharRange, CharSet};
 use error;
 use nfa::Nfa;
 use prefix::Prefix;
 use program::{InitStates, Inst, Program, TableInsts, VmInsts};
+use range_map::{Range, RangeMap, RangeSet};
 use refinery::Partition;
 use std;
 use std::collections::{HashSet, HashMap};
@@ -65,11 +65,7 @@ impl DfaAccept {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct DfaState {
-    // Because we convert the NFA into a byte-consuming machine before making it deterministic,
-    // all the ranges here will be byte ranges. In that sense, `CharMap` might not be the most
-    // appropriate data structure here, but we use it anyway because it has a bunch of useful
-    // methods.
-    pub transitions: CharMap<usize>,
+    pub transitions: RangeMap<u8, usize>,
     /// If `Some`, this is an accepting state, but maybe we should say that we accepted
     /// a few bytes ago.
     pub accept: DfaAccept,
@@ -78,7 +74,7 @@ pub struct DfaState {
 impl DfaState {
     pub fn new(accept: DfaAccept) -> DfaState {
         DfaState {
-            transitions: CharMap::new(),
+            transitions: RangeMap::new(),
             accept: accept,
         }
     }
@@ -97,7 +93,7 @@ pub struct Dfa {
     /// This gives the initial state if we start trying to match in the middle of the string:
     /// if the previous char in the string matches one of the ranges, we start at the corresponding
     /// state.
-    pub init_after_char: CharMap<usize>,
+    pub init_after_char: RangeMap<u32, usize>,
 
     /// This is the initial state in all other situations.
     pub init_otherwise: Option<usize>,
@@ -109,7 +105,7 @@ impl Dfa {
         Dfa {
             states: Vec::new(),
             init_at_start: None,
-            init_after_char: CharMap::new(),
+            init_after_char: RangeMap::new(),
             init_otherwise: None,
         }
     }
@@ -131,7 +127,6 @@ impl Dfa {
         let dfa = try!(nfa.determinize(max_states));
         let mut dfa = dfa.optimize();
         dfa.sort_states();
-        dfa.normalize_transitions();
         Ok(dfa)
     }
 
@@ -139,14 +134,8 @@ impl Dfa {
         self.states.push(DfaState::new(accept));
     }
 
-    pub fn add_transition(&mut self, from: usize, to: usize, range: CharRange) {
-        self.states[from].transitions.push(range, &to);
-    }
-
-    pub fn sort_transitions(&mut self) {
-        for st in &mut self.states {
-            st.transitions.sort();
-        }
+    pub fn set_transitions(&mut self, from: usize, transitions: RangeMap<u8, usize>) {
+        self.states[from].transitions = transitions;
     }
 
     /// Returns true if this `Dfa` only matches things at the beginning of the input.
@@ -157,7 +146,7 @@ impl Dfa {
     }
 
     /// Get transitions from a given state.
-    pub fn transitions(&self, state: usize) -> &CharMap<usize> {
+    pub fn transitions(&self, state: usize) -> &RangeMap<u8, usize> {
         &self.states[state].transitions
     }
 
@@ -183,12 +172,6 @@ impl Dfa {
         min.minimize()
     }
 
-    fn normalize_transitions(&mut self) {
-        for st in &mut self.states {
-            st.transitions.normalize();
-        }
-    }
-
     /// Returns the automaton with all its transitions reversed.  Its states will have the same
     /// indices as those of the original automaton.
     ///
@@ -202,8 +185,9 @@ impl Dfa {
         }
 
         for (idx, st) in self.states.iter().enumerate() {
-            for &(ref range, target) in st.transitions.iter() {
-                ret.add_transition(target, idx, *range);
+            for &(ref range, target) in st.transitions.ranges_values() {
+                let range = Range::new(range.start as u32, range.end as u32);
+                ret.add_transition(target, idx, range);
             }
         }
 
@@ -238,15 +222,14 @@ impl Dfa {
             if st.accept.otherwise {
                 insts.push(Inst::Acc(st.accept.bytes_ago));
             }
-            if let Some(tgt) = Dfa::single_target(st.transitions.iter()) {
+            if let Some(tgt) = Dfa::single_target(st.transitions.ranges_values()) {
                 if state_map[tgt] == insts.len() + 1 {
                     // The target state is just immediately after this state -- we don't need a
                     // branch instruction.
-                    let inst = if let Some(ch) = Dfa::single_char(st.transitions.iter()) {
-                        debug_assert!(ch < 256);
-                        Inst::Byte(ch as u8)
+                    let inst = if let Some(ch) = Dfa::single_char(st.transitions.ranges_values()) {
+                        Inst::Byte(ch)
                     } else {
-                        Inst::ByteSet(ByteSet::from_char_set(&st.transitions.to_char_set()))
+                        Inst::ByteSet(ByteSet::from_range_set(&st.transitions.to_range_set()))
                     };
                     insts.push(inst);
                     continue;
@@ -254,7 +237,7 @@ impl Dfa {
             }
 
             // If we're still here, we didn't add a Byte or ByteSet instruction, so add a Branch.
-            let mut bm = ByteMap::from_char_map(&st.transitions);
+            let mut bm = ByteMap::from_range_map(&st.transitions);
             bm.map_values(&map_state);
             insts.push(Inst::Branch(bm));
         }
@@ -276,11 +259,8 @@ impl Dfa {
             .collect();
 
         for (idx, st) in self.states.iter().enumerate() {
-            for &(range, tgt_state) in &st.transitions {
-                for ch in range.iter() {
-                    debug_assert!(ch < 256);
-                    table[idx * 256 + ch as usize] = tgt_state as u32;
-                }
+            for (ch, &tgt_state) in st.transitions.keys_values() {
+                table[idx * 256 + ch as usize] = tgt_state as u32;
             }
         }
 
@@ -312,8 +292,8 @@ impl Dfa {
         }
 
         let mut init_cm = self.init_after_char.clone();
-        init_cm.map_values(&map_state);
-        let mut bcm = BackCharMap::from_char_map(&init_cm);
+        init_cm.map_values(|x| map_state(*x));
+        let mut bcm = BackCharMap::from_range_map(&init_cm);
         if let Some(s) = self.init_at_start {
             bcm.set_eoi(map_state(s));
         }
@@ -324,7 +304,7 @@ impl Dfa {
     }
 
     fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
-    where Iter: Iterator<Item = &'a (CharRange, usize)> {
+    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
         if let Some(&(_, target)) = iter.next() {
             while let Some(&(_, next_target)) = iter.next() {
                 if target != next_target {
@@ -337,8 +317,8 @@ impl Dfa {
         }
     }
 
-    fn single_char<'a, Iter>(mut iter: Iter) -> Option<u32>
-    where Iter: Iterator<Item = &'a (CharRange, usize)> {
+    fn single_char<'a, Iter>(mut iter: Iter) -> Option<u8>
+    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
         if let Some(&(range, _)) = iter.next() {
             if range.start == range.end && iter.next().is_none() {
                 Some(range.start)
@@ -371,7 +351,7 @@ impl Dfa {
         for st in &mut self.states {
             if st.accept.otherwise {
                 changed |= !st.transitions.is_empty();
-                st.transitions = CharMap::new();
+                st.transitions = RangeMap::new();
             }
         }
         changed
@@ -397,7 +377,7 @@ impl Dfa {
         let mut stack_pos: Vec<usize> = vec![0; self.states.len()];
 
         // An iterator over all start states (possibly with lots of repetitions)
-        let start_states = self.init_after_char.iter()
+        let start_states = self.init_after_char.ranges_values()
             .map(|x| &x.1)
             .chain(self.init_at_start.iter())
             .chain(self.init_otherwise.iter());
@@ -405,7 +385,7 @@ impl Dfa {
         for &start_idx in start_states {
             if !done[start_idx] {
                 if !visit(start_idx) { return; }
-                stack.push((start_idx, self.states[start_idx].transitions.iter()));
+                stack.push((start_idx, self.states[start_idx].transitions.ranges_values()));
                 visiting[start_idx] = true;
                 stack_pos[start_idx] = 0;
 
@@ -428,7 +408,7 @@ impl Dfa {
                             // terminate early).
                             if !visit(child) { return; }
 
-                            stack.push((child, self.states[child].transitions.iter()));
+                            stack.push((child, self.states[child].transitions.ranges_values()));
                             visiting[child] = true;
                             stack_pos[child] = stack.len() - 1;
                         }
@@ -472,15 +452,16 @@ impl Dfa {
             mem::swap(&mut old_states[old_idx], &mut self.states[new_idx]);
         }
 
+        // TODO: this code is duplicated in minimize
         // Fix the transitions and initialization to point to the new states. The `unwrap` here is
         // basically the assertion that all reachable states should be mapped to new states.
         let map_state = |s: usize| { state_map[s].unwrap() };
         for st in &mut self.states {
-            st.transitions.map_values(&map_state);
+            st.transitions.map_values(|x| map_state(*x));
         }
         self.init_otherwise = self.init_otherwise.map(&map_state);
         self.init_at_start = self.init_at_start.map(&map_state);
-        self.init_after_char.map_values(&map_state);
+        self.init_after_char.map_values(|x| map_state(*x));
     }
 
     /// Checks whether this DFA has any cycles.
@@ -506,7 +487,7 @@ impl Debug for Dfa {
 
             if !st.transitions.is_empty() {
                 try!(f.write_str("\t\tTransitions:\n"));
-                for &(range, target) in st.transitions.iter() {
+                for &(range, target) in st.transitions.ranges_values() {
                     try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
                                                   range.start, range.end, target)));
                 }
@@ -526,9 +507,9 @@ struct Minimizer<'a> {
 
 impl<'a> Minimizer<'a> {
     fn initial_partition(dfa: &'a Dfa) -> Vec<Vec<usize>> {
-        let mut part: HashMap<(DfaAccept, CharSet), Vec<usize>> = HashMap::new();
+        let mut part: HashMap<(DfaAccept, RangeSet<u8>), Vec<usize>> = HashMap::new();
         for (idx, st) in dfa.states.iter().enumerate() {
-            let chars = st.transitions.to_char_set();
+            let chars = st.transitions.to_range_set();
             part.entry((st.accept, chars)).or_insert(Vec::new()).push(idx);
         }
         part.into_iter().map(|x| x.1).collect()
@@ -564,8 +545,8 @@ impl<'a> Minimizer<'a> {
     fn compute_partition(&mut self) {
         while let Some(dist) = self.next_distinguisher() {
             let mut sets: Vec<StateSet> = self.rev_dfa.transitions(&dist)
-                .into_iter()
-                .map(|(_, x)| x)
+                .ranges_values()
+                .map(|&(_, ref x)| x.clone())
                 .collect();
             for set in &mut sets {
                 set.sort();
@@ -600,14 +581,13 @@ impl<'a> Minimizer<'a> {
         // Fix the indices in all transitions to refer to the new state numbering.
         let map_state = |i: usize| old_state_to_new[i];
         for st in &mut ret.states {
-            st.transitions.map_values(&map_state);
+            st.transitions.map_values(|x| map_state(*x));
         }
         ret.init_at_start = self.dfa.init_at_start.map(&map_state);
         ret.init_otherwise = self.dfa.init_otherwise.map(&map_state);
         ret.init_after_char = self.dfa.init_after_char.clone();
-        ret.init_after_char.map_values(&map_state);
+        ret.init_after_char.map_values(|x| map_state(*x));
 
-        ret.normalize_transitions();
         ret
     }
 
@@ -658,12 +638,10 @@ mod tests {
 
    #[test]
     fn test_class_normalized() {
-        let re = make_dfa("[abcdw]").minimize();
-        println!("{:?}", re);
+        let mut re = make_dfa("[abcdw]").minimize();
+        re.sort_states();
         assert_eq!(re.states.len(), 2);
-        // The order of the states is arbitrary, but one should have two transitions and
-        // the other should have zero.
-        assert_eq!(re.states[0].transitions.len() + re.states[1].transitions.len(), 2);
+        assert_eq!(re.states[0].transitions.num_ranges(), 2)
     }
 
     #[test]

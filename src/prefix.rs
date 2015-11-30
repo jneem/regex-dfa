@@ -8,8 +8,8 @@
 
 use aho_corasick::{Automaton, AcAutomaton, FullAcAutomaton};
 use bytes::ByteSet;
-use char_map::CharMap;
 use dfa::Dfa;
+use range_map::RangeMap;
 use std::collections::VecDeque;
 
 // TODO: these limits are pretty arbitrary (just copied from the regex crate).
@@ -49,8 +49,8 @@ impl Prefix {
                     return Prefix::LoopWhile(bs, state);
                 }
             }
-            if first_trans.char_count() > 1 {
-                return Prefix::ByteSet(ByteSet::from_char_set(&first_trans.to_char_set()), state);
+            if first_trans.num_keys() > 1 {
+                return Prefix::ByteSet(ByteSet::from_range_set(&first_trans.to_range_set()), state);
             }
         }
 
@@ -139,18 +139,16 @@ impl PrefixSearcher {
             // state. In principle, we could continue expanding the other prefixes even after we
             // run into an accept state, but there doesn't seem much point in having some short
             // prefixes and other long prefixes.
-            if self.too_many(trans.char_count() as usize) || !dfa.accept(self.current.1).is_never() {
+            if self.too_many(trans.num_keys() as usize) || !dfa.accept(self.current.1).is_never() {
                 self.bail_out();
                 break;
             }
 
             let mut next_prefs = Vec::new();
-            for (ch, next_state) in trans.pairs() {
-                debug_assert!(ch < 256);
-
+            for (ch, next_state) in trans.keys_values() {
                 let mut next_pref = self.current.0.clone();
-                next_pref.push(ch as u8);
-                next_prefs.push(PrefixPart(next_pref, next_state));
+                next_pref.push(ch);
+                next_prefs.push(PrefixPart(next_pref, *next_state));
             }
 
             self.add(next_prefs);
@@ -186,10 +184,12 @@ impl PrefixSearcher {
 // Note that the set of bytes we return is guaranteed to contain all or none of the non-ascii
 // bytes. Thus, if we start searching at a character boundary then we are guaranteed to stop
 // at a character boundary also.
-fn loop_optimization(cm: &CharMap<usize>, st_idx: usize) -> Option<ByteSet> {
-    if cm.iter().any(|x| x.1 == st_idx) {
-        let loop_chars = cm.filter_values(|s| *s == st_idx).to_char_set();
-        Some(ByteSet::from_char_set(&loop_chars))
+fn loop_optimization(map: &RangeMap<u8, usize>, st_idx: usize) -> Option<ByteSet> {
+    if map.ranges_values().any(|x| x.1 == st_idx) {
+        let mut loop_chars = map.clone();
+        loop_chars.retain_values(|s| *s == st_idx);
+        let loop_chars = loop_chars.to_range_set();
+        Some(ByteSet::from_range_set(&loop_chars))
     } else {
         None
     }
