@@ -14,6 +14,7 @@ use std::fmt;
 pub enum Error {
     RegexSyntax(regex_syntax::Error),
     TooManyStates,
+    InvalidEngine(&'static str),
 }
 
 use error::Error::*;
@@ -22,6 +23,7 @@ impl fmt::Display for Error {
         match *self {
             RegexSyntax(ref e) => write!(f, "Regex syntax error: {}", e),
             TooManyStates => write!(f, "State overflow"),
+            InvalidEngine(s) => write!(f, "Invalid engine: {}", s),
         }
     }
 }
@@ -31,6 +33,7 @@ impl error::Error for Error {
         match *self {
             RegexSyntax(ref e) => e.description(),
             TooManyStates => "This NFA required too many states to represent as a DFA.",
+            InvalidEngine(_) => "The regex was not compatible with the requested engine.",
         }
     }
 }

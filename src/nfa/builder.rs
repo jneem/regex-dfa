@@ -6,9 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use nfa::Nfa;
+use look::Look;
+use nfa::{Accept, HasLooks, Nfa};
 use range_map::{Range, RangeSet};
-use transition::{Accept, Predicate, PredicatePart};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std::ops::Deref;
 
@@ -17,26 +17,26 @@ use std::ops::Deref;
 /// there is no need to store the target state of a transition or predicate.  Also, the last state
 /// is always the accepting state, so there is no need to store whether a state is accepting.
 #[derive(Debug, PartialEq)]
-struct BuilderState {
+struct State {
     chars: RangeSet<u32>,
+    looks: Vec<(Look, Look)>,
     eps: Vec<usize>,
-    predicates: Vec<Predicate>
 }
 
-impl BuilderState {
-    fn new() -> BuilderState {
-        BuilderState {
+impl State {
+    fn new() -> State {
+        State {
             chars: RangeSet::new(),
             eps: Vec::new(),
-            predicates: Vec::new(),
+            looks: Vec::new(),
         }
     }
 
-    fn from_chars(chars: RangeSet<u32>) -> BuilderState {
-        BuilderState {
+    fn from_chars(chars: RangeSet<u32>) -> State {
+        State {
             chars: chars,
             eps: Vec::new(),
-            predicates: Vec::new(),
+            looks: Vec::new(),
         }
     }
 }
@@ -49,7 +49,7 @@ fn class_to_set(cc: &CharClass) -> RangeSet<u32> {
 /// Builds an `Nfa` from a `regex_syntax::Expr`.
 #[derive(Debug, PartialEq)]
 pub struct NfaBuilder {
-    states: Vec<BuilderState>,
+    states: Vec<State>,
 }
 
 impl NfaBuilder {
@@ -59,27 +59,24 @@ impl NfaBuilder {
     }
 
     /// Converts this `NfaBuilder` into an `Nfa`.
-    pub fn to_automaton(&self) -> Nfa {
+    pub fn to_automaton(&self) -> Nfa<u32, HasLooks> {
         let mut ret = Nfa::with_capacity(self.len());
         let mut ret_len: usize = 0;
         for s in &self.states {
             ret_len += 1;
-            ret.add_state(if ret_len == self.len() { Accept::always() } else { Accept::never() });
+            ret.add_state(if ret_len == self.len() { Accept::Always } else { Accept::Never });
 
             for range in s.chars.ranges() {
                 ret.add_transition(ret_len - 1, ret_len, range);
             }
             for eps in &s.eps {
-                ret.add_eps(ret_len - 1, *eps);
+                ret.add_look(ret_len - 1, *eps, Look::Full, Look::Full);
             }
-            for p in &s.predicates {
-                ret.add_predicate(ret_len - 1, ret_len, p.clone());
+            for look in &s.looks {
+                ret.add_look(ret_len - 1, ret_len, look.0, look.1);
             }
         }
 
-        if self.len() > 0 {
-            ret.add_init_state(0);
-        }
         ret
     }
 
@@ -97,8 +94,8 @@ impl NfaBuilder {
 
     /// Appends two states, with a given transition between them.
     fn add_single_transition(&mut self, chars: RangeSet<u32>) {
-        self.states.push(BuilderState::from_chars(chars));
-        self.states.push(BuilderState::new());
+        self.states.push(State::from_chars(chars));
+        self.states.push(State::new());
      }
 
     /// Appends a sequence of states that recognizes a literal.
@@ -113,9 +110,9 @@ impl NfaBuilder {
             } else {
                 RangeSet::single(*ch as u32)
             };
-            self.states.push(BuilderState::from_chars(ranges));
+            self.states.push(State::from_chars(ranges));
         }
-        self.states.push(BuilderState::new());
+        self.states.push(State::new());
     }
 
     /// Appends a sequence of states that recognizes the concatenation of `exprs`.
@@ -135,7 +132,7 @@ impl NfaBuilder {
     fn add_alternate_exprs(&mut self, alts: &Vec<Expr>) {
         // Add the new initial state that feeds into the alternate.
         let init_idx = self.states.len();
-        self.states.push(BuilderState::new());
+        self.states.push(State::new());
 
         let mut expr_end_indices = Vec::<usize>::new();
         for expr in alts {
@@ -146,7 +143,7 @@ impl NfaBuilder {
         }
 
         // Make the final state of each alternative point to our new final state.
-        self.states.push(BuilderState::new());
+        self.states.push(State::new());
         let final_idx = self.states.len() - 1;
         for idx in expr_end_indices {
             self.add_eps(idx, final_idx);
@@ -180,7 +177,7 @@ impl NfaBuilder {
             // We add a state anyway, in order to maintain the convention that every expr should
             // add at least one state (otherwise keeping track of indices becomes much more
             // tedious).
-            self.states.push(BuilderState::new());
+            self.states.push(State::new());
             return;
         }
 
@@ -223,17 +220,17 @@ impl NfaBuilder {
         }
     }
 
-    /// Adds two new states, with a predicate connecting them.
-    fn add_predicate(&mut self, part1: PredicatePart, part2: PredicatePart) {
-        self.states.push(BuilderState::new());
-        self.states.last_mut().unwrap().predicates.push(Predicate(part1, part2));
-        self.states.push(BuilderState::new());
+    /// Adds two new states, with a look connecting them.
+    fn add_look(&mut self, behind: Look, ahead: Look) {
+        self.states.push(State::new());
+        self.states.last_mut().unwrap().looks.push((behind, ahead));
+        self.states.push(State::new());
     }
 
     /// Adds an extra predicate between the last two states (there must be at least two states).
-    fn extra_predicate(&mut self, part1: PredicatePart, part2: PredicatePart) {
+    fn extra_look(&mut self, behind: Look, ahead: Look) {
         let len = self.states.len();
-        self.states[len-2].predicates.push(Predicate(part1, part2));
+        self.states[len-2].looks.push((behind, ahead));
     }
 
     /// Appends a bunch of new states, representing `expr`.
@@ -251,27 +248,17 @@ impl NfaBuilder {
             &Concat(ref es) => self.add_concat_exprs(es),
             &Alternate(ref es) => self.add_alternate_exprs(es),
             &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
-            &StartLine => {
-                self.add_predicate(PredicatePart::single_char('\n').or_at_boundary(),
-                                   PredicatePart::full());
-            },
-            &StartText => {
-                self.add_predicate(PredicatePart::at_boundary(), PredicatePart::full());
-            }
-            &EndLine => {
-                self.add_predicate(PredicatePart::full(),
-                                   PredicatePart::single_char('\n').or_at_boundary());
-            },
-            &EndText => {
-                self.add_predicate(PredicatePart::full(), PredicatePart::at_boundary());
-            }
+            &StartLine => self.add_look(Look::NewLine, Look::Full),
+            &StartText => self.add_look(Look::Boundary, Look::Full),
+            &EndLine => self.add_look(Look::Full, Look::NewLine),
+            &EndText => self.add_look(Look::Full, Look::Boundary),
             &WordBoundary => {
-                self.add_predicate(PredicatePart::word_char(), PredicatePart::not_word_char());
-                self.extra_predicate(PredicatePart::not_word_char(), PredicatePart::word_char());
+                self.add_look(Look::WordChar, Look::NotWordChar);
+                self.extra_look(Look::NotWordChar, Look::WordChar);
             },
             &NotWordBoundary => {
-                self.add_predicate(PredicatePart::word_char(), PredicatePart::word_char());
-                self.extra_predicate(PredicatePart::not_word_char(), PredicatePart::not_word_char());
+                self.add_look(Look::WordChar, Look::WordChar);
+                self.extra_look(Look::NotWordChar, Look::NotWordChar);
             },
 
             // We don't support capture groups, so there is no need to keep track of
@@ -287,7 +274,7 @@ impl NfaBuilder {
 
     #[cfg(test)]
 mod tests {
-    use builder::{NfaBuilder, BuilderState};
+    use nfa::builder::{NfaBuilder, State};
     use range_map::{Range, RangeSet};
     use regex_syntax;
 
@@ -299,7 +286,7 @@ mod tests {
     fn make_builder(n_states: usize) -> NfaBuilder {
         let mut ret = NfaBuilder { states: Vec::new() };
         for _ in 0..n_states {
-            ret.states.push(BuilderState::new());
+            ret.states.push(State::new());
         }
         ret
     }

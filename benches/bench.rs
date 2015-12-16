@@ -34,6 +34,20 @@ fn literal(b: &mut Bencher) {
 }
 
 #[bench]
+fn longer_literal(b: &mut Bencher) {
+    let re = regex!("foobar");
+    let text = format!("{}foobar", repeat("f").take(10000).collect::<String>());
+    bench_assert_match(b, re, &text);
+}
+
+#[bench]
+fn longer_literal_no_regex(b: &mut Bencher) {
+    let re = "foobar";
+    let text = format!("{}foobar", repeat("f").take(10000).collect::<String>());
+    b.iter(|| text.find(re));
+}
+
+#[bench]
 fn not_literal(b: &mut Bencher) {
     let re = regex!(".y");
     let text = format!("{}y", repeat("x").take(50).collect::<String>());

@@ -922,3 +922,8 @@ no_mat!(no_match_python_91, "\\x00ff", "\u{00ff}");
 no_mat!(no_match_python_92, "^.*?$", "one\ntwo\nthree\n");
 no_mat!(no_match_python_93, "a[^>]*?b", "a>b");
 no_mat!(no_match_python_94, "^a*?$", "foo");
+
+// Test various configurations that have prefixes which match, but the actual match is later.
+mat!(match_skip_1, "a[^b]", "abababac", Some((6, 8)));
+mat!(match_skip_2, "abc[^d]", "yzabcdyzabcz", Some((8, 12)));
+mat!(match_skip_3, "(aa|bb)[^c]", "aacbbcaaa", Some((6, 9)));

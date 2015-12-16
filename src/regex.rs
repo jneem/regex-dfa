@@ -6,34 +6,45 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use backtracking::BacktrackingEngine;
-use dfa::Dfa;
-use engine;
-use error;
+use dfa::CompileTarget;
+use error::Error;
+use nfa::{Nfa, NoLooks};
+use runner::forward_backward::ForwardBackwardEngine;
+use runner::backtracking::BacktrackingEngine;
+use runner::prefix::Prefix;
+use runner::program::{Instructions, Program, TableInsts, VmInsts};
+use runner::Engine;
 use std;
-use threaded::ThreadedEngine;
+use std::fmt::Debug;
 
 #[derive(Debug)]
 pub struct Regex {
-    engine: Box<engine::Engine>,
+    engine: Box<Engine<u8>>,
+}
+
+// An engine that doesn't match anything.
+#[derive(Clone, Debug)]
+struct EmptyEngine;
+
+impl<Ret: Debug> Engine<Ret> for EmptyEngine {
+    fn shortest_match(&self, _: &str) -> Option<(usize, usize, Ret)> { None }
+    fn clone_box(&self) -> Box<Engine<Ret>> { Box::new(EmptyEngine) }
 }
 
 /// An enum listing the different kinds of supported regex engines.
-pub enum Engine {
+pub enum EngineType {
     /// The backtracking engine will attempt to match the regex starting from offset zero,
     /// then it will try again from offset one, and so on. Although it is quite fast in practice,
     /// it has a poor worst-case behavior. For example, in attempting to match the regex
     /// `"aaaaaaaaaaab"` against the string `"aaaaaaaaaaaaaaaaaaaaaaaaaaa"`, it will look at
     /// each character in the input many times.
     Backtracking,
-    /// The threaded engine is guaranteed to look at each input character exactly once, and its
-    /// worst-case performance is `O(m * n)`, where `m` is the number of states in the DFA
-    /// and `n` is the length of the input.
-    Threaded,
+    /// The forward-backward engine is guaranteed to look at each input character at most twice.
+    ForwardBackward,
 }
 
 /// An enum listing the different ways for representing the regex program.
-pub enum Program {
+pub enum ProgramType {
     /// A `Vm` program represents a regex as a list of instructions. It is a fairly
     /// memory-efficient representation, particularly when the regex contains lots of string
     /// literals.
@@ -52,13 +63,13 @@ impl Clone for Regex {
 
 impl Regex {
     /// Creates a new `Regex` from a regular expression string.
-    pub fn new(re: &str) -> Result<Regex, error::Error> {
+    pub fn new(re: &str) -> Result<Regex, Error> {
         Regex::new_bounded(re, std::usize::MAX)
     }
 
     /// Creates a new `Regex` from a regular expression string, but only if it doesn't require too
     /// many states.
-    pub fn new_bounded(re: &str, max_states: usize) -> Result<Regex, error::Error> {
+    pub fn new_bounded(re: &str, max_states: usize) -> Result<Regex, Error> {
         Regex::make_regex(re, max_states, None, None)
     }
 
@@ -67,49 +78,119 @@ impl Regex {
     ///
     /// - `engine` - specifies the search algorithm to use while executing the regex.
     /// - `program` - specifies the representation of the regex program.
-    pub fn new_advanced(re: &str, max_states: usize, engine: Engine, program: Program)
-    -> Result<Regex, error::Error>
+    pub fn new_advanced(re: &str, max_states: usize, engine: EngineType, program: ProgramType)
+    -> Result<Regex, Error>
     {
         Regex::make_regex(re, max_states, Some(engine), Some(program))
     }
 
-    fn make_regex(re: &str, max_states: usize, eng: Option<Engine>, prog: Option<Program>)
-    -> Result<Regex, error::Error>
-    {
-        let dfa = try!(Dfa::from_regex_bounded(re, max_states));
-        let default_eng = if dfa.is_anchored() || !dfa.has_cycles() {
-            Engine::Backtracking
+    fn make_backtracking<I>(nfa: Nfa<u32, NoLooks>, max_states: usize)
+    -> Result<BacktrackingEngine<I>, Error> where
+    I: Instructions<Ret=u8>,
+    Program<I>: CompileTarget<u8> {
+        if nfa.has_look_behind() {
+            return Err(Error::InvalidEngine("look-behind rules out the backtracking engine"));
+        }
+
+        let nfa = try!(nfa.byte_me(max_states));
+        let dfa = try!(nfa.determinize_shortest(max_states))
+            .optimize_for_shortest_match()
+            .map_ret(|(_, bytes)| bytes);
+        let (prog, state_map) = dfa.to_program::<Program<I>>();
+        let prefix = if dfa.is_anchored() {
+            Prefix::Empty
         } else {
-            Engine::Threaded
-        };
-        let eng = eng.unwrap_or(default_eng);
-        let prog = prog.unwrap_or(Program::Vm);
-
-        let engine: Box<engine::Engine> = match prog {
-            Program::Table => {
-                let (prog, pref) = dfa.to_table_program();
-                match eng {
-                    Engine::Backtracking => Box::new(BacktrackingEngine::new(prog, pref)),
-                    Engine::Threaded => Box::new(ThreadedEngine::new(prog, pref)),
-                }
-            },
-            Program::Vm => {
-                let (prog, pref) = dfa.to_vm_program();
-                match eng {
-                    Engine::Backtracking => Box::new(BacktrackingEngine::new(prog, pref)),
-                    Engine::Threaded => Box::new(ThreadedEngine::new(prog, pref)),
-                }
-            },
+            dfa.prefix(&state_map)
         };
 
-        Ok(Regex { engine: engine })
+        Ok(BacktrackingEngine::new(prog, prefix))
+    }
+
+    fn make_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize)
+    -> Result<ForwardBackwardEngine<FI, BI>, Error> where
+    FI: Instructions<Ret=(usize, u8)>,
+    Program<FI>: CompileTarget<(usize, u8)>,
+    BI: Instructions<Ret=u8>,
+    Program<BI>: CompileTarget<u8>,
+    {
+        if nfa.is_anchored() {
+            return Err(Error::InvalidEngine("anchors rule out the forward-backward engine"));
+        }
+
+        let f_nfa = try!(try!(nfa.clone().byte_me(max_states)).anchor_look_behind(max_states));
+        let b_nfa = try!(try!(nfa.byte_me(max_states)).reverse(max_states));
+
+        let f_dfa = try!(f_nfa.determinize_shortest(max_states))
+            .cut_loop_to_init()
+            .optimize_for_shortest_match()
+            // Do it again, because optimize might have merged something with the initial state,
+            // in which case we can cut more.
+            .cut_loop_to_init()
+            .optimize_for_shortest_match();
+        let b_dfa = try!(b_nfa.determinize_longest(max_states))
+            .optimize();
+        let b_dfa = b_dfa.map_ret(|(_, bytes)| bytes);
+
+        let (b_prog, b_state_map) = b_dfa.to_program::<Program<BI>>();
+        let f_dfa = f_dfa.map_ret(|(look, bytes)| {
+            let b_dfa_state = b_dfa.init[look.as_usize()].expect("BUG: back dfa must have this init");
+            (b_state_map[b_dfa_state], bytes)
+        });
+        let (f_prog, f_state_map) = f_dfa.to_program::<Program<FI>>();
+
+        Ok(ForwardBackwardEngine::new(f_prog, f_dfa.pruned_prefix(&f_state_map), b_prog))
+    }
+
+    fn make_regex(re: &str, max_states: usize, engine: Option<EngineType>, prog: Option<ProgramType>)
+    -> Result<Regex, Error> {
+        let nfa = try!(Nfa::from_regex(re));
+        let nfa = nfa.remove_looks();
+
+        if nfa.is_empty() {
+            return Ok(Regex { engine: Box::new(EmptyEngine) });
+        }
+
+        // If the engine and program weren't specified, choose them automatically based on nfa.
+        let engine = engine.unwrap_or(if nfa.is_anchored() {
+            EngineType::Backtracking
+        } else {
+            EngineType::ForwardBackward
+        });
+        let prog = prog.unwrap_or(ProgramType::Vm);
+
+        let eng: Box<Engine<u8>> = match engine {
+            EngineType::Backtracking => {
+                match prog {
+                    ProgramType::Table =>
+                        Box::new(try!(Regex::make_backtracking::<TableInsts<_>>(nfa, max_states))),
+                    ProgramType::Vm =>
+                        Box::new(try!(Regex::make_backtracking::<VmInsts<_>>(nfa, max_states))),
+                }
+            }
+            EngineType::ForwardBackward => {
+                match prog {
+                    ProgramType::Table =>
+                        Box::new(try!(Regex::make_forward_backward::<TableInsts<_>, TableInsts<_>>(
+                                    nfa, max_states))),
+                    ProgramType::Vm =>
+                        Box::new(try!(Regex::make_forward_backward::<VmInsts<_>, VmInsts<_>>(
+                                    nfa, max_states))),
+                }
+            }
+        };
+
+        Ok(Regex { engine: eng })
     }
 
     /// Returns the index range of the first shortest match, if there is a match. The indices
     /// returned are byte indices of the string. The first index is inclusive; the second is
     /// exclusive, and a little more subtle -- see the crate documentation.
     pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        self.engine.shortest_match(s)
+        if let Some((start, end, look_behind)) = self.engine.shortest_match(s) {
+            Some((start + look_behind as usize, end))
+        } else {
+            None
+        }
     }
 
     pub fn is_match(&self, s: &str) -> bool {

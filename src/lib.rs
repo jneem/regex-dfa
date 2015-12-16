@@ -59,35 +59,42 @@ let find_digits = |s: &str| {
 ```
 */
 
-#![feature(range_inclusive, test)]
+#![feature(test)]
+#![cfg_attr(test, feature(plugin))]
+#![cfg_attr(test, plugin(quickcheck_macros))]
+#[cfg(test)]
+extern crate quickcheck;
+
+#[cfg(test)]
+#[macro_use]
+extern crate matches;
 
 extern crate aho_corasick;
 extern crate itertools;
 extern crate memchr;
 extern crate memmem;
+extern crate num;
 extern crate range_map;
 extern crate refinery;
 extern crate regex_syntax;
 extern crate test;
 extern crate utf8_ranges;
 
-mod backtracking;
-mod backwards_char_map;
-mod builder;
-mod bytes;
+#[macro_use]
+extern crate lazy_static;
+
 mod dfa;
-mod engine;
 mod error;
+mod look;
 mod nfa;
-mod prefix;
-mod program;
+mod prefix; // TODO: move to dfa
 mod regex;
-mod searcher;
-mod threaded;
-mod transition;
+mod runner;
+mod trie;
 mod unicode;
-mod utf8;
 
 pub use error::Error;
-pub use regex::{Engine, Program, Regex};
+pub use regex::{EngineType, ProgramType, Regex};
+
+type Result<T> = ::std::result::Result<T, Error>;
 

@@ -12,14 +12,19 @@ license = "MIT/Apache-2.0"
 [dependencies]
 aho-corasick = "0.4"
 itertools = "0.4"
+lazy_static = "0.1"
 memchr = "0.1"
 memmem = "0.1"
+num = "0.1"
 range-map = { git = "https://github.com/jneem/range-map.git" }
-refinery = "0.1"
+refinery = { git = "https://github.com/jneem/refinery.git" }
 regex-syntax = "0.2"
 utf8-ranges = "0.1"
 
 [dev-dependencies]
+matches = "0.1"
+quickcheck = "0.2"
+quickcheck_macros = { git = "https://github.com/BurntSushi/quickcheck" }
 regex = "0.1.41"
 rand = "0.3"
 serde_json = "0.6"
@@ -31,26 +36,20 @@ test = false
 bench = true
 
 [[bench]]
-name = "backtracking_table"
-path = "benches/bench_dfa_backtracking_table.rs"
+name = "default"
+path = "benches/bench_default.rs"
 test = true
 bench = true
 
-[[bench]]
-name = "backtracking_vm"
-path = "benches/bench_dfa_backtracking_vm.rs"
-test = true
-bench = true
+[[test]]
+name = "examples"
+path = "tests/matches.rs"
 
-[[bench]]
-name = "threaded_table"
-path = "benches/bench_dfa_threaded_table.rs"
-test = true
-bench = true
+[[test]]
+name = "crate"
+path = "src/lib.rs"
 
-[[bench]]
-name = "threaded_vm"
-path = "benches/bench_dfa_threaded_vm.rs"
-test = true
-bench = true
+[profile.release]
+debug = true
+lto = true
 

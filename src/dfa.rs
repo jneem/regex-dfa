@@ -6,107 +6,63 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use backwards_char_map::BackCharMap;
-use bytes::{ByteMap, ByteSet};
-use error;
-use nfa::Nfa;
-use prefix::Prefix;
-use program::{InitStates, Inst, Program, TableInsts, VmInsts};
-use range_map::{Range, RangeMap, RangeSet};
+use look::Look;
+use nfa::{Accept, StateSet};
+use prefix::PrefixSearcher;
+use range_map::{Range, RangeMap, RangeMultiMap, RangeSet};
 use refinery::Partition;
+use runner::prefix::Prefix;
+use runner::program::{Inst, Program, TableInsts, VmInsts};
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
+use std::hash::Hash;
 use std::mem;
 use std::result::Result;
 use std::u32;
-use transition::{Accept as NfaAccept, StateSet};
-
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub struct DfaAccept {
-    pub at_eoi: bool,
-    // If at_eoi is true, this must be true also.
-    pub otherwise: bool,
-    pub bytes_ago: usize,
-}
-
-impl DfaAccept {
-    pub fn never() -> DfaAccept {
-        DfaAccept {
-            at_eoi: false,
-            otherwise: false,
-            bytes_ago: 0,
-        }
-    }
-
-    pub fn is_never(&self) -> bool {
-        !self.at_eoi && !self.otherwise
-    }
-
-    pub fn accept(bytes_ago: usize) -> DfaAccept {
-        DfaAccept {
-            at_eoi: true,
-            otherwise: true,
-            bytes_ago: bytes_ago,
-        }
-    }
-
-    /// Returns a state that accepts if either of the given states accepts.
-    ///
-    /// If both states accept, then they must agree on how long ago they accept.
-    pub fn union_shortest(&self, other: &DfaAccept) -> DfaAccept {
-        DfaAccept {
-            at_eoi: self.at_eoi || other.at_eoi,
-            otherwise: self.otherwise || other.otherwise,
-            bytes_ago: std::cmp::max(self.bytes_ago, other.bytes_ago),
-        }
-    }
-}
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct DfaState {
+pub struct State<Ret> {
     pub transitions: RangeMap<u8, usize>,
-    /// If `Some`, this is an accepting state, but maybe we should say that we accepted
-    /// a few bytes ago.
-    pub accept: DfaAccept,
+    pub accept: Accept,
+    pub ret: Option<Ret>,
 }
 
-impl DfaState {
-    pub fn new(accept: DfaAccept) -> DfaState {
-        DfaState {
+impl<Ret> State<Ret> {
+    pub fn new(accept: Accept, ret: Option<Ret>) -> State<Ret> {
+        State {
             transitions: RangeMap::new(),
             accept: accept,
+            ret: ret,
         }
     }
 }
 
-/// Our `Dfa`s are unanchored, in the sense that by default they can match something in the middle
-/// of the input string. However, we allow the initial state of the `Dfa` to depend on where we
-/// start matching.
+pub trait RetTrait: Clone + Copy + Debug + Eq + Hash {}
+impl<T: Clone + Copy + Debug + Eq + Hash> RetTrait for T {}
+
 #[derive(PartialEq)]
-pub struct Dfa {
-    states: Vec<DfaState>,
+pub struct Dfa<Ret: 'static> {
+    states: Vec<State<Ret>>,
 
-    /// This is the initial state if we start trying to match at the beginning of the string.
-    pub init_at_start: Option<usize>,
-
-    /// This gives the initial state if we start trying to match in the middle of the string:
-    /// if the previous char in the string matches one of the ranges, we start at the corresponding
-    /// state.
-    pub init_after_char: RangeMap<u32, usize>,
-
-    /// This is the initial state in all other situations.
-    pub init_otherwise: Option<usize>,
+    /// This is a vector of length `Look::num()` containing all possible starting positions.
+    ///
+    /// `init[Look::Boundary]` is the starting position if we are at the beginning of the
+    /// input.
+    ///
+    /// `init[Look::Full]` is the default starting position.
+    ///
+    /// All other positions in `init` are only used if we are specifically asked to start
+    /// there; this is mainly useful in the forward-backward engine.
+    pub init: Vec<Option<usize>>,
 }
 
-impl Dfa {
+impl<Ret: RetTrait> Dfa<Ret> {
     /// Returns a `Dfa` with no states.
-    pub fn new() -> Dfa {
+    pub fn new() -> Dfa<Ret> {
         Dfa {
             states: Vec::new(),
-            init_at_start: None,
-            init_after_char: RangeMap::new(),
-            init_otherwise: None,
+            init: vec![None; Look::num()],
         }
     }
 
@@ -115,34 +71,30 @@ impl Dfa {
         self.states.len()
     }
 
-    /// Creates a `Dfa` from a regex string, bailing out if more than `max_states` states were
-    /// required.
-    pub fn from_regex_bounded(re: &str, max_states: usize) -> Result<Dfa, error::Error> {
-        let mut nfa = try!(Nfa::from_regex(re));
-        try!(nfa.convert_to_byte_automaton(max_states));
-        Dfa::from_nfa_bounded(&nfa, max_states)
-    }
-
-    pub fn from_nfa_bounded(nfa: &Nfa, max_states: usize) -> Result<Dfa, error::Error> {
-        let dfa = try!(nfa.determinize(max_states));
-        let mut dfa = dfa.optimize();
-        dfa.sort_states();
-        Ok(dfa)
-    }
-
-    pub fn add_state(&mut self, accept: DfaAccept) {
-        self.states.push(DfaState::new(accept));
+    pub fn add_state(&mut self, accept: Accept, ret: Option<Ret>) -> usize {
+        self.states.push(State::new(accept, ret));
+        self.states.len() - 1
     }
 
     pub fn set_transitions(&mut self, from: usize, transitions: RangeMap<u8, usize>) {
         self.states[from].transitions = transitions;
     }
 
+    pub fn init_state(&self, look: Look) -> Option<usize> {
+        self.init[look.as_usize()]
+    }
+
+    pub fn init_at_start(&self) -> Option<usize> {
+        self.init_state(Look::Boundary)
+    }
+
+    pub fn init_otherwise(&self) -> Option<usize> {
+        self.init_state(Look::Full)
+    }
+
     /// Returns true if this `Dfa` only matches things at the beginning of the input.
     pub fn is_anchored(&self) -> bool {
-        self.init_after_char.is_empty()
-            && self.init_otherwise.is_none()
-            && self.init_at_start.is_some()
+        self.init_otherwise().is_none() && self.init_at_start().is_some()
     }
 
     /// Get transitions from a given state.
@@ -151,205 +103,146 @@ impl Dfa {
     }
 
     /// Returns the conditions under which the given state accepts.
-    pub fn accept(&self, state: usize) -> &DfaAccept {
+    pub fn accept(&self, state: usize) -> &Accept {
         &self.states[state].accept
     }
 
-    /// If there is only one state that is ever the initial state, return it.
-    pub fn simple_init(&self) -> Option<usize> {
-        if self.init_after_char.is_empty() && self.init_otherwise == self.init_at_start {
-            self.init_at_start
-        } else {
-            None
+    /// The value that will be returned if we accept in state `state`.
+    pub fn ret(&self, state: usize) -> Option<&Ret> {
+        self.states[state].ret.as_ref()
+    }
+
+    /// Changes the return value.
+    pub fn map_ret<T: RetTrait, F: FnMut(Ret) -> T>(self, mut f: F) -> Dfa<T> {
+        let mut ret: Dfa<T> = Dfa::new();
+        ret.init = self.init;
+
+        for st in self.states {
+            let new_st = State {
+                transitions: st.transitions,
+                accept: st.accept,
+                ret: st.ret.map(&mut f),
+            };
+            ret.states.push(new_st);
         }
+        ret
     }
 
     /// Returns an equivalent DFA with a minimal number of states.
     ///
     /// Uses Hopcroft's algorithm.
-    fn minimize(&self) -> Dfa {
+    fn minimize(&self) -> Dfa<Ret> {
         let mut min = Minimizer::new(self);
         min.minimize()
     }
 
-    /// Returns the automaton with all its transitions reversed.  Its states will have the same
-    /// indices as those of the original automaton.
-    ///
-    /// Warning: this does not preserve any ending predicates; it's only for reversing the
-    /// input-consuming transitions.
-    fn reversed(&self) -> Nfa {
-        let mut ret = Nfa::with_capacity(self.states.len());
+    /// Returns the transitions of this automaton, reversed.
+    fn reversed_transitions(&self) -> Vec<RangeMultiMap<u8, usize>> {
+        let mut ret = vec![RangeMultiMap::new(); self.states.len()];
 
-        for _ in self.states.iter() {
-            ret.add_state(NfaAccept::never());
-        }
-
-        for (idx, st) in self.states.iter().enumerate() {
-            for &(ref range, target) in st.transitions.ranges_values() {
-                let range = Range::new(range.start as u32, range.end as u32);
-                ret.add_transition(target, idx, range);
+        for (source, st) in self.states.iter().enumerate() {
+            for &(range, target) in st.transitions.ranges_values() {
+                ret[target].insert(range, source);
             }
         }
 
         ret
     }
 
-    /// Compiles this `Dfa` into a `VmProgram`.
+    fn make_prefix(&self, state_map: &[usize], prune_suffixes: bool) -> Prefix {
+        let mut searcher = PrefixSearcher::new(prune_suffixes);
+        // It might seem silly to look for prefixes starting at the anchored state, but it's useful
+        // for forward-backward matching. In cases where the regex is honestly anchored, we won't
+        // ask to make a prefix anyway.
+        if let Some(state) = self.init_state(Look::Boundary) {
+            searcher.search(self, state);
+        }
+        searcher.map_states(|x| state_map[x]);
+        Prefix::from_strings(searcher.finished.into_iter().map(|x| (x.0, x.1)))
+    }
+
+    /// Creates a prefix that can search quickly for potential match starts.
     ///
-    /// Returns the new program, along with a `Prefix` for quick searching.
-    pub fn to_vm_program(&self) -> (Program<VmInsts>, Prefix) {
-        let mut state_map = vec![0usize; self.states.len()];
-
-        // Build the state map, and check how many instructions we need.
-        let mut next_inst_idx = 0usize;
-        for (i, st) in self.states.iter().enumerate() {
-            state_map[i] = next_inst_idx;
-            if st.accept.otherwise {
-                next_inst_idx += 1;
-            }
-            next_inst_idx += 1;
-        }
-
-        let map_state = |s: usize| state_map[s];
-        let mut insts = Vec::with_capacity(next_inst_idx);
-        let mut accept_at_eoi = vec![std::usize::MAX; next_inst_idx];
-
-        for st in &self.states {
-            if st.accept.at_eoi {
-                accept_at_eoi[insts.len()] = st.accept.bytes_ago;
-            }
-
-            if st.accept.otherwise {
-                insts.push(Inst::Acc(st.accept.bytes_ago));
-            }
-            if let Some(tgt) = Dfa::single_target(st.transitions.ranges_values()) {
-                if state_map[tgt] == insts.len() + 1 {
-                    // The target state is just immediately after this state -- we don't need a
-                    // branch instruction.
-                    let inst = if let Some(ch) = Dfa::single_char(st.transitions.ranges_values()) {
-                        Inst::Byte(ch)
-                    } else {
-                        Inst::ByteSet(ByteSet::from_range_set(&st.transitions.to_range_set()))
-                    };
-                    insts.push(inst);
-                    continue;
-                }
-            }
-
-            // If we're still here, we didn't add a Byte or ByteSet instruction, so add a Branch.
-            let mut bm = ByteMap::from_range_map(&st.transitions);
-            bm.map_values(&map_state);
-            insts.push(Inst::Branch(bm));
-        }
-
-        let ret = Program {
-            init: self.make_init_states(&map_state),
-            accept_at_eoi: accept_at_eoi,
-            instructions: VmInsts { insts: insts },
-        };
-        let mut prefix = Prefix::extract(self);
-        prefix.map_states(&map_state);
-        (ret, prefix)
+    /// `state_map` gives a mapping between the `Dfa` states and the states that the prefix
+    /// should report.
+    pub fn prefix(&self, state_map: &[usize]) -> Prefix {
+        self.make_prefix(state_map, false)
     }
 
-    pub fn to_table_insts(&self) -> TableInsts {
-        let mut table = vec![u32::MAX; 256 * self.num_states()];
-        let accept: Vec<usize> = self.states.iter()
-            .map(|st| if st.accept.otherwise { st.accept.bytes_ago } else { std::usize::MAX })
-            .collect();
-
-        for (idx, st) in self.states.iter().enumerate() {
-            for (ch, &tgt_state) in st.transitions.keys_values() {
-                table[idx * 256 + ch as usize] = tgt_state as u32;
-            }
-        }
-
-        TableInsts {
-            accept: accept,
-            table: table,
-        }
+    /// Creates a prefix that can search quickly for potential match starts. Unlike the prefix
+    /// returned by `prefix()`, this prefix doesn't necessarily have the same starting position as
+    /// the whole match.
+    ///
+    /// `state_map` gives a mapping between the `Dfa` states and the states that the prefix
+    /// should report.
+    pub fn pruned_prefix(&self, state_map: &[usize]) -> Prefix {
+        self.make_prefix(state_map, true)
     }
 
-    pub fn to_table_program(&self) -> (Program<TableInsts>, Prefix) {
-        let accept_at_eoi: Vec<usize> = self.states.iter()
-            .map(|st| if st.accept.at_eoi { st.accept.bytes_ago } else { std::usize::MAX })
-            .collect();
-        let prog = Program {
-            init: self.make_init_states(|x| x),
-            accept_at_eoi: accept_at_eoi,
-            instructions: self.to_table_insts(),
-        };
-        (prog, Prefix::extract(self))
+    /// Compiles this `Dfa` into a `Program`.
+    ///
+    /// Returns the new program, along with a map from the dfa states to the program states.
+    pub fn to_program<P: CompileTarget<Ret>>(&self) -> (P, Vec<usize>) {
+        P::from_dfa(self)
     }
 
-    fn make_init_states<F: Fn(usize) -> usize>(&self, map_state: F) -> InitStates {
-        if self.init_after_char.is_empty() && self.init_at_start.is_some() {
-            if self.init_at_start == self.init_otherwise {
-                return InitStates::Constant(map_state(self.init_at_start.unwrap()));
-            } else if self.init_otherwise.is_none() {
-                return InitStates::Anchored(map_state(self.init_at_start.unwrap()));
-            }
-        }
-
-        let mut init_cm = self.init_after_char.clone();
-        init_cm.map_values(|x| map_state(*x));
-        let mut bcm = BackCharMap::from_range_map(&init_cm);
-        if let Some(s) = self.init_at_start {
-            bcm.set_eoi(map_state(s));
-        }
-        if let Some(s) = self.init_otherwise {
-            bcm.set_fallback(map_state(s));
-        }
-        InitStates::General(bcm)
-    }
-
-    fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
-    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
-        if let Some(&(_, target)) = iter.next() {
-            while let Some(&(_, next_target)) = iter.next() {
-                if target != next_target {
-                    return None;
-                }
-            }
-            Some(target)
-        } else {
-            None
-        }
-    }
-
-    fn single_char<'a, Iter>(mut iter: Iter) -> Option<u8>
-    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
-        if let Some(&(range, _)) = iter.next() {
-            if range.start == range.end && iter.next().is_none() {
-                Some(range.start)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Repeatedly `minimize` and `optimize_for_shortest_match` until we reach a fixed point.
-    pub fn optimize(&self) -> Dfa {
+    // TODO: should trim unreachable here -- match_python_281 is an example where it will help
+    pub fn optimize_for_shortest_match(self) -> Dfa<Ret> {
+        // Repeatedly `minimize` and `optimize_once_for_shortest_match` until we reach a fixed
+        // point.
         let mut ret = self.minimize();
         loop {
-            if !ret.optimize_for_shortest_match() {
-                return ret;
+            if !ret.optimize_once_for_shortest_match() {
+                break;
             }
             let last_len = ret.num_states();
             ret = ret.minimize();
             if ret.num_states() == last_len {
-                return ret;
+                break;
             }
         }
+        ret.sort_states();
+        ret
+    }
+
+    pub fn optimize(self) -> Dfa<Ret> {
+        let mut ret = self.minimize();
+        ret.sort_states();
+        ret
+    }
+
+    /// Deletes any transitions that return to the initial state.
+    ///
+    /// This results in a new Dfa with the following properties:
+    /// - if the original Dfa has a match then the new Dfa also has a match that ends in the same
+    ///   position (and vice versa), and
+    /// - the new Dfa doesn't need to backtrack to find matches: if it fails then it can be
+    ///   restarted at the same position it failed in.
+    ///
+    /// The reason for this method is that it makes prefixes more effective: where the original Dfa
+    /// would just loop back to the start state, the new Dfa will signal a failure. Then we can use
+    /// a `Prefix` to scan ahead for a good place to resume matching.
+    ///
+    /// # Panics
+    /// - if `self` is not anchored.
+    pub fn cut_loop_to_init(mut self) -> Dfa<Ret> {
+        if !self.is_anchored() {
+            panic!("only anchored Dfas can be cut");
+        }
+
+        // The unwrap is safe because we just checked that we are anchored.
+        let init = self.init_at_start().unwrap();
+        for st in &mut self.states {
+            st.transitions.retain_values(|x| *x != init);
+        }
+        self
     }
 
     /// Deletes any transitions after a match. Returns true if anything changed.
-    fn optimize_for_shortest_match(&mut self) -> bool {
+    fn optimize_once_for_shortest_match(&mut self) -> bool {
         let mut changed = false;
         for st in &mut self.states {
-            if st.accept.otherwise {
+            if st.accept == Accept::Always {
                 changed |= !st.transitions.is_empty();
                 st.transitions = RangeMap::new();
             }
@@ -376,13 +269,9 @@ impl Dfa {
         // For nodes that we are currently visiting, this is their position on the stack.
         let mut stack_pos: Vec<usize> = vec![0; self.states.len()];
 
-        // An iterator over all start states (possibly with lots of repetitions)
-        let start_states = self.init_after_char.ranges_values()
-            .map(|x| &x.1)
-            .chain(self.init_at_start.iter())
-            .chain(self.init_otherwise.iter());
+        let start_states: Vec<usize> = self.init.iter().filter_map(|x| *x).collect();
 
-        for &start_idx in start_states {
+        for &start_idx in &start_states {
             if !done[start_idx] {
                 if !visit(start_idx) { return; }
                 stack.push((start_idx, self.states[start_idx].transitions.ranges_values()));
@@ -432,6 +321,14 @@ impl Dfa {
         ret
     }
 
+    fn map_states<F: FnMut(usize) -> usize>(&mut self, mut map: F) {
+        for st in &mut self.states {
+            st.transitions.map_values(|x| map(*x));
+        }
+        let init: Vec<_> = self.init.iter().map(|x| x.map(|y| map(y))).collect();
+        self.init = init;
+    }
+
     /// Sorts states in depth-first alphabetical order.
     ///
     /// This has the following advantages:
@@ -444,7 +341,7 @@ impl Dfa {
 
         // Not every old state will necessary get mapped to a new one (unreachable states won't).
         let mut state_map: Vec<Option<usize>> = vec![None; self.states.len()];
-        let mut old_states = vec![DfaState::new(DfaAccept::never()); self.states.len()];
+        let mut old_states = vec![State::new(Accept::Never, None); self.states.len()];
         mem::swap(&mut old_states, &mut self.states);
 
         for (new_idx, old_idx) in sorted.into_iter().enumerate() {
@@ -452,21 +349,16 @@ impl Dfa {
             mem::swap(&mut old_states[old_idx], &mut self.states[new_idx]);
         }
 
-        // TODO: this code is duplicated in minimize
         // Fix the transitions and initialization to point to the new states. The `unwrap` here is
         // basically the assertion that all reachable states should be mapped to new states.
-        let map_state = |s: usize| { state_map[s].unwrap() };
-        for st in &mut self.states {
-            st.transitions.map_values(|x| map_state(*x));
-        }
-        self.init_otherwise = self.init_otherwise.map(&map_state);
-        self.init_at_start = self.init_at_start.map(&map_state);
-        self.init_after_char.map_values(|x| map_state(*x));
+        self.map_states(|s| state_map[s].unwrap());
     }
 
     /// Checks whether this DFA has any cycles.
     ///
     /// If not, it's a good candidate for the backtracking engine.
+    #[allow(unused)]
+    // TODO: test for cycles in the nfa, rather than the dfa
     pub fn has_cycles(&self) -> bool {
         let mut found = false;
         self.dfs(|_| true, |_| { found = true; false });
@@ -474,43 +366,216 @@ impl Dfa {
     }
 }
 
-impl Debug for Dfa {
+impl<Ret: Debug> Debug for Dfa<Ret> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         try!(f.write_fmt(format_args!("Dfa ({} states):\n", self.states.len())));
 
-        try!(f.write_fmt(format_args!("Initial_at_start: {:?}\n", self.init_at_start)));
-        try!(f.write_fmt(format_args!("Initial_after_char: {:?}\n", self.init_after_char)));
-        try!(f.write_fmt(format_args!("Initial_otherwise: {:?}\n", self.init_otherwise)));
+        try!(f.write_fmt(format_args!("Init: {:?}\n", self.init)));
 
-        for (st_idx, st) in self.states.iter().enumerate() {
+        for (st_idx, st) in self.states.iter().enumerate().take(40) {
             try!(f.write_fmt(format_args!("\tState {} (accepting: {:?}):\n", st_idx, st.accept)));
+            if let Some(ref ret) = st.ret {
+                try!(f.write_fmt(format_args!("\t\t{:?}\n", ret)));
+            }
 
             if !st.transitions.is_empty() {
                 try!(f.write_str("\t\tTransitions:\n"));
-                for &(range, target) in st.transitions.ranges_values() {
+                // Cap it at 5 transitions, since it gets unreadable otherwise.
+                for &(range, target) in st.transitions.ranges_values().take(5) {
                     try!(f.write_fmt(format_args!("\t\t\t{} -- {} => {}\n",
                                                   range.start, range.end, target)));
                 }
+                if st.transitions.num_ranges() > 5 {
+                    try!(f.write_str("\t\t\t...\n"));
+                }
             }
+        }
+        if self.states.len() > 40 {
+            try!(f.write_fmt(format_args!("\t...({} more states)\n", self.states.len() - 40)));
         }
         Ok(())
     }
 }
 
-struct Minimizer<'a> {
-    partition: Partition,
-    distinguishers: HashSet<Vec<usize>>,
-    dfa: &'a Dfa,
-    // The reverse of the dfa.
-    rev_dfa: Nfa,
+pub trait CompileTarget<Ret> {
+    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>);
 }
 
-impl<'a> Minimizer<'a> {
-    fn initial_partition(dfa: &'a Dfa) -> Vec<Vec<usize>> {
-        let mut part: HashMap<(DfaAccept, RangeSet<u8>), Vec<usize>> = HashMap::new();
+impl<Ret: RetTrait> CompileTarget<Ret> for Program<VmInsts<Ret>> {
+    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>) {
+        let mut cmp = VmCompiler::new(dfa);
+        cmp.compile(dfa);
+
+        let prog = Program {
+            accept_at_eoi: cmp.accept_at_eoi,
+            instructions: cmp.insts,
+            is_anchored: dfa.is_anchored(),
+        };
+        (prog, cmp.state_map)
+    }
+}
+
+impl<Ret: RetTrait> CompileTarget<Ret> for Program<TableInsts<Ret>> {
+    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>) {
+        let mut table = vec![u32::MAX; 256 * dfa.num_states()];
+        let accept: Vec<Option<Ret>> = dfa.states.iter()
+            .map(|st| if st.accept == Accept::Always { st.ret } else { None })
+            .collect();
+        let accept_at_eoi: Vec<Option<Ret>> = dfa.states.iter()
+            .map(|st| if st.accept != Accept::Never { st.ret } else { None })
+            .collect();
+
+        for (idx, st) in dfa.states.iter().enumerate() {
+            for (ch, &tgt_state) in st.transitions.keys_values() {
+                table[idx * 256 + ch as usize] = tgt_state as u32;
+            }
+        }
+
+        let insts = TableInsts {
+            accept: accept,
+            table: table,
+        };
+        let prog = Program {
+            accept_at_eoi: accept_at_eoi,
+            instructions: insts,
+            is_anchored: dfa.is_anchored(),
+        };
+
+        (prog, (0..dfa.num_states()).collect())
+    }
+}
+
+struct VmCompiler<Ret: 'static> {
+    state_map: Vec<usize>,
+    insts: VmInsts<Ret>,
+    accept_at_eoi: Vec<Option<Ret>>,
+}
+
+impl<Ret: Copy + Debug + Hash> VmCompiler<Ret> {
+    fn new(dfa: &Dfa<Ret>) -> VmCompiler<Ret> {
+        let mut state_map = vec![0; dfa.states.len()];
+        let mut next_inst_idx = 0usize;
+
+        // The VM states are almost the same as the Dfa states, except that accept instructions
+        // take an extra state.
+        for (i, st) in dfa.states.iter().enumerate() {
+            state_map[i] = next_inst_idx;
+            if st.accept == Accept::Always {
+                next_inst_idx += 1;
+            }
+            next_inst_idx += 1;
+        }
+
+        VmCompiler {
+            state_map: state_map,
+            accept_at_eoi: vec![None; next_inst_idx],
+            insts: VmInsts {
+                byte_sets: Vec::new(),
+                branch_table: Vec::new(),
+                insts: Vec::with_capacity(next_inst_idx),
+            }
+        }
+    }
+
+    fn add_byte_set(&mut self, set: &RangeSet<u8>) -> usize {
+        // TODO: we could check for duplicated sets here.
+        let offset = self.insts.byte_sets.len();
+        self.insts.byte_sets.extend([false; 256].into_iter());
+        for b in set.elements() {
+            self.insts.byte_sets[offset + b as usize] = true;
+        }
+
+        debug_assert!(self.insts.byte_sets.len() % 256 == 0);
+        (self.insts.byte_sets.len() / 256) - 1
+    }
+
+    fn add_byte_map(&mut self, map: &RangeMap<u8, usize>) -> usize {
+        let offset = self.insts.branch_table.len();
+        self.insts.branch_table.extend([u32::MAX; 256].into_iter());
+        for (b, &state) in map.keys_values() {
+            self.insts.branch_table[offset + b as usize] = state as u32;
+        }
+
+        debug_assert!(self.insts.branch_table.len() % 256 == 0);
+        (self.insts.branch_table.len() / 256) - 1
+    }
+
+    fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
+    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
+        if let Some(&(_, target)) = iter.next() {
+            while let Some(&(_, next_target)) = iter.next() {
+                if target != next_target {
+                    return None;
+                }
+            }
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    fn single_char<'a, Iter>(mut iter: Iter) -> Option<u8>
+    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
+        if let Some(&(range, _)) = iter.next() {
+            if range.start == range.end && iter.next().is_none() {
+                Some(range.start)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn compile(&mut self, dfa: &Dfa<Ret>) {
+        for st in &dfa.states {
+            if st.accept != Accept::Never {
+                self.accept_at_eoi[self.insts.insts.len()] = st.ret;
+            }
+            if st.accept == Accept::Always {
+                // This unwrap is asserting that accepting states must have return values.
+                self.insts.insts.push(Inst::Acc(st.ret.unwrap()));
+                // Mark the next state (which will consume) as accepting at eoi also.
+                self.accept_at_eoi[self.insts.insts.len()] = st.ret;
+            }
+            if let Some(tgt) = Self::single_target(st.transitions.ranges_values()) {
+                if self.state_map[tgt] == self.insts.insts.len() + 1 {
+                    // The target state is just immediately after this state -- we don't need a
+                    // branch instruction.
+                    let inst =
+                        if let Some(ch) = Self::single_char(st.transitions.ranges_values()) {
+                            Inst::Byte(ch)
+                        } else {
+                            Inst::ByteSet(self.add_byte_set(&st.transitions.to_range_set()))
+                        };
+                    self.insts.insts.push(inst);
+                    continue;
+                }
+            }
+
+            // If we're still here, we didn't add a Byte or ByteSet instruction, so add a Branch.
+            let mut bm = st.transitions.clone();
+            bm.map_values(|x| self.state_map[*x]);
+            let inst = Inst::Branch(self.add_byte_map(&bm));
+            self.insts.insts.push(inst);
+        }
+    }
+}
+
+struct Minimizer<'a, Ret: 'static> {
+    partition: Partition,
+    distinguishers: HashSet<usize>,
+    dfa: &'a Dfa<Ret>,
+    // The reversed transitions of the dfa.
+    rev: Vec<RangeMultiMap<u8, usize>>,
+}
+
+impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
+    fn initial_partition(dfa: &'a Dfa<Ret>) -> Vec<Vec<usize>> {
+        let mut part: HashMap<(Accept, Option<&Ret>, RangeSet<u8>), Vec<usize>> = HashMap::new();
         for (idx, st) in dfa.states.iter().enumerate() {
             let chars = st.transitions.to_range_set();
-            part.entry((st.accept, chars)).or_insert(Vec::new()).push(idx);
+            part.entry((st.accept, dfa.ret(idx), chars)).or_insert(Vec::new()).push(idx);
         }
         part.into_iter().map(|x| x.1).collect()
     }
@@ -520,39 +585,48 @@ impl<'a> Minimizer<'a> {
     fn refine(&mut self, splitter: &[usize]) {
         let dists = &mut self.distinguishers;
 
-        self.partition.refine_with_callback(splitter, |orig, (int, diff)| {
-            if dists.contains(orig) {
-                dists.remove(orig);
-                dists.insert(int.to_vec());
-                dists.insert(diff.to_vec());
-            } else if int.len() < diff.len() {
-                dists.insert(int.to_vec());
+        self.partition.refine_with_callback(splitter, |p, int_idx, diff_idx| {
+            if dists.contains(&int_idx) || p.part(diff_idx).len() < p.part(int_idx).len() {
+                dists.insert(diff_idx);
             } else {
-                dists.insert(diff.to_vec());
+                dists.insert(int_idx);
             }
         });
     }
 
-    fn next_distinguisher(&mut self) -> Option<Vec<usize>> {
-        // TODO: if HashSet::take becomes stable, we can avoid the clone.
-        let elt = self.distinguishers.iter().next().cloned();
-        if let Some(ref elt_ref) = elt {
-            self.distinguishers.remove(elt_ref);
+    fn next_distinguisher(&mut self) -> Option<usize> {
+        let maybe_elt = self.distinguishers.iter().next().cloned();
+        if let Some(elt) = maybe_elt {
+            self.distinguishers.remove(&elt);
         }
-        elt
+        maybe_elt
+    }
+
+    fn get_input_sets(&mut self, part_idx: usize) -> Vec<StateSet> {
+        let inputs: Vec<_> = self.partition.part(part_idx)
+                .iter()
+                .flat_map(|s| self.rev[*s].ranges_values().cloned())
+                .collect();
+        if inputs.is_empty() {
+            return Vec::new();
+        }
+
+        let inputs = RangeMultiMap::from_vec(inputs);
+        let mut sets: Vec<StateSet> = inputs.group()
+            .ranges_values()
+            .map(|&(_, ref x)| x.clone())
+            .collect();
+        for set in &mut sets {
+            set.sort();
+        }
+        sets.sort();
+        sets.dedup();
+        sets
     }
 
     fn compute_partition(&mut self) {
         while let Some(dist) = self.next_distinguisher() {
-            let mut sets: Vec<StateSet> = self.rev_dfa.transitions(&dist)
-                .ranges_values()
-                .map(|&(_, ref x)| x.clone())
-                .collect();
-            for set in &mut sets {
-                set.sort();
-            }
-            sets.sort();
-            sets.dedup();
+            let sets = self.get_input_sets(dist);
 
             for set in &sets {
                 self.refine(set);
@@ -560,7 +634,7 @@ impl<'a> Minimizer<'a> {
         }
     }
 
-    fn minimize(&mut self) -> Dfa {
+    fn minimize(&mut self) -> Dfa<Ret> {
         self.compute_partition();
 
         let mut ret = Dfa::new();
@@ -578,67 +652,150 @@ impl<'a> Minimizer<'a> {
             }
         }
 
-        // Fix the indices in all transitions to refer to the new state numbering.
-        let map_state = |i: usize| old_state_to_new[i];
-        for st in &mut ret.states {
-            st.transitions.map_values(|x| map_state(*x));
-        }
-        ret.init_at_start = self.dfa.init_at_start.map(&map_state);
-        ret.init_otherwise = self.dfa.init_otherwise.map(&map_state);
-        ret.init_after_char = self.dfa.init_after_char.clone();
-        ret.init_after_char.map_values(|x| map_state(*x));
-
+        ret.map_states(|s: usize| old_state_to_new[s]);
+        ret.init = self.dfa.init.iter()
+            .map(|x| x.map(|s: usize| old_state_to_new[s]))
+            .collect();
         ret
     }
 
-    // Note: for the initial partition to be accurate, `dfa`'s transitions should be normalized.
-    fn new(dfa: &'a Dfa) -> Minimizer<'a> {
-        let dist = Minimizer::initial_partition(dfa);
-        let part = Partition::new(dist.iter().map(|set| set.iter().cloned()), dfa.num_states());
+    fn new(dfa: &'a Dfa<Ret>) -> Minimizer<'a, Ret> {
+        let init = Minimizer::initial_partition(dfa);
+        let part = Partition::new(init.into_iter().map(|set| set.into_iter()), dfa.num_states());
+
+        // According to Hopkins' algorithm, we're allowed to leave out one of the distinguishers
+        // (at least, as long as it isn't a set of accepting states). Choose the one with the
+        // most states to leave out.
+        let mut dists: HashSet<usize> = (0..part.num_parts()).collect();
+        let worst = (0..dists.len())
+            .filter(|i| dfa.states[part.part(*i)[0]].accept == Accept::Never)
+            .max_by_key(|i| part.part(*i).len());
+        if let Some(worst) = worst {
+            dists.remove(&worst);
+        }
 
         Minimizer {
             partition: part,
-            distinguishers: dist.into_iter().collect(),
+            distinguishers: dists,
             dfa: dfa,
-            rev_dfa: dfa.reversed(),
+            rev: dfa.reversed_transitions(),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use dfa::*;
-    use nfa::Nfa;
+    use error::Error;
+    use itertools::Itertools;
+    use look::Look;
+    use nfa::{Accept, Nfa};
+    use range_map::{Range, RangeMap};
+    use runner::prefix::Prefix;
     use std::usize;
 
-    // Like Dfa::from_regex, but doesn't minimize.
-    fn make_dfa(re: &str) -> Dfa {
-        let mut nfa = Nfa::from_regex(re).unwrap();
-        nfa.convert_to_byte_automaton(usize::MAX).unwrap();
-        nfa.determinize(usize::MAX).unwrap()
+    // Creates a non-backtracking dfa from a regex string.
+    pub fn make_dfa_bounded(re: &str, max_states: usize) -> Result<Dfa<(Look, u8)>, Error> {
+        let nfa = try!(Nfa::from_regex(re));
+        let nfa = nfa.remove_looks();
+        let nfa = try!(nfa.byte_me(max_states));
+
+        let dfa = try!(nfa.determinize_shortest(max_states));
+        Ok(dfa.optimize_for_shortest_match())
+    }
+
+    pub fn make_dfa(re: &str) -> Result<Dfa<(Look, u8)>, Error> {
+        make_dfa_bounded(re, usize::MAX)
+    }
+
+    pub fn make_anchored(re: &str) -> Dfa<(Look, u8)> {
+        let nfa = Nfa::from_regex(re).unwrap()
+            .remove_looks()
+            .byte_me(usize::MAX).unwrap()
+            .anchor_look_behind(usize::MAX).unwrap();
+
+        nfa.determinize_shortest(usize::MAX).unwrap()
+            .optimize_for_shortest_match()
+            .cut_loop_to_init()
+            .optimize_for_shortest_match()
+    }
+
+    pub fn trans_dfa_anchored(size: usize, trans: &[(usize, usize, Range<u8>)])
+    -> Dfa<(Look, u8)> {
+        let mut ret = Dfa::new();
+        for _ in 0..size {
+            ret.add_state(Accept::Never, None);
+        }
+        for (src, trans) in trans.iter().group_by(|x| x.0) {
+            let rm: RangeMap<u8, usize> = trans.into_iter()
+                .map(|x| (x.2, x.1))
+                .collect();
+            ret.set_transitions(src, rm);
+        }
+        ret
+    }
+
+    #[test]
+    fn test_anchored_dfa_simple() {
+        let dfa = make_anchored("a");
+        let mut tgt = trans_dfa_anchored(2, &[(0, 1, Range::new(b'a', b'a'))]);
+        tgt.init[Look::Boundary.as_usize()] = Some(0);
+        tgt.states[1].accept = Accept::Always;
+        tgt.states[1].ret = Some((Look::Full, 0));
+
+        assert_eq!(dfa, tgt);
+    }
+
+    #[test]
+    fn test_forward_backward_simple() {
+        // TODO
+    }
+
+    #[test]
+    fn test_anchored_dfa_anchored_end() {
+        let dfa = make_anchored("a$");
+        let mut tgt = trans_dfa_anchored(2, &[(0, 1, Range::new(b'a', b'a')),
+                                              (1, 1, Range::new(b'a', b'a'))]);
+        tgt.init[Look::Boundary.as_usize()] = Some(0);
+        tgt.states[1].accept = Accept::AtEoi;
+        tgt.states[1].ret = Some((Look::Boundary, 0));
+
+        assert_eq!(dfa, tgt);
+    }
+
+    #[test]
+    fn test_anchored_dfa_literal_prefix() {
+        let dfa = make_anchored("abc[A-z]");
+        let state_map: Vec<_> = (0..dfa.num_states()).collect();
+        let pref = dfa.pruned_prefix(&state_map);
+        println!("{:?}", pref);
+        match pref {
+            Prefix::Lit(ref v) => assert_eq!(*v, "abc".as_bytes().to_vec()),
+            _ => panic!("expected Lit"),
+        }
     }
 
     #[test]
     fn test_minimize() {
-        let auto = make_dfa("a*b*").minimize();
+        let auto = make_dfa("a*b*").unwrap();
         // 1, because optimizing for shortest match means we match empty strings.
         assert_eq!(auto.states.len(), 1);
 
-        let auto = make_dfa(r"^a").minimize();
+        let auto = make_dfa(r"^a").unwrap();
         assert_eq!(auto.states.len(), 2);
 
-        let mut auto = make_dfa("[cgt]gggtaaa|tttaccc[acg]");
+        let mut auto = make_dfa("[cgt]gggtaaa|tttaccc[acg]").unwrap();
         // Since `minimize` is non-deterministic (involving random hashes), run this a bunch of
         // times.
         for _ in 0..100 {
-            auto = auto.minimize();
+            auto = auto.optimize();
             assert_eq!(auto.states.len(), 16);
         }
     }
 
    #[test]
     fn test_class_normalized() {
-        let mut re = make_dfa("[abcdw]").minimize();
+        let mut re = make_dfa("[abcdw]").unwrap();
         re.sort_states();
         assert_eq!(re.states.len(), 2);
         assert_eq!(re.states[0].transitions.num_ranges(), 2)
@@ -646,20 +803,20 @@ mod tests {
 
     #[test]
     fn test_max_states() {
-        assert!(Dfa::from_regex_bounded("foo", 3).is_err());
-        assert!(Dfa::from_regex_bounded("foo", 4).is_ok());
+        assert!(make_dfa_bounded("foo", 3).is_err());
+        assert!(make_dfa_bounded("foo", 4).is_ok());
     }
 
     #[test]
     fn test_adjacent_predicates() {
-        assert!(Dfa::from_regex_bounded(r"\btest\b\B", 100).unwrap().states.is_empty());
-        assert!(Dfa::from_regex_bounded(r"\btest\B\b", 100).unwrap().states.is_empty());
-        assert!(Dfa::from_regex_bounded(r"test1\b\Btest2", 100).unwrap().states.is_empty());
+        assert!(make_dfa_bounded(r"\btest\b\B", 100).unwrap().states.is_empty());
+        assert!(make_dfa_bounded(r"\btest\B\b", 100).unwrap().states.is_empty());
+        assert!(make_dfa_bounded(r"test1\b\Btest2", 100).unwrap().states.is_empty());
     }
 
     #[test]
     fn test_syntax_error() {
-        assert!(Dfa::from_regex_bounded("(abc", 10).is_err());
+        assert!(make_dfa_bounded("(abc", 10).is_err());
     }
 
     #[test]
@@ -667,7 +824,7 @@ mod tests {
         macro_rules! cyc {
             ($re:expr, $res:expr) => {
                 {
-                    let dfa = Dfa::from_regex_bounded($re, usize::MAX).unwrap();
+                    let dfa = make_dfa($re).unwrap();
                     println!("{:?}", dfa);
                     assert_eq!(dfa.has_cycles(), $res);
                 }
@@ -691,8 +848,8 @@ mod tests {
         macro_rules! eq {
             ($re1:expr, $re2:expr) => {
                 {
-                    let dfa1 = Dfa::from_regex_bounded($re1, usize::MAX).unwrap();
-                    let dfa2 = Dfa::from_regex_bounded($re2, usize::MAX).unwrap();
+                    let dfa1 = make_dfa($re1).unwrap();
+                    let dfa2 = make_dfa($re2).unwrap();
                     assert_eq!(dfa1, dfa2);
                 }
             };
@@ -701,4 +858,6 @@ mod tests {
         //eq!("a*", ""); // TODO: figure out how empty regexes should behave
         eq!("abcb*", "abc");
     }
+
+    // TODO: add a test checking that minimize() doesn't clobber return values.
 }
