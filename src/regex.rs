@@ -32,6 +32,7 @@ impl<Ret: Debug> Engine<Ret> for EmptyEngine {
 }
 
 /// An enum listing the different kinds of supported regex engines.
+#[derive(Clone, Copy, Debug)]
 pub enum EngineType {
     /// The backtracking engine will attempt to match the regex starting from offset zero,
     /// then it will try again from offset one, and so on. Although it is quite fast in practice,
@@ -44,6 +45,7 @@ pub enum EngineType {
 }
 
 /// An enum listing the different ways for representing the regex program.
+#[derive(Clone, Copy, Debug)]
 pub enum ProgramType {
     /// A `Vm` program represents a regex as a list of instructions. It is a fairly
     /// memory-efficient representation, particularly when the regex contains lots of string
@@ -141,7 +143,31 @@ impl Regex {
         Ok(ForwardBackwardEngine::new(f_prog, f_dfa.pruned_prefix(&f_state_map), b_prog))
     }
 
-    fn make_regex(re: &str, max_states: usize, engine: Option<EngineType>, prog: Option<ProgramType>)
+    // Make a forward-backward engine, but if that uses too many states and fallback is true then try
+    // making a backtracking engine instead.
+    fn make_boxed_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize, fallback: bool)
+    -> Result<Box<Engine<u8>>, Error> where
+    FI: Instructions<Ret=(usize, u8)> + 'static,
+    Program<FI>: CompileTarget<(usize, u8)>,
+    BI: Instructions<Ret=u8> + 'static,
+    Program<BI>: CompileTarget<u8>,
+    {
+        let fb = Regex::make_forward_backward(nfa.clone(), max_states)
+            .map(|x| Box::new(x) as Box<Engine<u8>>);
+        if fallback {
+            fb.or_else(|_| {
+                let b = try!(Regex::make_backtracking(nfa, max_states));
+                Ok(Box::new(b) as Box<Engine<u8>>)
+            })
+        } else {
+            fb
+        }
+    }
+
+    fn make_regex(re: &str,
+                  max_states: usize,
+                  maybe_eng: Option<EngineType>,
+                  maybe_prog: Option<ProgramType>)
     -> Result<Regex, Error> {
         let nfa = try!(Nfa::from_regex(re));
         let nfa = nfa.remove_looks();
@@ -151,14 +177,14 @@ impl Regex {
         }
 
         // If the engine and program weren't specified, choose them automatically based on nfa.
-        let engine = engine.unwrap_or(if nfa.is_anchored() {
+        let eng = maybe_eng.unwrap_or(if nfa.is_anchored() {
             EngineType::Backtracking
         } else {
             EngineType::ForwardBackward
         });
-        let prog = prog.unwrap_or(ProgramType::Vm);
+        let prog = maybe_prog.unwrap_or(ProgramType::Vm);
 
-        let eng: Box<Engine<u8>> = match engine {
+        let eng: Box<Engine<u8>> = match eng {
             EngineType::Backtracking => {
                 match prog {
                     ProgramType::Table =>
@@ -170,11 +196,15 @@ impl Regex {
             EngineType::ForwardBackward => {
                 match prog {
                     ProgramType::Table =>
-                        Box::new(try!(Regex::make_forward_backward::<TableInsts<_>, TableInsts<_>>(
-                                    nfa, max_states))),
+                        try!(Regex::make_boxed_forward_backward::<TableInsts<_>, TableInsts<_>>(
+                                nfa,
+                                max_states,
+                                maybe_eng.is_none())),
                     ProgramType::Vm =>
-                        Box::new(try!(Regex::make_forward_backward::<VmInsts<_>, VmInsts<_>>(
-                                    nfa, max_states))),
+                        try!(Regex::make_boxed_forward_backward::<VmInsts<_>, VmInsts<_>>(
+                                nfa,
+                                max_states,
+                                maybe_eng.is_none())),
                 }
             }
         };
@@ -197,3 +227,18 @@ impl Regex {
         self.shortest_match(s).is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use regex::*;
+
+    #[test]
+    fn size_fallback() {
+        // This regex takes a huge number of states if you anchor it by adding '.*' in front.
+        let re = "a[ab]{100}c";
+        assert!(Regex::new_bounded(re, 2000).is_ok());
+        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Vm).is_ok());
+        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Vm).is_err());
+    }
+}
+
