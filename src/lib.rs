@@ -59,8 +59,7 @@ let find_digits = |s: &str| {
 ```
 */
 
-#![feature(test)]
-#![cfg_attr(test, feature(plugin))]
+#![cfg_attr(test, feature(plugin, test))]
 #![cfg_attr(test, plugin(quickcheck_macros))]
 #[cfg(test)]
 extern crate quickcheck;
@@ -68,6 +67,9 @@ extern crate quickcheck;
 #[cfg(test)]
 #[macro_use]
 extern crate matches;
+
+#[cfg(test)]
+extern crate test;
 
 extern crate aho_corasick;
 extern crate itertools;
@@ -77,7 +79,6 @@ extern crate num;
 extern crate range_map;
 extern crate refinery;
 extern crate regex_syntax;
-extern crate test;
 extern crate utf8_ranges;
 
 #[macro_use]

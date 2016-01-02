@@ -49,7 +49,7 @@ path = "tests/matches.rs"
 name = "crate"
 path = "src/lib.rs"
 
-[profile.release]
+[profile.bench]
 debug = true
 lto = true
 
