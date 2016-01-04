@@ -182,7 +182,7 @@ impl Regex {
         } else {
             EngineType::ForwardBackward
         });
-        let prog = maybe_prog.unwrap_or(ProgramType::Vm);
+        let prog = maybe_prog.unwrap_or(ProgramType::Table);
 
         let eng: Box<Engine<u8>> = match eng {
             EngineType::Backtracking => {
