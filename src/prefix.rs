@@ -80,6 +80,7 @@ impl PrefixSearcher {
 
     pub fn search<T: RetTrait>(&mut self, dfa: &Dfa<T>, state: usize) {
         self.active.push_back(PrefixPart(Vec::new(), state));
+        self.suffixes.insert(vec![].into_iter(), state);
         while !self.active.is_empty() {
             self.current = self.active.pop_front().unwrap();
 
@@ -109,7 +110,7 @@ impl PrefixSearcher {
             // state. In principle, we could continue expanding the other prefixes even after we
             // run into an accept state, but there doesn't seem much point in having some short
             // prefixes and other long prefixes.
-            if self.too_many(trans.num_keys() as usize)
+            if self.too_many(next_prefs.len())
                 || *dfa.accept(self.current.1) != Accept::Never {
                 self.bail_out();
                 break;
@@ -179,6 +180,10 @@ mod tests {
     test_prefix!(pruned_repetition, true,
         "a+bc",
         vec!["abc"],
+        10, 10);
+    test_prefix!(pruned_empty_repetition, true,
+        "[a-zA-Z]*bc",
+        vec!["bc"],
         10, 10);
 }
 

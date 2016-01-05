@@ -122,13 +122,7 @@ impl Regex {
         let f_nfa = try!(try!(nfa.clone().byte_me(max_states)).anchor_look_behind(max_states));
         let b_nfa = try!(try!(nfa.byte_me(max_states)).reverse(max_states));
 
-        let f_dfa = try!(f_nfa.determinize_shortest(max_states))
-            .cut_loop_to_init()
-            .optimize_for_shortest_match()
-            // Do it again, because optimize might have merged something with the initial state,
-            // in which case we can cut more.
-            .cut_loop_to_init()
-            .optimize_for_shortest_match();
+        let f_dfa = try!(f_nfa.determinize_shortest(max_states)).optimize_for_shortest_match();
         let b_dfa = try!(b_nfa.determinize_longest(max_states))
             .optimize();
         let b_dfa = b_dfa.map_ret(|(_, bytes)| bytes);
@@ -138,9 +132,25 @@ impl Regex {
             let b_dfa_state = b_dfa.init[look.as_usize()].expect("BUG: back dfa must have this init");
             (b_state_map[b_dfa_state], bytes)
         });
-        let (f_prog, f_state_map) = f_dfa.to_program::<Program<FI>>();
 
-        Ok(ForwardBackwardEngine::new(f_prog, f_dfa.pruned_prefix(&f_state_map), b_prog))
+        let (mut f_prog, mut f_state_map) = f_dfa.to_program::<Program<FI>>();
+        let mut prefix = f_dfa.pruned_prefix(&f_state_map);
+        match prefix {
+            Prefix::Empty => {}
+            _ => {
+                // If there is a non-trivial prefix, we can usually speed up matching by deleting
+                // transitions that return to the start state. That way, instead of returning to
+                // the start state, we will just fail to match. Then we get to search for the
+                // prefix before trying to match again.
+                let f_dfa = f_dfa.cut_loop_to_init().optimize_for_shortest_match();
+                let prog_map = f_dfa.to_program::<Program<FI>>();
+                f_prog = prog_map.0;
+                f_state_map = prog_map.1;
+                prefix = f_dfa.pruned_prefix(&f_state_map);
+            },
+        }
+
+        Ok(ForwardBackwardEngine::new(f_prog, prefix, b_prog))
     }
 
     // Make a forward-backward engine, but if that uses too many states and fallback is true then try
