@@ -248,7 +248,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
 }
 
 impl<Tok: Debug + PrimInt, L: Lookability> Debug for Nfa<Tok, L> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         try!(f.write_fmt(format_args!("Nfa ({} states):\n", self.states.len())));
 
         try!(f.write_fmt(format_args!("Init: {:?}\n", self.init)));

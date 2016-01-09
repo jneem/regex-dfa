@@ -234,7 +234,7 @@ impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
 }
 
 impl Nfa<u32, NoLooks> {
-    pub fn byte_me(self, max_states: usize) -> Result<Nfa<u8, NoLooks>, Error> {
+    pub fn byte_me(self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let mut ret = Nfa::<u8, NoLooks> {
             states: self.states.iter().map(|s| State {
                 accept: s.accept,
@@ -263,15 +263,15 @@ impl Nfa<u32, NoLooks> {
 }
 
 impl Nfa<u8, NoLooks> {
-    pub fn determinize_shortest(&self, max_states: usize) -> Result<Dfa<(Look, u8)>, Error> {
+    pub fn determinize_shortest(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
         Determinizer::determinize(self, max_states, true, self.init.clone())
     }
 
-    pub fn determinize_longest(&self, max_states: usize) -> Result<Dfa<(Look, u8)>, Error> {
+    pub fn determinize_longest(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
         Determinizer::determinize(self, max_states, false, self.init.clone())
     }
 
-    pub fn reverse(&self, max_states: usize) -> Result<Nfa<u8, NoLooks>, Error> {
+    pub fn reverse(&self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let mut ret = self.reversed_simple();
 
         // Turn our initial states into ret's accepting states.
@@ -318,7 +318,7 @@ impl Nfa<u8, NoLooks> {
         Ok(ret)
     }
 
-    pub fn anchor_look_behind(mut self, max_states: usize) -> Result<Nfa<u8, NoLooks>, Error> {
+    pub fn anchor_look_behind(mut self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let loop_accept = self.accept_union(&self.init[Look::Full.as_usize()]);
         let loop_state = self.add_state(loop_accept);
         // If there are some states that only start at the beginning of the input, we need
@@ -382,7 +382,7 @@ impl Nfa<u8, NoLooks> {
         dfa: &Dfa<(Look, u8)>,
         end_state: usize,
         max_states: usize,
-    ) -> Result<(), Error> {
+    ) -> ::Result<()> {
         let offset = self.states.len();
         // If end_accept is true, then it isn't actually important that we end in state
         // `end_state`: we can create a new look_ahead state to end in.
@@ -451,7 +451,7 @@ impl Nfa<u8, NoLooks> {
         ranges: I,
         end_state: usize,
         max_states: usize
-    ) -> Result<(), Error>
+    ) -> ::Result<()>
     where I: Iterator<Item=Range<u32>> {
         for m in MergedUtf8Sequences::from_ranges(ranges) {
             self.add_utf8_sequence(start_state, end_state, m);
@@ -476,7 +476,7 @@ impl<'a> Determinizer<'a> {
     pub fn determinize(nfa: &Nfa<u8, NoLooks>,
                        max_states: usize,
                        shortest_match: bool,
-                       init: Vec<StateSet>) -> Result<Dfa<(Look, u8)>, Error> {
+                       init: Vec<StateSet>) -> ::Result<Dfa<(Look, u8)>> {
         let mut det = Determinizer::new(nfa, max_states, shortest_match);
         try!(det.run(init));
         Ok(det.dfa)
@@ -519,7 +519,7 @@ impl<'a> Determinizer<'a> {
         (union, look, bytes_ago)
     }
 
-    fn add_state(&mut self, s: StateSet) -> Result<usize, Error> {
+    fn add_state(&mut self, s: StateSet) -> ::Result<usize> {
         if self.state_map.contains_key(&s) {
             Ok(*self.state_map.get(&s).unwrap())
         } else if self.dfa.num_states() >= self.max_states {
@@ -541,7 +541,7 @@ impl<'a> Determinizer<'a> {
 
     // Creates a deterministic automaton representing the same language as our `nfa`.
     // Puts the new Dfa in self.dfa.
-    fn run(&mut self, init: Vec<StateSet>) -> Result<(), Error> {
+    fn run(&mut self, init: Vec<StateSet>) -> ::Result<()> {
         if self.nfa.states.is_empty() {
             return Ok(());
         }

@@ -65,13 +65,13 @@ impl Clone for Regex {
 
 impl Regex {
     /// Creates a new `Regex` from a regular expression string.
-    pub fn new(re: &str) -> Result<Regex, Error> {
+    pub fn new(re: &str) -> ::Result<Regex> {
         Regex::new_bounded(re, std::usize::MAX)
     }
 
     /// Creates a new `Regex` from a regular expression string, but only if it doesn't require too
     /// many states.
-    pub fn new_bounded(re: &str, max_states: usize) -> Result<Regex, Error> {
+    pub fn new_bounded(re: &str, max_states: usize) -> ::Result<Regex> {
         Regex::make_regex(re, max_states, None, None)
     }
 
@@ -81,13 +81,13 @@ impl Regex {
     /// - `engine` - specifies the search algorithm to use while executing the regex.
     /// - `program` - specifies the representation of the regex program.
     pub fn new_advanced(re: &str, max_states: usize, engine: EngineType, program: ProgramType)
-    -> Result<Regex, Error>
+    -> ::Result<Regex>
     {
         Regex::make_regex(re, max_states, Some(engine), Some(program))
     }
 
     fn make_backtracking<I>(nfa: Nfa<u32, NoLooks>, max_states: usize)
-    -> Result<BacktrackingEngine<I>, Error> where
+    -> ::Result<BacktrackingEngine<I>> where
     I: Instructions<Ret=u8>,
     Program<I>: CompileTarget<u8> {
         if nfa.has_look_behind() {
@@ -109,7 +109,7 @@ impl Regex {
     }
 
     fn make_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize)
-    -> Result<ForwardBackwardEngine<FI, BI>, Error> where
+    -> ::Result<ForwardBackwardEngine<FI, BI>> where
     FI: Instructions<Ret=(usize, u8)>,
     Program<FI>: CompileTarget<(usize, u8)>,
     BI: Instructions<Ret=u8>,
@@ -156,7 +156,7 @@ impl Regex {
     // Make a forward-backward engine, but if that uses too many states and fallback is true then try
     // making a backtracking engine instead.
     fn make_boxed_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize, fallback: bool)
-    -> Result<Box<Engine<u8>>, Error> where
+    -> ::Result<Box<Engine<u8>>> where
     FI: Instructions<Ret=(usize, u8)> + 'static,
     Program<FI>: CompileTarget<(usize, u8)>,
     BI: Instructions<Ret=u8> + 'static,
@@ -178,7 +178,7 @@ impl Regex {
                   max_states: usize,
                   maybe_eng: Option<EngineType>,
                   maybe_prog: Option<ProgramType>)
-    -> Result<Regex, Error> {
+    -> ::Result<Regex> {
         let nfa = try!(Nfa::from_regex(re));
         let nfa = nfa.remove_looks();
 

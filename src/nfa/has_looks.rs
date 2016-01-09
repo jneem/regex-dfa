@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use error::Error;
 use look::Look;
 use nfa::{Accept, HasLooks, LookPair, Nfa, NoLooks};
 use nfa::builder::NfaBuilder;
@@ -20,7 +19,7 @@ use regex_syntax;
 // 1) the elements of `init` are all empty; implicitly, zero is the only initial state
 // 2) the only valid values for `accept` are `Accept::Always` and `Accept::Never`
 impl Nfa<u32, HasLooks> {
-    pub fn from_regex(re: &str) -> Result<Nfa<u32, HasLooks>, Error> {
+    pub fn from_regex(re: &str) -> ::Result<Nfa<u32, HasLooks>> {
         let expr = try!(regex_syntax::Expr::parse(re));
         Ok(NfaBuilder::from_expr(&expr).to_automaton())
     }

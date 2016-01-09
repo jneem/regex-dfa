@@ -18,7 +18,6 @@ use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
-use std::result::Result;
 use std::u32;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -367,7 +366,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
 }
 
 impl<Ret: Debug> Debug for Dfa<Ret> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         try!(f.write_fmt(format_args!("Dfa ({} states):\n", self.states.len())));
 
         try!(f.write_fmt(format_args!("Init: {:?}\n", self.init)));
@@ -686,7 +685,6 @@ impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
 #[cfg(test)]
 pub mod tests {
     use dfa::*;
-    use error::Error;
     use itertools::Itertools;
     use look::Look;
     use nfa::{Accept, Nfa};
@@ -695,7 +693,7 @@ pub mod tests {
     use std::usize;
 
     // Creates a non-backtracking dfa from a regex string.
-    pub fn make_dfa_bounded(re: &str, max_states: usize) -> Result<Dfa<(Look, u8)>, Error> {
+    pub fn make_dfa_bounded(re: &str, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
         let nfa = try!(Nfa::from_regex(re));
         let nfa = nfa.remove_looks();
         let nfa = try!(nfa.byte_me(max_states));
@@ -704,7 +702,7 @@ pub mod tests {
         Ok(dfa.optimize_for_shortest_match())
     }
 
-    pub fn make_dfa(re: &str) -> Result<Dfa<(Look, u8)>, Error> {
+    pub fn make_dfa(re: &str) -> ::Result<Dfa<(Look, u8)>> {
         make_dfa_bounded(re, usize::MAX)
     }
 

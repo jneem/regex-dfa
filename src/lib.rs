@@ -96,6 +96,5 @@ mod unicode;
 
 pub use error::Error;
 pub use regex::{EngineType, ProgramType, Regex};
-
-type Result<T> = ::std::result::Result<T, Error>;
+pub type Result<T> = ::std::result::Result<T, Error>;
 
