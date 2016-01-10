@@ -181,6 +181,7 @@ mod tests {
         "a+bc",
         vec!["abc"],
         10, 10);
+
     test_prefix!(pruned_empty_repetition, true,
         "[a-zA-Z]*bc",
         vec!["bc"],

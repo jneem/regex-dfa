@@ -8,7 +8,7 @@
 
 use std::fmt::Debug;
 use runner::Engine;
-use runner::prefix::{Prefix, PrefixSearcher, lit_searcher, AcSearcher, SimpleSearcher};
+use runner::prefix::{Prefix, AcSearcher, PrefixSearcher, lit_searcher, SimpleSearcher};
 use runner::program::Instructions;
 
 #[derive(Clone, Debug)]

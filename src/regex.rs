@@ -132,7 +132,11 @@ impl Regex {
         let (mut f_prog, mut f_state_map) = f_dfa.compile::<FI>();
         let mut prefix = f_dfa.pruned_prefix(&f_state_map);
         match prefix {
-            Prefix::Empty => {}
+            Prefix::Empty => {},
+            Prefix::Ac(_, _) => {
+                // Don't use the Ac prefix, since we're faster than it anyway.
+                prefix = Prefix::Empty;
+            },
             _ => {
                 // If there is a non-trivial prefix, we can usually speed up matching by deleting
                 // transitions that return to the start state. That way, instead of returning to
