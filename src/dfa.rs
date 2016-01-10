@@ -12,7 +12,7 @@ use prefix::PrefixSearcher;
 use range_map::{Range, RangeMap, RangeMultiMap, RangeSet};
 use refinery::Partition;
 use runner::prefix::Prefix;
-use runner::program::{Inst, Program, TableInsts, VmInsts};
+use runner::program::{Inst, TableInsts, VmInsts};
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
@@ -178,10 +178,10 @@ impl<Ret: RetTrait> Dfa<Ret> {
         self.make_prefix(state_map, true)
     }
 
-    /// Compiles this `Dfa` into a `Program`.
+    /// Compiles this `Dfa` into instructions for execution.
     ///
-    /// Returns the new program, along with a map from the dfa states to the program states.
-    pub fn to_program<P: CompileTarget<Ret>>(&self) -> (P, Vec<usize>) {
+    /// Returns the new instructions, along with a map from the dfa states to the instructions.
+    pub fn compile<P: CompileTarget<Ret>>(&self) -> (P, Vec<usize>) {
         P::from_dfa(self)
     }
 
@@ -400,21 +400,15 @@ pub trait CompileTarget<Ret> {
     fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>);
 }
 
-impl<Ret: RetTrait> CompileTarget<Ret> for Program<VmInsts<Ret>> {
+impl<Ret: RetTrait> CompileTarget<Ret> for VmInsts<Ret> {
     fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>) {
         let mut cmp = VmCompiler::new(dfa);
         cmp.compile(dfa);
-
-        let prog = Program {
-            accept_at_eoi: cmp.accept_at_eoi,
-            instructions: cmp.insts,
-            is_anchored: dfa.is_anchored(),
-        };
-        (prog, cmp.state_map)
+        (cmp.insts, cmp.state_map)
     }
 }
 
-impl<Ret: RetTrait> CompileTarget<Ret> for Program<TableInsts<Ret>> {
+impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
     fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>) {
         let mut table = vec![u32::MAX; 256 * dfa.num_states()];
         let accept: Vec<Option<Ret>> = dfa.states.iter()
@@ -432,25 +426,21 @@ impl<Ret: RetTrait> CompileTarget<Ret> for Program<TableInsts<Ret>> {
 
         let insts = TableInsts {
             accept: accept,
-            table: table,
-        };
-        let prog = Program {
             accept_at_eoi: accept_at_eoi,
-            instructions: insts,
+            table: table,
             is_anchored: dfa.is_anchored(),
         };
 
-        (prog, (0..dfa.num_states()).collect())
+        (insts, (0..dfa.num_states()).collect())
     }
 }
 
 struct VmCompiler<Ret: 'static> {
     state_map: Vec<usize>,
     insts: VmInsts<Ret>,
-    accept_at_eoi: Vec<Option<Ret>>,
 }
 
-impl<Ret: Copy + Debug + Hash> VmCompiler<Ret> {
+impl<Ret: RetTrait> VmCompiler<Ret> {
     fn new(dfa: &Dfa<Ret>) -> VmCompiler<Ret> {
         let mut state_map = vec![0; dfa.states.len()];
         let mut next_inst_idx = 0usize;
@@ -467,11 +457,12 @@ impl<Ret: Copy + Debug + Hash> VmCompiler<Ret> {
 
         VmCompiler {
             state_map: state_map,
-            accept_at_eoi: vec![None; next_inst_idx],
             insts: VmInsts {
                 byte_sets: Vec::new(),
                 branch_table: Vec::new(),
                 insts: Vec::with_capacity(next_inst_idx),
+                accept_at_eoi: vec![None; next_inst_idx],
+                is_anchored: dfa.is_anchored(),
             }
         }
     }
@@ -529,13 +520,13 @@ impl<Ret: Copy + Debug + Hash> VmCompiler<Ret> {
     fn compile(&mut self, dfa: &Dfa<Ret>) {
         for st in &dfa.states {
             if st.accept != Accept::Never {
-                self.accept_at_eoi[self.insts.insts.len()] = st.ret;
+                self.insts.accept_at_eoi[self.insts.insts.len()] = st.ret;
             }
             if st.accept == Accept::Always {
                 // This unwrap is asserting that accepting states must have return values.
                 self.insts.insts.push(Inst::Acc(st.ret.unwrap()));
                 // Mark the next state (which will consume) as accepting at eoi also.
-                self.accept_at_eoi[self.insts.insts.len()] = st.ret;
+                self.insts.accept_at_eoi[self.insts.insts.len()] = st.ret;
             }
             if let Some(tgt) = Self::single_target(st.transitions.ranges_values()) {
                 if self.state_map[tgt] == self.insts.insts.len() + 1 {

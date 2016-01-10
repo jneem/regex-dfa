@@ -10,16 +10,16 @@ use aho_corasick::Automaton;
 use std::fmt::Debug;
 use runner::Engine;
 use runner::prefix::{Prefix, PrefixSearcher};
-use runner::program::{Instructions, Program};
+use runner::program::Instructions;
 
 #[derive(Clone, Debug)]
 pub struct BacktrackingEngine<Insts: Instructions> {
-    prog: Program<Insts>,
+    prog: Insts,
     prefix: Prefix,
 }
 
 impl<Insts: Instructions> BacktrackingEngine<Insts> {
-    pub fn new(prog: Program<Insts>, pref: Prefix) -> BacktrackingEngine<Insts> {
+    pub fn new(prog: Insts, pref: Prefix) -> BacktrackingEngine<Insts> {
         BacktrackingEngine {
             prog: prog,
             prefix: pref,
@@ -44,7 +44,7 @@ where I::Ret: Debug {
         let input = s.as_bytes();
         if self.prog.is_empty() {
             return None;
-        } else if self.prog.is_anchored {
+        } else if self.prog.is_anchored() {
             if let Ok(end) = self.prog.shortest_match_from(input, 0, 0) {
                 return Some((0, end.0, end.1));
             } else {

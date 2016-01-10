@@ -24,45 +24,33 @@ pub enum Inst<Ret> {
 pub trait Instructions: Clone + Debug {
     type Ret: Clone + Debug;
 
-    /// Returns (next_state, accept), where
-    ///   - next_state is the next state to try
-    ///   - accept gives some data associated with the acceptance.
-    fn step(&self, state: usize, input: u8) -> (Option<usize>, Option<Self::Ret>);
+    /// If `state` is an accepting state, return the associated value.
+    fn check_accept(&self, state: usize) -> Option<Self::Ret>;
+
+    /// If `state` is an accepting state at the end of the input, return the associated value.
+    fn check_accept_at_eoi(&self, state: usize) -> Option<Self::Ret>;
+
+    /// Returns the next state after consuming `input`.
+    fn next_state(&self, state: usize, input: u8) -> Option<usize>;
 
     /// The number of states in this program.
     fn num_states(&self) -> usize;
-}
 
-#[derive(Clone, Debug)]
-pub struct Program<Insts: Instructions> {
-    pub accept_at_eoi: Vec<Option<Insts::Ret>>,
-    pub instructions: Insts,
-    pub is_anchored: bool,
-}
+    fn is_anchored(&self) -> bool;
 
-impl<Insts: Instructions> Program<Insts> {
-    /// If the program should accept at the end of input in state `state`, returns the data
-    /// associated with the match.
-    pub fn check_eoi(&self, state: usize) -> Option<Insts::Ret> {
-        self.accept_at_eoi[state].clone()
-    }
-
-    /// If a match is found, returns the ending position and the returned value. Otherwise,
-    /// returns the position at which we failed.
-    pub fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
-    -> Result<(usize, Insts::Ret), usize> {
+    fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    -> Result<(usize, Self::Ret), usize> {
         for pos in pos..input.len() {
-            let (next_state, accepted) = self.instructions.step(state, input[pos]);
-            if let Some(ret) = accepted {
+            if let Some(ret) = self.check_accept(state) {
                 return Ok((pos, ret));
-            } else if let Some(next_state) = next_state {
+            } else if let Some(next_state) = self.next_state(state, input[pos]) {
                 state = next_state;
             } else {
                 return Err(pos);
             }
         }
 
-        if let Some(ret) = self.check_eoi(state) {
+        if let Some(ret) = self.check_accept_at_eoi(state) {
             Ok((input.len(), ret))
         } else {
             Err(input.len())
@@ -70,30 +58,29 @@ impl<Insts: Instructions> Program<Insts> {
     }
 
     /// If a match is found, returns the ending position and the returned value.
-    pub fn longest_backward_match_from(&self, input: &[u8], pos: usize, mut state: usize)
-    -> Option<(usize, Insts::Ret)> {
+    fn longest_backward_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    -> Option<(usize, Self::Ret)> {
         let mut ret = None;
         for pos in (0..pos).rev() {
-            let (next_state, accepted) = self.instructions.step(state, input[pos]);
-            if let Some(next_ret) = accepted {
+            if let Some(next_ret) = self.check_accept(state) {
                 ret = Some((pos + 1, next_ret));
             }
-            if let Some(next_state) = next_state {
+            if let Some(next_state) = self.next_state(state, input[pos]) {
                 state = next_state;
             } else {
                 return ret;
             }
         }
 
-        if let Some(end_ret) = self.check_eoi(state) {
+        if let Some(end_ret) = self.check_accept_at_eoi(state) {
             Some((0, end_ret))
         } else {
             ret
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.instructions.num_states() == 0
+    fn is_empty(&self) -> bool {
+        self.num_states() == 0
     }
 }
 
@@ -102,43 +89,56 @@ pub struct VmInsts<Ret> {
     pub byte_sets: Vec<bool>,
     pub branch_table: Vec<u32>,
     pub insts: Vec<Inst<Ret>>,
+    pub accept_at_eoi: Vec<Option<Ret>>,
+    pub is_anchored: bool,
 }
 
 impl<Ret: Copy + Debug> Instructions for VmInsts<Ret> {
     type Ret = Ret;
 
-    #[inline(always)]
-    fn step(&self, mut state: usize, input: u8) -> (Option<usize>, Option<Ret>) {
-        use runner::program::Inst::*;
-        let mut acc = None;
+    fn check_accept(&self, state: usize) -> Option<Ret> {
+        match self.insts[state] {
+            Inst::Acc(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    fn check_accept_at_eoi(&self, state: usize) -> Option<Ret> {
+        self.accept_at_eoi[state]
+    }
+
+    fn is_anchored(&self) -> bool {
+        self.is_anchored
+    }
+
+    fn next_state(&self, mut state: usize, input: u8) -> Option<usize> {
+        use self::Inst::*;
+        // Recursion might be more natural here, but it prevents us from being inlined.
         loop {
             match self.insts[state] {
-                Acc(a) => {
-                    acc = Some(a);
+                Acc(_) => {
                     state += 1;
                 },
                 Byte(b) => {
-                    if b == input {
-                        return (Some(state + 1), acc);
-                    }
-                    break;
+                    return if b == input { Some(state + 1) } else { None };
                 },
                 ByteSet(bs_idx) => {
-                    if self.byte_sets[bs_idx * 256 + input as usize] {
-                        return (Some(state + 1), acc);
-                    }
-                    break;
+                    return if self.byte_sets[bs_idx * 256 + input as usize] {
+                        Some(state + 1)
+                    } else {
+                        None
+                    };
                 },
                 Branch(table_idx) => {
                     let next_state = self.branch_table[table_idx * 256 + input as usize];
-                    if next_state != u32::MAX {
-                        return (Some(next_state as usize), acc);
-                    }
-                    break;
+                    return if next_state != u32::MAX {
+                        Some(next_state as usize)
+                    } else {
+                        None
+                    };
                 },
             }
         }
-        (None, acc)
     }
 
     fn num_states(&self) -> usize {
@@ -195,6 +195,10 @@ pub struct TableInsts<Ret> {
     /// If `accept[st]` is not `None` then `st` is accepting, and `accept[st]` is the data
     /// to return.
     pub accept: Vec<Option<Ret>>,
+    /// Same as `accept`, but applies only at the end of the input.
+    pub accept_at_eoi: Vec<Option<Ret>>,
+    /// If true, this program should only be used at the start of the input.
+    pub is_anchored: bool,
 }
 
 impl<Ret: Debug> Debug for TableInsts<Ret> {
@@ -217,6 +221,13 @@ impl<Ret: Debug> Debug for TableInsts<Ret> {
                 try!(f.write_fmt(format_args!("{} -> {:?}, ", idx, ret)));
             }
         }
+
+        try!(f.write_str("Accept_at_eoi: "));
+        for idx in 0..self.accept_at_eoi.len() {
+            if let Some(ref ret) = self.accept_at_eoi[idx] {
+                try!(f.write_fmt(format_args!("{} -> {:?}, ", idx, ret)));
+            }
+        }
         Ok(())
     }
 }
@@ -225,18 +236,54 @@ impl<Ret: Debug> Debug for TableInsts<Ret> {
 impl<Ret: Copy + Debug> Instructions for TableInsts<Ret> {
     type Ret = Ret;
 
-    #[inline(always)]
-    fn step(&self, state: usize, input: u8) -> (Option<usize>, Option<Ret>) {
-        let accept = self.accept[state];
+    fn check_accept(&self, state: usize) -> Option<Ret> {
+        self.accept[state]
+    }
+
+    fn check_accept_at_eoi(&self, state: usize) -> Option<Ret> {
+        self.accept_at_eoi[state]
+    }
+
+    fn is_anchored(&self) -> bool {
+        self.is_anchored
+    }
+
+    fn next_state(&self, state: usize, input: u8) -> Option<usize> {
         let next_state = self.table[state * 256 + input as usize];
-
-        let next_state = if next_state != u32::MAX { Some(next_state as usize) } else { None };
-
-        (next_state, accept)
+        if next_state != u32::MAX {
+            Some(next_state as usize)
+        } else {
+            None
+        }
     }
 
     fn num_states(&self) -> usize {
         self.accept.len()
+    }
+
+    // This is copy & paste from the blanket implementation in Instructions, with check_accept
+    // and next_state manually inlined. For some reason, doing this increases speeds substantially
+    // (but adding #[inline(always)] to check_accept and next_state doesn't).
+    fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    -> Result<(usize, Self::Ret), usize> {
+        for pos in pos..input.len() {
+            if let Some(ret) = self.accept[state] {
+                return Ok((pos, ret));
+            }
+
+            let next_state = self.table[state * 256 + input[pos] as usize];
+            if next_state != u32::MAX {
+                state = next_state as usize;
+            } else {
+                return Err(pos);
+            }
+        }
+
+        if let Some(ret) = self.check_accept_at_eoi(state) {
+            Ok((input.len(), ret))
+        } else {
+            Err(input.len())
+        }
     }
 }
 

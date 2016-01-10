@@ -12,7 +12,7 @@ use nfa::{Nfa, NoLooks};
 use runner::forward_backward::ForwardBackwardEngine;
 use runner::backtracking::BacktrackingEngine;
 use runner::prefix::Prefix;
-use runner::program::{Instructions, Program, TableInsts, VmInsts};
+use runner::program::{Instructions, TableInsts, VmInsts};
 use runner::Engine;
 use std;
 use std::fmt::Debug;
@@ -87,9 +87,8 @@ impl Regex {
     }
 
     fn make_backtracking<I>(nfa: Nfa<u32, NoLooks>, max_states: usize)
-    -> ::Result<BacktrackingEngine<I>> where
-    I: Instructions<Ret=u8>,
-    Program<I>: CompileTarget<u8> {
+    -> ::Result<BacktrackingEngine<I>>
+    where I: Instructions<Ret=u8> + CompileTarget<u8> {
         if nfa.has_look_behind() {
             return Err(Error::InvalidEngine("look-behind rules out the backtracking engine"));
         }
@@ -98,7 +97,7 @@ impl Regex {
         let dfa = try!(nfa.determinize_shortest(max_states))
             .optimize_for_shortest_match()
             .map_ret(|(_, bytes)| bytes);
-        let (prog, state_map) = dfa.to_program::<Program<I>>();
+        let (prog, state_map) = dfa.compile::<I>();
         let prefix = if dfa.is_anchored() {
             Prefix::Empty
         } else {
@@ -110,11 +109,8 @@ impl Regex {
 
     fn make_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize)
     -> ::Result<ForwardBackwardEngine<FI, BI>> where
-    FI: Instructions<Ret=(usize, u8)>,
-    Program<FI>: CompileTarget<(usize, u8)>,
-    BI: Instructions<Ret=u8>,
-    Program<BI>: CompileTarget<u8>,
-    {
+    FI: Instructions<Ret=(usize, u8)> + CompileTarget<(usize, u8)>,
+    BI: Instructions<Ret=u8> + CompileTarget<u8> {
         if nfa.is_anchored() {
             return Err(Error::InvalidEngine("anchors rule out the forward-backward engine"));
         }
@@ -127,13 +123,13 @@ impl Regex {
             .optimize();
         let b_dfa = b_dfa.map_ret(|(_, bytes)| bytes);
 
-        let (b_prog, b_state_map) = b_dfa.to_program::<Program<BI>>();
+        let (b_prog, b_state_map) = b_dfa.compile::<BI>();
         let f_dfa = f_dfa.map_ret(|(look, bytes)| {
             let b_dfa_state = b_dfa.init[look.as_usize()].expect("BUG: back dfa must have this init");
             (b_state_map[b_dfa_state], bytes)
         });
 
-        let (mut f_prog, mut f_state_map) = f_dfa.to_program::<Program<FI>>();
+        let (mut f_prog, mut f_state_map) = f_dfa.compile::<FI>();
         let mut prefix = f_dfa.pruned_prefix(&f_state_map);
         match prefix {
             Prefix::Empty => {}
@@ -143,7 +139,7 @@ impl Regex {
                 // the start state, we will just fail to match. Then we get to search for the
                 // prefix before trying to match again.
                 let f_dfa = f_dfa.cut_loop_to_init().optimize_for_shortest_match();
-                let prog_map = f_dfa.to_program::<Program<FI>>();
+                let prog_map = f_dfa.compile::<FI>();
                 f_prog = prog_map.0;
                 f_state_map = prog_map.1;
                 prefix = f_dfa.pruned_prefix(&f_state_map);
@@ -157,16 +153,14 @@ impl Regex {
     // making a backtracking engine instead.
     fn make_boxed_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize, fallback: bool)
     -> ::Result<Box<Engine<u8>>> where
-    FI: Instructions<Ret=(usize, u8)> + 'static,
-    Program<FI>: CompileTarget<(usize, u8)>,
-    BI: Instructions<Ret=u8> + 'static,
-    Program<BI>: CompileTarget<u8>,
+    FI: Instructions<Ret=(usize, u8)> + CompileTarget<(usize, u8)> + 'static,
+    BI: Instructions<Ret=u8> + CompileTarget<u8> + 'static,
     {
-        let fb = Regex::make_forward_backward(nfa.clone(), max_states)
+        let fb = Regex::make_forward_backward::<FI, BI>(nfa.clone(), max_states)
             .map(|x| Box::new(x) as Box<Engine<u8>>);
         if fallback {
             fb.or_else(|_| {
-                let b = try!(Regex::make_backtracking(nfa, max_states));
+                let b = try!(Regex::make_backtracking::<BI>(nfa, max_states));
                 Ok(Box::new(b) as Box<Engine<u8>>)
             })
         } else {

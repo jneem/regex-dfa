@@ -9,12 +9,12 @@
 use std::fmt::Debug;
 use runner::Engine;
 use runner::prefix::{Prefix, PrefixSearcher, lit_searcher, AcSearcher, SimpleSearcher};
-use runner::program::{Instructions, Program};
+use runner::program::Instructions;
 
 #[derive(Clone, Debug)]
 pub struct ForwardBackwardEngine<FInsts: Instructions<Ret=(usize, u8)>, BInsts: Instructions> {
-    forward: Program<FInsts>,
-    backward: Program<BInsts>,
+    forward: FInsts,
+    backward: BInsts,
     prefix: Prefix,
 }
 
@@ -22,7 +22,7 @@ impl<FI, BI> ForwardBackwardEngine<FI, BI> where
 FI: Instructions<Ret=(usize, u8)>,
 BI: Instructions,
 BI::Ret: Debug {
-    pub fn new(forward: Program<FI>, prefix: Prefix, backward: Program<BI>) -> Self {
+    pub fn new(forward: FI, prefix: Prefix, backward: BI) -> Self {
         ForwardBackwardEngine {
             forward: forward,
             backward: backward,

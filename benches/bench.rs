@@ -50,7 +50,8 @@ fn longer_literal_no_regex(b: &mut Bencher) {
 #[bench]
 fn not_literal(b: &mut Bencher) {
     let re = regex!(".y");
-    let text = format!("{}y", repeat("x").take(50).collect::<String>());
+    let text = format!("{}y", repeat("x").take(10000).collect::<String>());
+    b.bytes = 10000;
     bench_assert_match(b, re, &text);
 }
 
