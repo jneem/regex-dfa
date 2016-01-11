@@ -24,7 +24,6 @@ utf8-ranges = "0.1"
 [dev-dependencies]
 matches = "0.1"
 quickcheck = "0.2"
-quickcheck_macros = { git = "https://github.com/BurntSushi/quickcheck" }
 regex = "0.1.41"
 rand = "0.3"
 serde_json = "0.6"

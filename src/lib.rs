@@ -59,8 +59,7 @@ let find_digits = |s: &str| {
 ```
 */
 
-#![cfg_attr(test, feature(plugin, test))]
-#![cfg_attr(test, plugin(quickcheck_macros))]
+#![cfg_attr(test, feature(test))]
 #[cfg(test)]
 extern crate quickcheck;
 

@@ -140,7 +140,7 @@ impl Look {
 
 #[cfg(test)]
 mod tests {
-    use quickcheck::{Arbitrary, Gen};
+    use quickcheck::{Arbitrary, Gen, quickcheck};
     use super::*;
 
     impl Arbitrary for Look {
@@ -151,24 +151,36 @@ mod tests {
         }
     }
 
-    #[quickcheck]
-    fn intersection_commutes(a: Look, b: Look) -> bool {
-        a.intersection(&b) == b.intersection(&a)
+    #[test]
+    fn intersection_commutes() {
+        fn prop(a: Look, b: Look) -> bool {
+            a.intersection(&b) == b.intersection(&a)
+        }
+        quickcheck(prop as fn(_, _) -> _);
     }
 
-    #[quickcheck]
-    fn intersection_ordering(a: Look, b: Look) -> bool {
-        a.intersection(&b) <= a
+    #[test]
+    fn intersection_ordering() {
+        fn prop(a: Look, b: Look) -> bool {
+            a.intersection(&b) <= a
+        }
+        quickcheck(prop as fn(_, _) -> _);
     }
 
-    #[quickcheck]
-    fn intersection_eoi(a: Look, b: Look) -> bool {
-        a.intersection(&b).allows_eoi() == (a.allows_eoi() && b.allows_eoi())
+    #[test]
+    fn intersection_eoi() {
+        fn prop(a: Look, b: Look) -> bool {
+            a.intersection(&b).allows_eoi() == (a.allows_eoi() && b.allows_eoi())
+        }
+        quickcheck(prop as fn(_, _) -> _);
     }
 
-    #[quickcheck]
-    fn intersection_set(a: Look, b: Look) -> bool {
-        a.intersection(&b).as_set() == &a.as_set().intersection(b.as_set())
+    #[test]
+    fn intersection_set() {
+        fn prop(a: Look, b: Look) -> bool {
+            a.intersection(&b).as_set() == &a.as_set().intersection(b.as_set())
+        }
+        quickcheck(prop as fn(_, _) -> _);
     }
 }
 
