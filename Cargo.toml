@@ -16,8 +16,8 @@ lazy_static = "0.1"
 memchr = "0.1"
 memmem = "0.1"
 num = "0.1"
-range-map = { git = "https://github.com/jneem/range-map.git" }
-refinery = { git = "https://github.com/jneem/refinery.git" }
+range-map = "0.1"
+refinery = "0.1"
 regex-syntax = "0.2"
 utf8-ranges = "0.1"
 
