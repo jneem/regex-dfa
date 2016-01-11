@@ -14,14 +14,19 @@ use std::collections::HashSet;
 use std::mem::swap;
 use regex_syntax;
 
-// Invariants for Nfa<_, HasLooks>:
-//
-// 1) the elements of `init` are all empty; implicitly, zero is the only initial state
-// 2) the only valid values for `accept` are `Accept::Always` and `Accept::Never`
 impl Nfa<u32, HasLooks> {
     pub fn from_regex(re: &str) -> ::Result<Nfa<u32, HasLooks>> {
         let expr = try!(regex_syntax::Expr::parse(re));
         Ok(NfaBuilder::from_expr(&expr).to_automaton())
+    }
+
+    pub fn add_look(&mut self, source: usize, target: usize, behind: Look, ahead: Look) {
+        let look = LookPair {
+            behind: behind,
+            ahead: ahead,
+            target_state: target,
+        };
+        self.states[source].looking.push(look);
     }
 
     // Removes all the look transitions.

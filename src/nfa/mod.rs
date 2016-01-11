@@ -28,18 +28,18 @@ mod no_looks;
 pub type StateSet = Vec<usize>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub struct LookPair {
+struct LookPair {
     pub behind: Look,
     pub ahead: Look,
     pub target_state: usize,
 }
 
 impl LookPair {
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.behind == Look::Empty || self.ahead == Look::Empty
     }
 
-    pub fn intersection(&self, other: &LookPair) -> LookPair {
+    fn intersection(&self, other: &LookPair) -> LookPair {
         LookPair {
             behind: self.behind.intersection(&other.behind),
             ahead: self.ahead.intersection(&other.ahead),
@@ -48,6 +48,9 @@ impl LookPair {
     }
 }
 
+/// The enum for determining whether a state is accepting. Classical NFAs would only allow `Never`
+/// and `Always` here, but we also allow `AtEoi`, which means that the state should accept if and
+/// only if we've reached the end of the input.
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Accept {
     Never,
@@ -56,7 +59,7 @@ pub enum Accept {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct State<Tok> {
+struct State<Tok> {
     accept: Accept,
     // If accept == Always and accept_tokens > 0, then we had to do some look-ahead in order to
     // determine that we have a match. In that case, accept_state is the index of the state that
@@ -74,13 +77,54 @@ pub struct State<Tok> {
     accept_look: Look,
     accept_tokens: u8,
 
+    // The transitions that consume input.
     consuming: RangeMultiMap<Tok, usize>,
+    // Transitions that do not consume input, but that are allowed to look forward and backward one
+    // token.
     looking: Vec<LookPair>,
 }
 
+/// A non-deterministic finite automaton.
+///
+/// `Tok` is the type of symbol that the automaton consumes. For most operations, only `u8` and
+/// `u32` are supported.
+///
+/// There are basically two versions of this struct with different representations and invariants,
+/// but they share enough code in common that it made more sense to write one struct and use a type
+/// parameter to determine which version it is. This is the meaning of the `Variant` type
+/// parameter, and it has two possible values: `HasLooks` and `NoLooks`.
+///
+/// If `Variant == HasLooks` then the `init` field is unused. The only legal values for a state's
+/// `accept` field are `Always` and `Never`, and all the `accept_*` fields are unused. The
+/// automaton implicitly has a single initial state (state 0). Methods specific to
+/// `Nfa<_, HasLooks>` are in `has_looks.rs`.
+///
+/// If `Variant == NoLooks` then the states' `looking` fields are unused. Initial states are
+/// explicitly given in `init` and in the states' `accept.*` fields.
+///
+/// The typical life-cycle of an `Nfa` is as follows:
+/// 
+/// - First, create an `Nfa<u32, HasLooks>` using `builder::NfaBuilder`.
+/// - Call `nfa.remove_looks()` to turn the `Nfa<u32, HasLooks>` to an `Nfa<u32, NoLooks>`.
+/// - Call `nfa.byte_me()` to turn the `Nfa<u32, NoLooks>` into an `Nfa<u8, NoLooks>`.
+/// - Call one of the `nfa.determinize_*()` methods to make a `Dfa`.
+///
+/// There are also some operations modifying `Nfa<u8, NoLooks>` that can be called between the last
+/// two steps.
 #[derive(Clone, Eq, PartialEq)]
 pub struct Nfa<Tok, Variant> {
     states: Vec<State<Tok>>,
+    // The various possible sets of states that the automaton can start in, depending on what the
+    // most recent `char` of input was. This should have length `Look::num()`, and it is indexed by
+    // the different types of looks.
+    //
+    // - The `Look::Empty` entry should not be used.
+    // - The `Look::Boundary` entry is used when starting from the beginning of the input.
+    //
+    // When starting in the middle of the input, look at the previous char and the next char. For
+    // every different variant of `Look` that matches that pair of chars, start at all the states
+    // in the corresponding entry of `init`. (In particular, we always start at every state in
+    // `init[Look::Full.as_usize()]`.)
     init: Vec<StateSet>,
     phantom: PhantomData<Variant>,
 }
@@ -96,6 +140,7 @@ impl Lookability for HasLooks {}
 impl Lookability for NoLooks {}
 
 impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
+    /// Creates a new `Nfa` that can `add_state()` `n` times without re-allocating.
     pub fn with_capacity(n: usize) -> Nfa<Tok, L> {
         Nfa {
             states: Vec::with_capacity(n),
@@ -147,15 +192,6 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     /// Adds a transition that moves from `source` to `target` on consuming a token in `range`.
     pub fn add_transition(&mut self, source: usize, target: usize, range: Range<Tok>) {
         self.states[source].consuming.insert(range, target);
-    }
-
-    pub fn add_look(&mut self, source: usize, target: usize, behind: Look, ahead: Look) {
-        let look = LookPair {
-            behind: behind,
-            ahead: ahead,
-            target_state: target,
-        };
-        self.states[source].looking.push(look);
     }
 
     // You've just done some operation that has changed state indices (probably by deleting
