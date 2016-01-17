@@ -20,15 +20,15 @@ use std::marker::PhantomData;
 use std::mem::swap;
 use utf8_ranges::{Utf8Range, Utf8Sequence, Utf8Sequences};
 
-/// This provides a more compact way of representing UTF-8 sequences.
-///
-/// A sequence of bytes belongs to this set if its first byte is in `head[0]`, its second byte is
-/// in `head[1]`, etc., and its last byte belongs to one of the ranges in `last_byte`.
-///
-/// This representation is handy for making NFAs because compared to the representation in
-/// `Utf8Sequences`, it adds many fewer states. Basically, we are doing some crude minimization
-/// before creating the states.
-pub struct MergedUtf8Sequences {
+// This provides a more compact way of representing UTF-8 sequences.
+//
+// A sequence of bytes belongs to this set if its first byte is in `head[0]`, its second byte is
+// in `head[1]`, etc., and its last byte belongs to one of the ranges in `last_byte`.
+//
+// This representation is handy for making NFAs because compared to the representation in
+// `Utf8Sequences`, it adds many fewer states. Basically, we are doing some crude minimization
+// before creating the states.
+struct MergedUtf8Sequences {
     pub head: Vec<Utf8Range>,
     pub last_byte: Vec<Utf8Range>,
 }
@@ -95,18 +95,19 @@ impl MergedUtf8Sequences {
             .map(|(_, seqs)| MergedUtf8Sequences::merge(seqs.into_iter())))
     }
 
-    pub fn from_ranges<'a, I>(iter: I) -> Box<Iterator<Item=MergedUtf8Sequences> + 'a>
+    fn from_ranges<'a, I>(iter: I) -> Box<Iterator<Item=MergedUtf8Sequences> + 'a>
     where I: Iterator<Item=Range<u32>> + 'a {
         MergedUtf8Sequences::from_sequences(
             iter.filter_map(to_char_pair)
                 .flat_map(|r| Utf8Sequences::new(r.0, r.1)))
     }
 
-    pub fn num_bytes(&self) -> u8 {
+    fn num_bytes(&self) -> u8 {
         (self.head.len() + 1) as u8
     }
 }
 
+// Creates a byte-based Dfa that matches all the chars in `look.as_set()`.
 fn make_char_dfa(look: Look) -> Dfa<(Look, u8)> {
     let mut nfa: Nfa<u32, NoLooks> = Nfa::with_capacity(2);
     nfa.add_state(Accept::Never);
@@ -122,6 +123,7 @@ fn make_char_dfa(look: Look) -> Dfa<(Look, u8)> {
         .optimize()
 }
 
+// Creates a byte-based Dfa that matches backwards all the chars in `look.as_set()`.
 fn make_rev_char_dfa(look: Look) -> Dfa<(Look, u8)> {
     let mut nfa: Nfa<u8, NoLooks> = Nfa::with_capacity(0); // TODO: better capacity
     nfa.add_state(Accept::Never);
@@ -153,6 +155,8 @@ fn make_rev_char_dfa(look: Look) -> Dfa<(Look, u8)> {
         .optimize()
 }
 
+// We cache optimized Dfas for the expensive looks. See `Nfa<u8, NoLooks>::add_min_utf8_sequences`
+// for an explanation.
 lazy_static! {
     static ref WORD_CHAR_DFA: Dfa<(Look, u8)> = make_char_dfa(Look::WordChar);
     static ref NOT_WORD_CHAR_DFA: Dfa<(Look, u8)> = make_char_dfa(Look::NotWordChar);
@@ -161,7 +165,7 @@ lazy_static! {
 }
 
 impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
-    /// Returns the set of all states that can be reached from some initial state.
+    // Returns the set of all states that can be reached from some initial state.
     fn reachable_from<I>(&self, states: I) -> HashSet<usize> where I: Iterator<Item=usize> {
         let mut active: HashSet<usize> = states.collect();
         let mut next_active: HashSet<usize> = HashSet::new();
@@ -196,8 +200,8 @@ impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
         ret
     }
 
-    /// Returns the set of all states that can be reached from an initial state and that can reach
-    /// some accepting state.
+    // Returns the set of all states that can be reached from an initial state and that can reach
+    // some accepting state.
     fn reachable_states(&self) -> HashSet<usize> {
         let init_states = self.initial_states();
         let final_states = self.final_states();
@@ -207,6 +211,8 @@ impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
         forward.intersection(&backward).cloned().collect()
     }
 
+    /// Optimizes this Nfa by removing all states that cannot be reached from an initial state,
+    /// and all states that cannot lead to an accepting state.
     pub fn trim_unreachable(&mut self) {
         let reachable = self.reachable_states();
 
@@ -234,6 +240,7 @@ impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
 }
 
 impl Nfa<u32, NoLooks> {
+    /// Converts this `Nfa` into one that consumes the input byte-by-byte.
     pub fn byte_me(self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let mut ret = Nfa::<u8, NoLooks> {
             states: self.states.iter().map(|s| State {
@@ -263,14 +270,27 @@ impl Nfa<u32, NoLooks> {
 }
 
 impl Nfa<u8, NoLooks> {
+    /// Converts this `Nfa` into a `Dfa`.
+    ///
+    /// Whenever this `Nfa` matches some text, the `Dfa` also will. But if this `Nfa` has multiple
+    /// possible endpoints for a match then the returned `Dfa` will only match the shortest one.
     pub fn determinize_shortest(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
         Determinizer::determinize(self, max_states, true, self.init.clone())
     }
 
+    /// Converts this `Nfa` into a `Dfa`.
+    ///
+    /// Whenever this `Nfa` matches some text, the `Dfa` also will. But if this `Nfa` has multiple
+    /// possible endpoints for a match then the returned `Dfa` is only guaranteed to match the
+    /// longest one.
     pub fn determinize_longest(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
         Determinizer::determinize(self, max_states, false, self.init.clone())
     }
 
+    /// Returns the reversal of this `Nfa`.
+    ///
+    /// If `self` matches some string of bytes, then the return value of this method will match
+    /// the same strings of bytes reversed.
     pub fn reverse(&self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let mut ret = self.reversed_simple();
 
@@ -318,7 +338,11 @@ impl Nfa<u8, NoLooks> {
         Ok(ret)
     }
 
-    pub fn anchor_look_behind(mut self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
+    /// This essentially modifies `self` by adding a `^.*` at the beginning.
+    ///
+    /// The result is actually a little bit different, because `.` matches a whole code point,
+    /// whereas the `^.*` that we add works at the byte level.
+    pub fn anchor(mut self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let loop_accept = self.accept_union(&self.init[Look::Full.as_usize()]);
         let loop_state = self.add_state(loop_accept);
         // If there are some states that only start at the beginning of the input, we need
@@ -463,6 +487,8 @@ impl Nfa<u8, NoLooks> {
     }
 }
 
+// This contains all the intermediate data structures that we need when turning an `Nfa` into a
+// `Dfa`.
 struct Determinizer<'a> {
     nfa: &'a Nfa<u8, NoLooks>,
     dfa: Dfa<(Look, u8)>,
@@ -473,10 +499,15 @@ struct Determinizer<'a> {
 }
 
 impl<'a> Determinizer<'a> {
-    pub fn determinize(nfa: &Nfa<u8, NoLooks>,
-                       max_states: usize,
-                       shortest_match: bool,
-                       init: Vec<StateSet>) -> ::Result<Dfa<(Look, u8)>> {
+    // Turns an Nfa into an almost-equivalent (up to the difference between shortest and longest
+    // matches) Dfa.
+    //
+    // `init` is a vector of length Look::num(). Each entry gives a set of initial states that
+    // will be turned into the initial states of the dfa.
+    fn determinize(nfa: &Nfa<u8, NoLooks>,
+                   max_states: usize,
+                   shortest_match: bool,
+                   init: Vec<StateSet>) -> ::Result<Dfa<(Look, u8)>> {
         let mut det = Determinizer::new(nfa, max_states, shortest_match);
         try!(det.run(init));
         Ok(det.dfa)
@@ -519,6 +550,10 @@ impl<'a> Determinizer<'a> {
         (union, look, bytes_ago)
     }
 
+    // Tries to add a new state to the Dfa.
+    //
+    // If the state already exists, returns the index of the old one. If there are too many states,
+    // returns an error.
     fn add_state(&mut self, s: StateSet) -> ::Result<usize> {
         if self.state_map.contains_key(&s) {
             Ok(*self.state_map.get(&s).unwrap())
@@ -575,7 +610,7 @@ mod tests {
     use look::Look;
     use nfa::{Accept, Nfa, NoLooks};
     use nfa::tests::{re_nfa, trans_nfa, trans_range_nfa};
-    use range_map::{Range, RangeMultiMap};
+    use range_map::Range;
     use std::usize;
 
     #[test]
@@ -589,11 +624,11 @@ mod tests {
     }
 
     fn re_nfa_anchored(re: &str) -> Nfa<u8, NoLooks> {
-        re_nfa(re).byte_me(usize::MAX).unwrap().anchor_look_behind(usize::MAX).unwrap()
+        re_nfa(re).byte_me(usize::MAX).unwrap().anchor(usize::MAX).unwrap()
     }
 
     #[test]
-    fn anchor_look_behind_simple() {
+    fn anchor_simple() {
         let nfa = re_nfa_anchored("a");
         let mut target = trans_range_nfa(2, &[(1, 1, Range::full()),
                                               (1, 1, Range::full()),
@@ -605,19 +640,8 @@ mod tests {
         assert_eq!(nfa, target);
     }
 
-    fn prepend(mm: &RangeMultiMap<u8, usize>, r: Range<u8>, s: usize)
-    -> RangeMultiMap<u8, usize> {
-        let mut ret = RangeMultiMap::new();
-        ret.insert(r, s);
-        for &(r, v) in mm.ranges_values() {
-            ret.insert(r, v);
-        }
-        ret
-    }
-
     #[test]
-    #[ignore]
-    fn anchor_look_behind_wb() {
+    fn anchor_wb() {
         let nfa = re_nfa_anchored(r"\ba");
         let mut target = trans_nfa(4, &[(3, 0, 'a'),
                                         (1, 0, 'a')]);
@@ -628,15 +652,15 @@ mod tests {
             target.add_transition(3, 1, range);
         }
         let mut target = target.byte_me(usize::MAX).unwrap();
-        target.states[2].consuming = prepend(&target.states[2].consuming, Range::full(), 2);
-        target.states[3].consuming = prepend(&target.states[3].consuming, Range::full(), 2);
+        target.states[2].consuming.insert(Range::full(), 2);
+        target.states[3].consuming.insert(Range::full(), 2);
 
         assert_eq!(nfa.determinize_shortest(usize::MAX).unwrap().optimize(),
             target.determinize_shortest(usize::MAX).unwrap().optimize());
     }
 
     #[test]
-    fn anchor_look_behind_already_anchored() {
+    fn anchor_already_anchored() {
         let nfa = re_nfa_anchored("^a");
         let mut target = trans_nfa(2, &[(1, 0, 'a')]);
         target.init_mut(Look::Boundary).push(1);

@@ -115,7 +115,7 @@ impl Regex {
             return Err(Error::InvalidEngine("anchors rule out the forward-backward engine"));
         }
 
-        let f_nfa = try!(try!(nfa.clone().byte_me(max_states)).anchor_look_behind(max_states));
+        let f_nfa = try!(try!(nfa.clone().byte_me(max_states)).anchor(max_states));
         let b_nfa = try!(try!(nfa.byte_me(max_states)).reverse(max_states));
 
         let f_dfa = try!(f_nfa.determinize_shortest(max_states)).optimize_for_shortest_match();

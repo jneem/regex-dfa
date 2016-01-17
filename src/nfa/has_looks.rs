@@ -15,11 +15,16 @@ use std::mem::swap;
 use regex_syntax;
 
 impl Nfa<u32, HasLooks> {
+    /// Creates a new Nfa from a regex string.
     pub fn from_regex(re: &str) -> ::Result<Nfa<u32, HasLooks>> {
         let expr = try!(regex_syntax::Expr::parse(re));
         Ok(NfaBuilder::from_expr(&expr).to_automaton())
     }
 
+    /// Adds a non-input consuming transition between states `source` and `target`.
+    ///
+    /// The transition will be traversed if the last consumed byte matches `behind` and the next
+    /// available byte matches `ahead`.
     pub fn add_look(&mut self, source: usize, target: usize, behind: Look, ahead: Look) {
         let look = LookPair {
             behind: behind,
@@ -29,7 +34,7 @@ impl Nfa<u32, HasLooks> {
         self.states[source].looking.push(look);
     }
 
-    // Removes all the look transitions.
+    /// Removes all look transitions, converting this Nfa into an `Nfa<u32, NoLooks>`.
     pub fn remove_looks(mut self) -> Nfa<u32, NoLooks> {
         if self.states.is_empty() {
             return Nfa::with_capacity(0);
@@ -103,7 +108,8 @@ impl Nfa<u32, HasLooks> {
             }
 
             // If the target state of the look is accepting, add a new look-ahead accepting state.
-            if self.states[target_state].accept == Accept::Always {
+            if self.states[target_state].accept == Accept::Always
+                    && !look.ahead.as_set().is_empty() {
                 let acc_state = self.add_look_ahead_state(look.ahead, 1, new_state);
                 for range in look.ahead.as_set().ranges() {
                     self.add_transition(new_state, acc_state, range);
@@ -126,7 +132,7 @@ impl Nfa<u32, HasLooks> {
         if look.behind.is_full() { None } else { Some(new_state) }
     }
 
-    // Finds (transitively) the set of all non-consuming transitions that can be make starting
+    // Finds (transitively) the set of all non-consuming transitions that can be made starting
     // from `state`.
     fn closure(&self, state: usize) -> Vec<LookPair> {
         let mut ret: HashSet<LookPair> = self.states[state].looking.iter().cloned().collect();

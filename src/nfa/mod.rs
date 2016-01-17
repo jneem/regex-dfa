@@ -103,7 +103,7 @@ struct State<Tok> {
 /// explicitly given in `init` and in the states' `accept.*` fields.
 ///
 /// The typical life-cycle of an `Nfa` is as follows:
-/// 
+///
 /// - First, create an `Nfa<u32, HasLooks>` using `builder::NfaBuilder`.
 /// - Call `nfa.remove_looks()` to turn the `Nfa<u32, HasLooks>` to an `Nfa<u32, NoLooks>`.
 /// - Call `nfa.byte_me()` to turn the `Nfa<u32, NoLooks>` into an `Nfa<u8, NoLooks>`.
@@ -149,6 +149,11 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
         }
     }
 
+    /// Returns my consuming transitions, but with the source and destination swapped.
+    ///
+    /// If I have a transition from state `i` to state `j` that consumes token `c`, then
+    /// `ret[j]` will contain a mapping from `c` to `i`, where `ret` is the value returned by this
+    /// method.
     pub fn reversed_transitions(&self) -> Vec<RangeMultiMap<Tok, usize>> {
         let mut ret = vec![RangeMultiMap::new(); self.states.len()];
 
@@ -174,12 +179,18 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
         state_idx
     }
 
+    /// Adds a new state and returns its index.
+    ///
+    /// The new state is always accepting; it represents the case that we accept after looking
+    /// ahead a few tokens.
     pub fn add_look_ahead_state(&mut self, look: Look, tokens: u8, accept_state: usize)
     -> usize {
-        let accept = if look == Look::Boundary { Accept::AtEoi } else { Accept::Always };
+        debug_assert!(look != Look::Boundary && look != Look::Full && look != Look::Empty);
+        debug_assert!(tokens > 0);
+
         let state_idx = self.states.len();
         self.states.push(State {
-            accept: accept,
+            accept: Accept::Always,
             accept_state: accept_state,
             accept_look: look,
             accept_tokens: tokens,
@@ -243,6 +254,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
         final_states
     }
 
+    // Changes the `Lookability` marker without allocating anything.
     fn transmuted<NewL: Lookability>(self) -> Nfa<Tok, NewL> {
         Nfa {
             states: self.states,
@@ -263,11 +275,11 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
         RangeMultiMap::from_vec(trans).group()
     }
 
+    /// Returns true if this Nfa can determine its initial state without looking at previous
+    /// bytes of the input.
     pub fn has_look_behind(&self) -> bool {
-        Look::all().iter().any(|&look|
-            look != Look::Full
-            && look != Look::Boundary
-            && !self.init[look.as_usize()].is_empty()
+        [Look::WordChar, Look::NotWordChar, Look::NewLine].iter().any(
+            |&look| !self.init[look.as_usize()].is_empty()
         )
     }
 
@@ -329,10 +341,12 @@ pub mod tests {
     use range_map::Range;
     use std::fmt::Debug;
 
+    // Creates an Nfa from a regular expression string.
     pub fn re_nfa(re: &str) -> Nfa<u32, NoLooks> {
         Nfa::from_regex(re).unwrap().remove_looks()
     }
 
+    // Creates an Nfa with the given transitions.
     pub fn trans_range_nfa<Tok>(size: usize, transitions: &[(usize, usize, Range<Tok>)])
     -> Nfa<Tok, NoLooks>
     where Tok: Debug + PrimInt {
@@ -346,7 +360,7 @@ pub mod tests {
         ret
     }
 
-    // Creates an Nfa with the given transitions.
+    // Creates an Nfa with the given transitions, each of which only takes a single char.
     pub fn trans_nfa<Tok>(size: usize, transitions: &[(usize, usize, char)])
     -> Nfa<Tok, NoLooks>
     where Tok: Debug + PrimInt {

@@ -701,7 +701,7 @@ pub mod tests {
         let nfa = Nfa::from_regex(re).unwrap()
             .remove_looks()
             .byte_me(usize::MAX).unwrap()
-            .anchor_look_behind(usize::MAX).unwrap();
+            .anchor(usize::MAX).unwrap();
 
         nfa.determinize_shortest(usize::MAX).unwrap()
             .optimize_for_shortest_match()
