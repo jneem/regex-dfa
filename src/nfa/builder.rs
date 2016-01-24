@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use look::Look;
-use nfa::{Accept, HasLooks, Nfa};
+use nfa::{Accept, HasLooks, Nfa, StateIdx};
 use range_map::{Range, RangeSet};
 use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
 use std::ops::Deref;
@@ -20,7 +20,7 @@ use std::ops::Deref;
 struct State {
     chars: RangeSet<u32>,
     looks: Vec<(Look, Look)>,
-    eps: Vec<usize>,
+    eps: Vec<StateIdx>,
 }
 
 impl State {
@@ -88,7 +88,7 @@ impl NfaBuilder {
     }
 
     /// Adds an eps transition between the given states.
-    fn add_eps(&mut self, from: usize, to: usize) {
+    fn add_eps(&mut self, from: StateIdx, to: StateIdx) {
         self.states[from].eps.push(to);
     }
 
@@ -134,7 +134,7 @@ impl NfaBuilder {
         let init_idx = self.states.len();
         self.states.push(State::new());
 
-        let mut expr_end_indices = Vec::<usize>::new();
+        let mut expr_end_indices = Vec::<StateIdx>::new();
         for expr in alts {
             let expr_init_idx = self.states.len();
             self.add_eps(init_idx, expr_init_idx);
@@ -193,7 +193,7 @@ impl NfaBuilder {
         }
 
         if let Some(max) = maybe_max {
-            let mut init_indices = Vec::<usize>::with_capacity((max - min) as usize);
+            let mut init_indices = Vec::<StateIdx>::with_capacity((max - min) as StateIdx);
             for i in 0..(max - min) {
                 cur_init_idx = self.states.len();
                 self.add_expr(expr);

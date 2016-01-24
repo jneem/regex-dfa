@@ -86,6 +86,7 @@ extern crate lazy_static;
 mod dfa;
 mod error;
 mod look;
+mod graph;
 mod nfa;
 mod prefix; // TODO: move to dfa
 mod regex;

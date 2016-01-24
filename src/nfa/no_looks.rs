@@ -10,7 +10,7 @@ use dfa::Dfa;
 use error::Error;
 use itertools::Itertools;
 use look::Look;
-use nfa::{Accept, Nfa, NoLooks, State, StateSet};
+use nfa::{Accept, Nfa, NoLooks, State, StateIdx, StateSet};
 use num::traits::PrimInt;
 use range_map::{Range, RangeMultiMap};
 use std::{char, usize};
@@ -166,9 +166,9 @@ lazy_static! {
 
 impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
     // Returns the set of all states that can be reached from some initial state.
-    fn reachable_from<I>(&self, states: I) -> HashSet<usize> where I: Iterator<Item=usize> {
-        let mut active: HashSet<usize> = states.collect();
-        let mut next_active: HashSet<usize> = HashSet::new();
+    fn reachable_from<I>(&self, states: I) -> HashSet<StateIdx> where I: Iterator<Item=StateIdx> {
+        let mut active: HashSet<StateIdx> = states.collect();
+        let mut next_active: HashSet<StateIdx> = HashSet::new();
         let mut ret = active.clone();
 
         while !active.is_empty() {
@@ -202,7 +202,7 @@ impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
 
     // Returns the set of all states that can be reached from an initial state and that can reach
     // some accepting state.
-    fn reachable_states(&self) -> HashSet<usize> {
+    fn reachable_states(&self) -> HashSet<StateIdx> {
         let init_states = self.initial_states();
         let final_states = self.final_states();
 
@@ -402,9 +402,9 @@ impl Nfa<u8, NoLooks> {
     // effect as add_utf8_sequences, but adds fewer states.
     fn add_min_utf8_sequences(
         &mut self,
-        start_state: usize,
+        start_state: StateIdx,
         dfa: &Dfa<(Look, u8)>,
-        end_state: usize,
+        end_state: StateIdx,
         max_states: usize,
     ) -> ::Result<()> {
         let offset = self.states.len();
@@ -446,8 +446,8 @@ impl Nfa<u8, NoLooks> {
     // how many bytes of look-ahead we used).
     fn add_utf8_sequence(
         &mut self,
-        start_state: usize,
-        mut end_state: usize,
+        start_state: StateIdx,
+        mut end_state: StateIdx,
         seq: MergedUtf8Sequences
     ) {
         let mut last_state = start_state;
@@ -471,9 +471,9 @@ impl Nfa<u8, NoLooks> {
     // Adds a byte path from `start_state` to `end_state` for every char in `ranges`.
     fn add_utf8_sequences<I>(
         &mut self,
-        start_state: usize,
+        start_state: StateIdx,
         ranges: I,
-        end_state: usize,
+        end_state: StateIdx,
         max_states: usize
     ) -> ::Result<()>
     where I: Iterator<Item=Range<u32>> {
@@ -492,7 +492,7 @@ impl Nfa<u8, NoLooks> {
 struct Determinizer<'a> {
     nfa: &'a Nfa<u8, NoLooks>,
     dfa: Dfa<(Look, u8)>,
-    state_map: HashMap<StateSet, usize>,
+    state_map: HashMap<StateSet, StateIdx>,
     active_states: Vec<StateSet>,
     max_states: usize,
     shortest_match: bool,
@@ -554,7 +554,7 @@ impl<'a> Determinizer<'a> {
     //
     // If the state already exists, returns the index of the old one. If there are too many states,
     // returns an error.
-    fn add_state(&mut self, s: StateSet) -> ::Result<usize> {
+    fn add_state(&mut self, s: StateSet) -> ::Result<StateIdx> {
         if self.state_map.contains_key(&s) {
             Ok(*self.state_map.get(&s).unwrap())
         } else if self.dfa.num_states() >= self.max_states {

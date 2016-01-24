@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use look::Look;
-use nfa::{Accept, HasLooks, LookPair, Nfa, NoLooks};
+use nfa::{Accept, HasLooks, LookPair, Nfa, NoLooks, StateIdx};
 use nfa::builder::NfaBuilder;
 use std::cmp::max;
 use std::collections::HashSet;
@@ -25,7 +25,7 @@ impl Nfa<u32, HasLooks> {
     ///
     /// The transition will be traversed if the last consumed byte matches `behind` and the next
     /// available byte matches `ahead`.
-    pub fn add_look(&mut self, source: usize, target: usize, behind: Look, ahead: Look) {
+    pub fn add_look(&mut self, source: StateIdx, target: StateIdx, behind: Look, ahead: Look) {
         let look = LookPair {
             behind: behind,
             ahead: ahead,
@@ -41,7 +41,7 @@ impl Nfa<u32, HasLooks> {
         }
 
         let all_closures: Vec<_> = (0..self.states.len()).map(|s| self.closure(s)).collect();
-        let mut new_states: Vec<(usize, Look, usize)> = Vec::new();
+        let mut new_states: Vec<(StateIdx, Look, StateIdx)> = Vec::new();
         for (state_idx, looks) in all_closures.iter().enumerate() {
             for &look in looks {
                 if let Some(new_state) = self.add_state_and_out_trans(state_idx, look) {
@@ -75,7 +75,8 @@ impl Nfa<u32, HasLooks> {
     //
     // Returns the index of the new state (which may not actually be new, for example if look is
     // just a pair of Fulls).
-    fn add_state_and_out_trans(&mut self, source_state: usize, look: LookPair) -> Option<usize> {
+    fn add_state_and_out_trans(&mut self, source_state: StateIdx, look: LookPair)
+    -> Option<StateIdx> {
         let target_state = look.target_state;
         let out_consuming = self.states[target_state].consuming.intersection(look.ahead.as_set());
 
@@ -134,7 +135,7 @@ impl Nfa<u32, HasLooks> {
 
     // Finds (transitively) the set of all non-consuming transitions that can be made starting
     // from `state`.
-    fn closure(&self, state: usize) -> Vec<LookPair> {
+    fn closure(&self, state: StateIdx) -> Vec<LookPair> {
         let mut ret: HashSet<LookPair> = self.states[state].looking.iter().cloned().collect();
         let mut new_looks = ret.clone();
         let mut next_looks = HashSet::new();
@@ -165,12 +166,13 @@ impl Nfa<u32, HasLooks> {
 #[cfg(test)]
 mod tests {
     use look::Look;
-    use nfa::{Accept, NoLooks, Nfa};
+    use nfa::{Accept, NoLooks, Nfa, StateIdx};
     use nfa::tests::{re_nfa, trans_nfa};
 
     // Creates an Nfa with the given transitions, with initial state zero, and with the final
     // state the only accepting state.
-    fn trans_nfa_extra(size: usize, transitions: &[(usize, usize, char)]) -> Nfa<u32, NoLooks> {
+    fn trans_nfa_extra(size: usize, transitions: &[(StateIdx, StateIdx, char)])
+    -> Nfa<u32, NoLooks> {
         let mut ret: Nfa<u32, NoLooks> = trans_nfa(size, transitions);
 
         ret.states[size-1].accept = Accept::Always;

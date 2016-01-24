@@ -17,6 +17,8 @@ mod builder;
 mod has_looks;
 mod no_looks;
 
+pub type StateIdx = usize;
+
 /// How we represent a set of states. The two important criteria are:
 ///
 /// - it should be reasonably fast even when there are thousands of states (this knocks out
@@ -25,13 +27,13 @@ mod no_looks;
 ///
 /// Note that efficient insertion and O(1) queries are not important. Therefore, we use a sorted
 /// Vec. (But be careful to keep it sorted!)
-pub type StateSet = Vec<usize>;
+pub type StateSet = Vec<StateIdx>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 struct LookPair {
     pub behind: Look,
     pub ahead: Look,
-    pub target_state: usize,
+    pub target_state: StateIdx,
 }
 
 impl LookPair {
@@ -64,7 +66,7 @@ struct State<Tok> {
     // If accept == Always and accept_tokens > 0, then we had to do some look-ahead in order to
     // determine that we have a match. In that case, accept_state is the index of the state that
     // should have accepted.
-    accept_state: usize,
+    accept_state: StateIdx,
     // In the case that we had some look-ahead, `accept_look` says what kind of char was involved
     // in the look-ahead, and `accept_tokens` says how many input tokens were consumed while
     // looking ahead. There are some restrictions on these values:
@@ -78,7 +80,7 @@ struct State<Tok> {
     accept_tokens: u8,
 
     // The transitions that consume input.
-    consuming: RangeMultiMap<Tok, usize>,
+    consuming: RangeMultiMap<Tok, StateIdx>,
     // Transitions that do not consume input, but that are allowed to look forward and backward one
     // token.
     looking: Vec<LookPair>,
@@ -154,7 +156,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     /// If I have a transition from state `i` to state `j` that consumes token `c`, then
     /// `ret[j]` will contain a mapping from `c` to `i`, where `ret` is the value returned by this
     /// method.
-    pub fn reversed_transitions(&self) -> Vec<RangeMultiMap<Tok, usize>> {
+    pub fn reversed_transitions(&self) -> Vec<RangeMultiMap<Tok, StateIdx>> {
         let mut ret = vec![RangeMultiMap::new(); self.states.len()];
 
         for (source_idx, st) in self.states.iter().enumerate() {
@@ -166,7 +168,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     }
 
     /// Adds a new state and returns its index.
-    pub fn add_state(&mut self, accept: Accept) -> usize {
+    pub fn add_state(&mut self, accept: Accept) -> StateIdx {
         let state_idx = self.states.len();
         self.states.push(State {
             accept: accept,
@@ -183,8 +185,8 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     ///
     /// The new state is always accepting; it represents the case that we accept after looking
     /// ahead a few tokens.
-    pub fn add_look_ahead_state(&mut self, look: Look, tokens: u8, accept_state: usize)
-    -> usize {
+    pub fn add_look_ahead_state(&mut self, look: Look, tokens: u8, accept_state: StateIdx)
+    -> StateIdx {
         debug_assert!(look != Look::Boundary && look != Look::Full && look != Look::Empty);
         debug_assert!(tokens > 0);
 
@@ -201,13 +203,23 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     }
 
     /// Adds a transition that moves from `source` to `target` on consuming a token in `range`.
-    pub fn add_transition(&mut self, source: usize, target: usize, range: Range<Tok>) {
+    pub fn add_transition(&mut self, source: StateIdx, target: StateIdx, range: Range<Tok>) {
         self.states[source].consuming.insert(range, target);
+    }
+
+    /// Returns the set of consuming transitions out of the given state.
+    pub fn consuming(&self, i: StateIdx) -> &RangeMultiMap<Tok, StateIdx> {
+        &self.states[i].consuming
+    }
+
+    /// Returns the number of states.
+    pub fn num_states(&self) -> usize {
+        self.states.len()
     }
 
     // You've just done some operation that has changed state indices (probably by deleting
     // un-needed states). Now re-label the existing transitions according to the new state indices.
-    fn map_states<F>(&mut self, map: F) where F: Fn(usize) -> Option<usize> {
+    fn map_states<F>(&mut self, map: F) where F: Fn(StateIdx) -> Option<StateIdx> {
         for st in &mut self.states {
             st.consuming.retain_values(|x| map(*x).is_some());
             // The unwrap is ok because we've just filtered all the `None`s (and `map` is Fn, not
@@ -336,7 +348,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Debug for Nfa<Tok, L> {
 
 #[cfg(test)]
 pub mod tests {
-    use nfa::{Accept, NoLooks, Nfa};
+    use nfa::{Accept, NoLooks, Nfa, StateIdx};
     use num::traits::PrimInt;
     use range_map::Range;
     use std::fmt::Debug;
@@ -347,7 +359,7 @@ pub mod tests {
     }
 
     // Creates an Nfa with the given transitions.
-    pub fn trans_range_nfa<Tok>(size: usize, transitions: &[(usize, usize, Range<Tok>)])
+    pub fn trans_range_nfa<Tok>(size: usize, transitions: &[(StateIdx, StateIdx, Range<Tok>)])
     -> Nfa<Tok, NoLooks>
     where Tok: Debug + PrimInt {
         let mut ret: Nfa<Tok, NoLooks> = Nfa::with_capacity(size);
@@ -361,7 +373,7 @@ pub mod tests {
     }
 
     // Creates an Nfa with the given transitions, each of which only takes a single char.
-    pub fn trans_nfa<Tok>(size: usize, transitions: &[(usize, usize, char)])
+    pub fn trans_nfa<Tok>(size: usize, transitions: &[(StateIdx, StateIdx, char)])
     -> Nfa<Tok, NoLooks>
     where Tok: Debug + PrimInt {
         let tok = |x: char| -> Tok { Tok::from(x as u32).unwrap() };

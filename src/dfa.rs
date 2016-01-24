@@ -6,8 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use graph::Graph;
 use look::Look;
-use nfa::{Accept, StateSet};
+use nfa::{Accept, StateIdx, StateSet};
 use prefix::PrefixSearcher;
 use range_map::{Range, RangeMap, RangeMultiMap, RangeSet};
 use refinery::Partition;
@@ -22,7 +23,7 @@ use std::u32;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct State<Ret> {
-    pub transitions: RangeMap<u8, usize>,
+    pub transitions: RangeMap<u8, StateIdx>,
     pub accept: Accept,
     pub ret: Option<Ret>,
 }
@@ -53,7 +54,7 @@ pub struct Dfa<Ret: 'static> {
     ///
     /// All other positions in `init` are only used if we are specifically asked to start
     /// there; this is mainly useful in the forward-backward engine.
-    pub init: Vec<Option<usize>>,
+    pub init: Vec<Option<StateIdx>>,
 }
 
 impl<Ret: RetTrait> Dfa<Ret> {
@@ -70,24 +71,24 @@ impl<Ret: RetTrait> Dfa<Ret> {
         self.states.len()
     }
 
-    pub fn add_state(&mut self, accept: Accept, ret: Option<Ret>) -> usize {
+    pub fn add_state(&mut self, accept: Accept, ret: Option<Ret>) -> StateIdx {
         self.states.push(State::new(accept, ret));
         self.states.len() - 1
     }
 
-    pub fn set_transitions(&mut self, from: usize, transitions: RangeMap<u8, usize>) {
+    pub fn set_transitions(&mut self, from: StateIdx, transitions: RangeMap<u8, StateIdx>) {
         self.states[from].transitions = transitions;
     }
 
-    pub fn init_state(&self, look: Look) -> Option<usize> {
+    pub fn init_state(&self, look: Look) -> Option<StateIdx> {
         self.init[look.as_usize()]
     }
 
-    pub fn init_at_start(&self) -> Option<usize> {
+    pub fn init_at_start(&self) -> Option<StateIdx> {
         self.init_state(Look::Boundary)
     }
 
-    pub fn init_otherwise(&self) -> Option<usize> {
+    pub fn init_otherwise(&self) -> Option<StateIdx> {
         self.init_state(Look::Full)
     }
 
@@ -97,17 +98,17 @@ impl<Ret: RetTrait> Dfa<Ret> {
     }
 
     /// Get transitions from a given state.
-    pub fn transitions(&self, state: usize) -> &RangeMap<u8, usize> {
+    pub fn transitions(&self, state: StateIdx) -> &RangeMap<u8, StateIdx> {
         &self.states[state].transitions
     }
 
     /// Returns the conditions under which the given state accepts.
-    pub fn accept(&self, state: usize) -> &Accept {
+    pub fn accept(&self, state: StateIdx) -> &Accept {
         &self.states[state].accept
     }
 
     /// The value that will be returned if we accept in state `state`.
-    pub fn ret(&self, state: usize) -> Option<&Ret> {
+    pub fn ret(&self, state: StateIdx) -> Option<&Ret> {
         self.states[state].ret.as_ref()
     }
 
@@ -136,7 +137,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
     }
 
     /// Returns the transitions of this automaton, reversed.
-    fn reversed_transitions(&self) -> Vec<RangeMultiMap<u8, usize>> {
+    fn reversed_transitions(&self) -> Vec<RangeMultiMap<u8, StateIdx>> {
         let mut ret = vec![RangeMultiMap::new(); self.states.len()];
 
         for (source, st) in self.states.iter().enumerate() {
@@ -148,7 +149,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
         ret
     }
 
-    fn make_prefix(&self, state_map: &[usize], prune_suffixes: bool) -> Prefix {
+    fn make_prefix(&self, state_map: &[StateIdx], prune_suffixes: bool) -> Prefix {
         let mut searcher = PrefixSearcher::new(prune_suffixes);
         // It might seem silly to look for prefixes starting at the anchored state, but it's useful
         // for forward-backward matching. In cases where the regex is honestly anchored, we won't
@@ -164,7 +165,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
     ///
     /// `state_map` gives a mapping between the `Dfa` states and the states that the prefix
     /// should report.
-    pub fn prefix(&self, state_map: &[usize]) -> Prefix {
+    pub fn prefix(&self, state_map: &[StateIdx]) -> Prefix {
         self.make_prefix(state_map, false)
     }
 
@@ -174,14 +175,14 @@ impl<Ret: RetTrait> Dfa<Ret> {
     ///
     /// `state_map` gives a mapping between the `Dfa` states and the states that the prefix
     /// should report.
-    pub fn pruned_prefix(&self, state_map: &[usize]) -> Prefix {
+    pub fn pruned_prefix(&self, state_map: &[StateIdx]) -> Prefix {
         self.make_prefix(state_map, true)
     }
 
     /// Compiles this `Dfa` into instructions for execution.
     ///
     /// Returns the new instructions, along with a map from the dfa states to the instructions.
-    pub fn compile<P: CompileTarget<Ret>>(&self) -> (P, Vec<usize>) {
+    pub fn compile<P: CompileTarget<Ret>>(&self) -> (P, Vec<StateIdx>) {
         P::from_dfa(self)
     }
 
@@ -249,26 +250,27 @@ impl<Ret: RetTrait> Dfa<Ret> {
         changed
     }
 
+    /*
     /// Does a depth-first search of this `Dfa`.
     ///
     /// Every time the search visits a new state, `visit` will be called. Every time the search
     /// detects a loop, `cycle` will be called. If either of these calls returns `false`, the
     /// search will terminate early.
     fn dfs<Visit, Cycle>(&self, mut visit: Visit, mut cycle: Cycle)
-    where Visit: FnMut(usize) -> bool, Cycle: FnMut(&[usize]) -> bool {
+    where Visit: FnMut(StateIdx) -> bool, Cycle: FnMut(&[StateIdx]) -> bool {
         if self.states.is_empty() {
             return;
         }
 
         // Pairs of (state, children_left_to_explore).
-        let mut stack: Vec<(usize, std::slice::Iter<_>)> = Vec::with_capacity(self.states.len());
+        let mut stack: Vec<(StateIdx, std::slice::Iter<_>)> = Vec::with_capacity(self.states.len());
         let mut visiting: Vec<bool> = vec![false; self.states.len()];
         let mut done: Vec<bool> = vec![false; self.states.len()];
 
         // For nodes that we are currently visiting, this is their position on the stack.
         let mut stack_pos: Vec<usize> = vec![0; self.states.len()];
 
-        let start_states: Vec<usize> = self.init.iter().filter_map(|x| *x).collect();
+        let start_states: Vec<StateIdx> = self.init.iter().filter_map(|x| *x).collect();
 
         for &start_idx in &start_states {
             if !done[start_idx] {
@@ -312,15 +314,9 @@ impl<Ret: RetTrait> Dfa<Ret> {
             }
         }
     }
+    */
 
-    /// Returns a list of states, visited in depth-first order.
-    fn dfs_order(&self) -> Vec<usize> {
-        let mut ret: Vec<usize> = Vec::new();
-        self.dfs(|st| { ret.push(st); true }, |_| true);
-        ret
-    }
-
-    fn map_states<F: FnMut(usize) -> usize>(&mut self, mut map: F) {
+    fn map_states<F: FnMut(StateIdx) -> StateIdx>(&mut self, mut map: F) {
         for st in &mut self.states {
             st.transitions.map_values(|x| map(*x));
         }
@@ -336,10 +332,10 @@ impl<Ret: RetTrait> Dfa<Ret> {
     /// - better locality: after sorting, many transitions just go straight to the next state.
     /// - we prune unreachable states.
     fn sort_states(&mut self) {
-        let sorted = self.dfs_order();
+        let sorted = self.dfs_order(self.init.iter().filter_map(|x| *x));
 
         // Not every old state will necessary get mapped to a new one (unreachable states won't).
-        let mut state_map: Vec<Option<usize>> = vec![None; self.states.len()];
+        let mut state_map: Vec<Option<StateIdx>> = vec![None; self.states.len()];
         let mut old_states = vec![State::new(Accept::Never, None); self.states.len()];
         mem::swap(&mut old_states, &mut self.states);
 
@@ -351,17 +347,6 @@ impl<Ret: RetTrait> Dfa<Ret> {
         // Fix the transitions and initialization to point to the new states. The `unwrap` here is
         // basically the assertion that all reachable states should be mapped to new states.
         self.map_states(|s| state_map[s].unwrap());
-    }
-
-    /// Checks whether this DFA has any cycles.
-    ///
-    /// If not, it's a good candidate for the backtracking engine.
-    #[allow(unused)]
-    // TODO: test for cycles in the nfa, rather than the dfa
-    pub fn has_cycles(&self) -> bool {
-        let mut found = false;
-        self.dfs(|_| true, |_| { found = true; false });
-        found
     }
 }
 
@@ -397,11 +382,11 @@ impl<Ret: Debug> Debug for Dfa<Ret> {
 }
 
 pub trait CompileTarget<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>);
+    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>);
 }
 
 impl<Ret: RetTrait> CompileTarget<Ret> for VmInsts<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>) {
+    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>) {
         let mut cmp = VmCompiler::new(dfa);
         cmp.compile(dfa);
         (cmp.insts, cmp.state_map)
@@ -409,7 +394,7 @@ impl<Ret: RetTrait> CompileTarget<Ret> for VmInsts<Ret> {
 }
 
 impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<usize>) {
+    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>) {
         let mut table = vec![u32::MAX; 256 * dfa.num_states()];
         let accept: Vec<Option<Ret>> = dfa.states.iter()
             .map(|st| if st.accept == Accept::Always { st.ret } else { None })
@@ -436,7 +421,7 @@ impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
 }
 
 struct VmCompiler<Ret: 'static> {
-    state_map: Vec<usize>,
+    state_map: Vec<StateIdx>,
     insts: VmInsts<Ret>,
 }
 
@@ -490,8 +475,8 @@ impl<Ret: RetTrait> VmCompiler<Ret> {
         (self.insts.branch_table.len() / 256) - 1
     }
 
-    fn single_target<'a, Iter>(mut iter: Iter) -> Option<usize>
-    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
+    fn single_target<'a, Iter>(mut iter: Iter) -> Option<StateIdx>
+    where Iter: Iterator<Item = &'a (Range<u8>, StateIdx)> {
         if let Some(&(_, target)) = iter.next() {
             while let Some(&(_, next_target)) = iter.next() {
                 if target != next_target {
@@ -505,7 +490,7 @@ impl<Ret: RetTrait> VmCompiler<Ret> {
     }
 
     fn single_char<'a, Iter>(mut iter: Iter) -> Option<u8>
-    where Iter: Iterator<Item = &'a (Range<u8>, usize)> {
+    where Iter: Iterator<Item = &'a (Range<u8>, StateIdx)> {
         if let Some(&(range, _)) = iter.next() {
             if range.start == range.end && iter.next().is_none() {
                 Some(range.start)
@@ -557,12 +542,12 @@ struct Minimizer<'a, Ret: 'static> {
     distinguishers: HashSet<usize>,
     dfa: &'a Dfa<Ret>,
     // The reversed transitions of the dfa.
-    rev: Vec<RangeMultiMap<u8, usize>>,
+    rev: Vec<RangeMultiMap<u8, StateIdx>>,
 }
 
 impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
-    fn initial_partition(dfa: &'a Dfa<Ret>) -> Vec<Vec<usize>> {
-        let mut part: HashMap<(Accept, Option<&Ret>, RangeSet<u8>), Vec<usize>> = HashMap::new();
+    fn initial_partition(dfa: &'a Dfa<Ret>) -> Vec<Vec<StateIdx>> {
+        let mut part: HashMap<(Accept, Option<&Ret>, RangeSet<u8>), Vec<StateIdx>> = HashMap::new();
         for (idx, st) in dfa.states.iter().enumerate() {
             let chars = st.transitions.to_range_set();
             part.entry((st.accept, dfa.ret(idx), chars)).or_insert(Vec::new()).push(idx);
@@ -572,7 +557,7 @@ impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
 
     // Refine the current partition based on the fact that everything in `splitter` is distinct
     // from everything not in it.
-    fn refine(&mut self, splitter: &[usize]) {
+    fn refine(&mut self, splitter: &[StateIdx]) {
         let dists = &mut self.distinguishers;
 
         self.partition.refine_with_callback(splitter, |p, int_idx, diff_idx| {
@@ -642,9 +627,9 @@ impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
             }
         }
 
-        ret.map_states(|s: usize| old_state_to_new[s]);
+        ret.map_states(|s: StateIdx| old_state_to_new[s]);
         ret.init = self.dfa.init.iter()
-            .map(|x| x.map(|s: usize| old_state_to_new[s]))
+            .map(|x| x.map(|s: StateIdx| old_state_to_new[s]))
             .collect();
         ret
     }
@@ -678,7 +663,7 @@ pub mod tests {
     use dfa::*;
     use itertools::Itertools;
     use look::Look;
-    use nfa::{Accept, Nfa};
+    use nfa::{Accept, Nfa, StateIdx};
     use range_map::{Range, RangeMap};
     use runner::prefix::Prefix;
     use std::usize;
@@ -709,7 +694,7 @@ pub mod tests {
             .optimize_for_shortest_match()
     }
 
-    pub fn trans_dfa_anchored(size: usize, trans: &[(usize, usize, Range<u8>)])
+    pub fn trans_dfa_anchored(size: usize, trans: &[(StateIdx, StateIdx, Range<u8>)])
     -> Dfa<(Look, u8)> {
         let mut ret = Dfa::new();
         for _ in 0..size {
@@ -806,30 +791,6 @@ pub mod tests {
     #[test]
     fn test_syntax_error() {
         assert!(make_dfa_bounded("(abc", 10).is_err());
-    }
-
-    #[test]
-    fn cycles() {
-        macro_rules! cyc {
-            ($re:expr, $res:expr) => {
-                {
-                    let dfa = make_dfa($re).unwrap();
-                    println!("{:?}", dfa);
-                    assert_eq!(dfa.has_cycles(), $res);
-                }
-            };
-        }
-
-        cyc!("abcde", false);
-        cyc!("ab*d", true);
-        cyc!("ab*", false);
-        cyc!("ab*$", true);
-        cyc!("ab+", false);
-        cyc!("ab+$", true);
-        cyc!("(ab*|cde)", false);
-        cyc!("(ab*|cde)f", true);
-        cyc!("(abc)*", false);
-        cyc!("(abc)*def", true);
     }
 
     #[test]
