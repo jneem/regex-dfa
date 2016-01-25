@@ -17,6 +17,9 @@ mod builder;
 mod has_looks;
 mod no_looks;
 
+// TODO: it would be nice to make StateIdx a new type instead of a type alias. The problem is that
+// we need to be able to index Vecs with it, and we can't impl<T> Index<StateIdx> for Vec<T>
+// because of coherence rules.
 pub type StateIdx = usize;
 
 /// How we represent a set of states. The two important criteria are:
