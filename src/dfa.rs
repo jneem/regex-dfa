@@ -10,10 +10,10 @@ use graph::Graph;
 use look::Look;
 use nfa::{Accept, StateIdx, StateSet};
 use prefix::PrefixSearcher;
-use range_map::{Range, RangeMap, RangeMultiMap, RangeSet};
+use range_map::{RangeMap, RangeMultiMap, RangeSet};
 use refinery::Partition;
 use runner::prefix::Prefix;
-use runner::program::{Inst, TableInsts, VmInsts};
+use runner::program::TableInsts;
 use std;
 use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
@@ -319,14 +319,6 @@ pub trait CompileTarget<Ret> {
     fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>);
 }
 
-impl<Ret: RetTrait> CompileTarget<Ret> for VmInsts<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>) {
-        let mut cmp = VmCompiler::new(dfa);
-        cmp.compile(dfa);
-        (cmp.insts, cmp.state_map)
-    }
-}
-
 impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
     fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>) {
         let mut table = vec![u32::MAX; 256 * dfa.num_states()];
@@ -351,123 +343,6 @@ impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
         };
 
         (insts, (0..dfa.num_states()).collect())
-    }
-}
-
-struct VmCompiler<Ret: 'static> {
-    state_map: Vec<StateIdx>,
-    insts: VmInsts<Ret>,
-}
-
-impl<Ret: RetTrait> VmCompiler<Ret> {
-    fn new(dfa: &Dfa<Ret>) -> VmCompiler<Ret> {
-        let mut state_map = vec![0; dfa.states.len()];
-        let mut next_inst_idx = 0usize;
-
-        // The VM states are almost the same as the Dfa states, except that accept instructions
-        // take an extra state.
-        for (i, st) in dfa.states.iter().enumerate() {
-            state_map[i] = next_inst_idx;
-            if st.accept == Accept::Always {
-                next_inst_idx += 1;
-            }
-            next_inst_idx += 1;
-        }
-
-        VmCompiler {
-            state_map: state_map,
-            insts: VmInsts {
-                byte_sets: Vec::new(),
-                branch_table: Vec::new(),
-                insts: Vec::with_capacity(next_inst_idx),
-                accept_at_eoi: vec![None; next_inst_idx],
-                is_anchored: dfa.is_anchored(),
-            }
-        }
-    }
-
-    fn add_byte_set(&mut self, set: &RangeSet<u8>) -> usize {
-        // TODO: we could check for duplicated sets here.
-        let offset = self.insts.byte_sets.len();
-        self.insts.byte_sets.extend([false; 256].into_iter());
-        for b in set.elements() {
-            self.insts.byte_sets[offset + b as usize] = true;
-        }
-
-        debug_assert!(self.insts.byte_sets.len() % 256 == 0);
-        (self.insts.byte_sets.len() / 256) - 1
-    }
-
-    fn add_byte_map(&mut self, map: &RangeMap<u8, usize>) -> usize {
-        let offset = self.insts.branch_table.len();
-        self.insts.branch_table.extend([u32::MAX; 256].into_iter());
-        for (b, &state) in map.keys_values() {
-            self.insts.branch_table[offset + b as usize] = state as u32;
-        }
-
-        debug_assert!(self.insts.branch_table.len() % 256 == 0);
-        (self.insts.branch_table.len() / 256) - 1
-    }
-
-    fn single_target<'a, Iter>(mut iter: Iter) -> Option<StateIdx>
-    where Iter: Iterator<Item = &'a (Range<u8>, StateIdx)> {
-        if let Some(&(_, target)) = iter.next() {
-            while let Some(&(_, next_target)) = iter.next() {
-                if target != next_target {
-                    return None;
-                }
-            }
-            Some(target)
-        } else {
-            None
-        }
-    }
-
-    fn single_char<'a, Iter>(mut iter: Iter) -> Option<u8>
-    where Iter: Iterator<Item = &'a (Range<u8>, StateIdx)> {
-        if let Some(&(range, _)) = iter.next() {
-            if range.start == range.end && iter.next().is_none() {
-                Some(range.start)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn compile(&mut self, dfa: &Dfa<Ret>) {
-        for st in &dfa.states {
-            if st.accept != Accept::Never {
-                self.insts.accept_at_eoi[self.insts.insts.len()] = st.ret;
-            }
-            if st.accept == Accept::Always {
-                // This unwrap is asserting that accepting states must have return values.
-                self.insts.insts.push(Inst::Acc(st.ret.unwrap()));
-                // Mark the next state (which will consume) as accepting at eoi also.
-                self.insts.accept_at_eoi[self.insts.insts.len()] = st.ret;
-            }
-            if let Some(tgt) = Self::single_target(st.transitions.ranges_values()) {
-                if self.state_map[tgt] == self.insts.insts.len() + 1 {
-                    // The target state is just immediately after this state -- we don't need a
-                    // branch instruction.
-                    let inst =
-                        if let Some(ch) = Self::single_char(st.transitions.ranges_values()) {
-                            Inst::Byte(ch)
-                        } else {
-                            Inst::ByteSet(self.add_byte_set(&st.transitions.to_range_set()))
-                        };
-                    self.insts.insts.push(inst);
-                    continue;
-                }
-            }
-
-            // If we're still here, we didn't add a Byte or ByteSet instruction, so add a Branch.
-            let mut bm = st.transitions.clone();
-            bm.map_values(|x| self.state_map[*x]);
-            let inst = Inst::Branch(self.add_byte_map(&bm));
-            self.insts.insts.push(inst);
-        }
     }
 }
 
@@ -572,7 +447,7 @@ impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
         let init = Minimizer::initial_partition(dfa);
         let part = Partition::new(init.into_iter().map(|set| set.into_iter()), dfa.num_states());
 
-        // According to Hopkins' algorithm, we're allowed to leave out one of the distinguishers
+        // According to Hopcroft's algorithm, we're allowed to leave out one of the distinguishers
         // (at least, as long as it isn't a set of accepting states). Choose the one with the
         // most states to leave out.
         let mut dists: HashSet<usize> = (0..part.num_parts()).collect();

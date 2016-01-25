@@ -13,7 +13,7 @@ use nfa::{Nfa, NoLooks};
 use runner::forward_backward::ForwardBackwardEngine;
 use runner::backtracking::BacktrackingEngine;
 use runner::prefix::Prefix;
-use runner::program::{Instructions, TableInsts, VmInsts};
+use runner::program::{Instructions, TableInsts};
 use runner::Engine;
 use std;
 use std::fmt::Debug;
@@ -48,10 +48,6 @@ pub enum EngineType {
 /// An enum listing the different ways for representing the regex program.
 #[derive(Clone, Copy, Debug)]
 pub enum ProgramType {
-    /// A `Vm` program represents a regex as a list of instructions. It is a fairly
-    /// memory-efficient representation, particularly when the regex contains lots of string
-    /// literals.
-    Vm,
     /// A `Table` program is the classical table-based implementation of a DFA.
     Table,
 }
@@ -199,19 +195,12 @@ impl Regex {
                 match prog {
                     ProgramType::Table =>
                         Box::new(try!(Regex::make_backtracking::<TableInsts<_>>(nfa, max_states))),
-                    ProgramType::Vm =>
-                        Box::new(try!(Regex::make_backtracking::<VmInsts<_>>(nfa, max_states))),
                 }
             }
             EngineType::ForwardBackward => {
                 match prog {
                     ProgramType::Table =>
                         try!(Regex::make_boxed_forward_backward::<TableInsts<_>, TableInsts<_>>(
-                                nfa,
-                                max_states,
-                                maybe_eng.is_none())),
-                    ProgramType::Vm =>
-                        try!(Regex::make_boxed_forward_backward::<VmInsts<_>, VmInsts<_>>(
                                 nfa,
                                 max_states,
                                 maybe_eng.is_none())),
@@ -247,8 +236,8 @@ mod tests {
         // This regex takes a huge number of states if you anchor it by adding '.*' in front.
         let re = "a[ab]{100}c";
         assert!(Regex::new_bounded(re, 2000).is_ok());
-        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Vm).is_ok());
-        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Vm).is_err());
+        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Table).is_ok());
+        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Table).is_err());
     }
 
     #[test]
@@ -256,10 +245,10 @@ mod tests {
         // This regex has cycles, so it shouldn't automatically fall back to backtracking.
         let re = "a[ab]{100}c+";
         assert!(Regex::new_bounded(re, 2000).is_err());
-        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Vm).is_err());
+        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Table).is_err());
 
         // If they specifically ask for backtracking, then ok.
-        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Vm).is_ok());
+        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Table).is_ok());
     }
 }
 

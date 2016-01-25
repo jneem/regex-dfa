@@ -13,14 +13,6 @@ pub trait RegexSearcher {
     fn shortest_match(&self, haystack: &str) -> Option<(usize, usize)>;
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Inst<Ret> {
-    Byte(u8),
-    ByteSet(usize),
-    Acc(Ret),
-    Branch(usize),
-}
-
 pub trait Instructions: Clone + Debug {
     type Ret: Clone + Debug;
 
@@ -81,107 +73,6 @@ pub trait Instructions: Clone + Debug {
 
     fn is_empty(&self) -> bool {
         self.num_states() == 0
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub struct VmInsts<Ret> {
-    pub byte_sets: Vec<bool>,
-    pub branch_table: Vec<u32>,
-    pub insts: Vec<Inst<Ret>>,
-    pub accept_at_eoi: Vec<Option<Ret>>,
-    pub is_anchored: bool,
-}
-
-impl<Ret: Copy + Debug> Instructions for VmInsts<Ret> {
-    type Ret = Ret;
-
-    fn check_accept(&self, state: usize) -> Option<Ret> {
-        match self.insts[state] {
-            Inst::Acc(a) => Some(a),
-            _ => None,
-        }
-    }
-
-    fn check_accept_at_eoi(&self, state: usize) -> Option<Ret> {
-        self.accept_at_eoi[state]
-    }
-
-    fn is_anchored(&self) -> bool {
-        self.is_anchored
-    }
-
-    fn next_state(&self, mut state: usize, input: u8) -> Option<usize> {
-        use self::Inst::*;
-        // Recursion might be more natural here, but it prevents us from being inlined.
-        loop {
-            match self.insts[state] {
-                Acc(_) => {
-                    state += 1;
-                },
-                Byte(b) => {
-                    return if b == input { Some(state + 1) } else { None };
-                },
-                ByteSet(bs_idx) => {
-                    return if self.byte_sets[bs_idx * 256 + input as usize] {
-                        Some(state + 1)
-                    } else {
-                        None
-                    };
-                },
-                Branch(table_idx) => {
-                    let next_state = self.branch_table[table_idx * 256 + input as usize];
-                    return if next_state != u32::MAX {
-                        Some(next_state as usize)
-                    } else {
-                        None
-                    };
-                },
-            }
-        }
-    }
-
-    fn num_states(&self) -> usize {
-        self.insts.len()
-    }
-}
-
-fn fmt_byte_map(f: &mut Formatter, map: &[u32]) -> Result<(), FmtError> {
-    try!(f.debug_map()
-         .entries(map.iter().cloned().enumerate()
-                  .filter(|pair| pair.1 != u32::MAX))
-         .finish());
-    Ok(())
-}
-
-fn fmt_byte_set(f: &mut Formatter, set: &[bool]) -> Result<(), FmtError> {
-    try!(f.debug_set()
-         .entries(set.iter().cloned().enumerate()
-                  .filter(|pair| pair.1)
-                  .map(|pair| pair.0))
-         .finish());
-    Ok(())
-}
-
-impl<Ret: Debug> Debug for VmInsts<Ret> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-        try!(f.write_fmt(format_args!("VmInsts ({} instructions):\n", self.insts.len())));
-
-        for (idx, inst) in self.insts.iter().enumerate() {
-            try!(f.write_fmt(format_args!("\tInst {}: {:?}\n", idx, inst)));
-        }
-
-        for i in 0..(self.branch_table.len() / 256) {
-            try!(f.write_fmt(format_args!("\tBranch {}: ", i)));
-            try!(fmt_byte_map(f, &self.branch_table[i*256 .. (i+1)*256]));
-            try!(f.write_str("\n"));
-        }
-        for i in 0..(self.byte_sets.len() / 256) {
-            try!(f.write_fmt(format_args!("\tSet {}: ", i)));
-            try!(fmt_byte_set(f, &self.byte_sets[i*256 .. (i+1)*256]));
-            try!(f.write_str("\n"));
-        }
-        Ok(())
     }
 }
 
