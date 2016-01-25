@@ -8,6 +8,7 @@
 
 use dfa::CompileTarget;
 use error::Error;
+use graph::Graph;
 use nfa::{Nfa, NoLooks};
 use runner::forward_backward::ForwardBackwardEngine;
 use runner::backtracking::BacktrackingEngine;
@@ -162,7 +163,8 @@ impl Regex {
     {
         let fb = Regex::make_forward_backward::<FI, BI>(nfa.clone(), max_states)
             .map(|x| Box::new(x) as Box<Engine<u8>>);
-        if fallback {
+        // TODO: we can allow cycles as long as the shortest match happens before the cycle.
+        if fallback && !nfa.has_cycles() {
             fb.or_else(|_| {
                 let b = try!(Regex::make_backtracking::<BI>(nfa, max_states));
                 Ok(Box::new(b) as Box<Engine<u8>>)
@@ -247,6 +249,17 @@ mod tests {
         assert!(Regex::new_bounded(re, 2000).is_ok());
         assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Vm).is_ok());
         assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Vm).is_err());
+    }
+
+    #[test]
+    fn fallback_cycles() {
+        // This regex has cycles, so it shouldn't automatically fall back to backtracking.
+        let re = "a[ab]{100}c+";
+        assert!(Regex::new_bounded(re, 2000).is_err());
+        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Vm).is_err());
+
+        // If they specifically ask for backtracking, then ok.
+        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Vm).is_ok());
     }
 }
 

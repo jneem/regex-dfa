@@ -8,6 +8,8 @@
 
 use dfa::{Dfa, RetTrait};
 use nfa::{Nfa, NoLooks, StateIdx};
+use num::traits::PrimInt;
+use std::fmt::Debug;
 
 #[derive(Clone, Copy, Debug)]
 pub enum DfsInstruction {
@@ -137,7 +139,7 @@ impl<T: RetTrait> Graph for Dfa<T> {
     }
 }
 
-impl Graph for Nfa<u8, NoLooks> {
+impl<Tok: Debug + PrimInt> Graph for Nfa<Tok, NoLooks> {
     fn num_states(&self) -> usize {
         Nfa::num_states(self)
     }
