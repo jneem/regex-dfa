@@ -7,10 +7,10 @@
 // except according to those terms.
 
 use dfa::{Dfa, RetTrait};
-use nfa::Accept;
+use dfa::trie::Trie;
+use nfa::{Accept, StateIdx};
 use std::collections::VecDeque;
 use std::mem::swap;
-use trie::Trie;
 
 // TODO: These limits are pretty arbitrary (copied from the regex crate).
 const NUM_PREFIX_LIMIT: usize = 30;
@@ -18,15 +18,15 @@ const PREFIX_LEN_LIMIT: usize = 15;
 
 /// A pair of a byte sequence and the index of the state that we are in after encountering that
 /// sequence.
-#[derive(Debug, Clone)]
-pub struct PrefixPart(pub Vec<u8>, pub usize);
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrefixPart(pub Vec<u8>, pub StateIdx);
 
 pub struct PrefixSearcher {
     active: VecDeque<PrefixPart>,
     current: PrefixPart,
     suffixes: Trie,
     prune_suffixes: bool,
-    pub finished: Vec<PrefixPart>,
+    finished: Vec<PrefixPart>,
 
     // The set of prefixes is complete if:
     //  - we're done with active prefixes before we go over any of our limits, and
@@ -38,7 +38,13 @@ pub struct PrefixSearcher {
 }
 
 impl PrefixSearcher {
-    pub fn new(prune: bool) -> PrefixSearcher {
+    pub fn extract<T: RetTrait>(dfa: &Dfa<T>, prune: bool, state: StateIdx) -> Vec<PrefixPart> {
+        let mut searcher = PrefixSearcher::new(prune);
+        searcher.search(dfa, state);
+        searcher.finished
+    }
+
+    fn new(prune: bool) -> PrefixSearcher {
         PrefixSearcher {
             active: VecDeque::new(),
             current: PrefixPart(Vec::new(), 0),
@@ -78,7 +84,7 @@ impl PrefixSearcher {
         self.active.len() + self.finished.len() + more > self.max_prefixes
     }
 
-    pub fn search<T: RetTrait>(&mut self, dfa: &Dfa<T>, state: usize) {
+    fn search<T: RetTrait>(&mut self, dfa: &Dfa<T>, state: StateIdx) {
         self.active.push_back(PrefixPart(Vec::new(), state));
         self.suffixes.insert(vec![].into_iter(), state);
         while !self.active.is_empty() {
@@ -120,12 +126,6 @@ impl PrefixSearcher {
             self.add(next_prefs);
         }
     }
-
-    pub fn map_states<F: FnMut(usize) -> usize>(&mut self, mut f: F) {
-        for part in &mut self.finished {
-            part.1 = f(part.1);
-        }
-    }
 }
 
 
@@ -133,7 +133,7 @@ impl PrefixSearcher {
 mod tests {
     use dfa;
     use look::Look;
-    use prefix::*;
+    use super::*;
 
     macro_rules! test_prefix {
         ($name:ident, $pruned:expr, $re_str:expr, $answer:expr, $max_num:expr, $max_len:expr) => {

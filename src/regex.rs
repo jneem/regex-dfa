@@ -94,11 +94,11 @@ impl Regex {
         let dfa = try!(nfa.determinize_shortest(max_states))
             .optimize_for_shortest_match()
             .map_ret(|(_, bytes)| bytes);
-        let (prog, state_map) = dfa.compile::<I>();
+        let prog = dfa.compile::<I>();
         let prefix = if dfa.is_anchored() {
             Prefix::Empty
         } else {
-            dfa.prefix(&state_map)
+            Prefix::for_slow_engine(dfa.prefix_strings())
         };
 
         Ok(BacktrackingEngine::new(prog, prefix))
@@ -120,30 +120,23 @@ impl Regex {
             .optimize();
         let b_dfa = b_dfa.map_ret(|(_, bytes)| bytes);
 
-        let (b_prog, b_state_map) = b_dfa.compile::<BI>();
+        let b_prog = b_dfa.compile::<BI>();
         let f_dfa = f_dfa.map_ret(|(look, bytes)| {
             let b_dfa_state = b_dfa.init[look.as_usize()].expect("BUG: back dfa must have this init");
-            (b_state_map[b_dfa_state], bytes)
+            (b_dfa_state, bytes)
         });
 
-        let (mut f_prog, mut f_state_map) = f_dfa.compile::<FI>();
-        let mut prefix = f_dfa.pruned_prefix(&f_state_map);
+        let mut f_prog = f_dfa.compile::<FI>();
+        let prefix = Prefix::for_fast_engine(f_dfa.pruned_prefix_strings());
         match prefix {
             Prefix::Empty => {},
-            Prefix::Ac(_, _) => {
-                // Don't use the Ac prefix, since we're faster than it anyway.
-                prefix = Prefix::Empty;
-            },
             _ => {
                 // If there is a non-trivial prefix, we can usually speed up matching by deleting
                 // transitions that return to the start state. That way, instead of returning to
                 // the start state, we will just fail to match. Then we get to search for the
                 // prefix before trying to match again.
                 let f_dfa = f_dfa.cut_loop_to_init().optimize_for_shortest_match();
-                let prog_map = f_dfa.compile::<FI>();
-                f_prog = prog_map.0;
-                f_state_map = prog_map.1;
-                prefix = f_dfa.pruned_prefix(&f_state_map);
+                f_prog = f_dfa.compile::<FI>();
             },
         }
 

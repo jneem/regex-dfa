@@ -7,6 +7,8 @@
 // except according to those terms.
 
 use aho_corasick::{Automaton, AcAutomaton, FullAcAutomaton, MatchesOverlapping};
+use dfa::PrefixPart;
+use nfa::StateIdx;
 use memchr::memchr;
 use memmem::{Searcher, TwoWaySearcher};
 
@@ -45,7 +47,7 @@ pub enum Prefix {
 pub struct PrefixResult {
     pub start_pos: usize,
     pub end_pos: usize,
-    pub end_state: usize,
+    pub end_state: StateIdx,
 }
 
 /// Encapsulates the `Prefix` and the input string, and allows iteration over all matches.
@@ -58,33 +60,57 @@ pub trait PrefixSearcher {
 }
 
 impl Prefix {
-    /// Converts a set of `(string, state)` pairs into a `Prefix` that matches any of the strings.
+    /// Converts a set of `PrefixParts` into a `Prefix` that matches any of the strings.
     ///
-    /// The `state` part of each `(string, state)` pair is the DFA state that we would be in after
-    /// matching the `string`.
-    pub fn from_strings<P: AsRef<[u8]>, I: Iterator<Item=(P, usize)>>(it: I) -> Prefix {
-        let strings: Vec<(Vec<u8>, usize)> = it
-            .filter(|x| !x.0.as_ref().is_empty())
-            .map(|(s, x)| (s.as_ref().to_vec(), x))
-            .collect();
+    /// This method only chooses `Prefix`es that are very fast to match.
+    pub fn for_fast_engine(parts: Vec<PrefixPart>) -> Prefix {
+        fn common_prefix<'a>(s1: &'a [u8], s2: &'a [u8]) -> &'a [u8] {
+            let prefix_len = s1.iter().zip(s2.iter())
+                .take_while(|pair| pair.0 == pair.1)
+                .count();
+            &s1[0..prefix_len]
+        }
 
-        if strings.is_empty() {
-            Prefix::Empty
-        } else if strings.len() == 1 {
-            if strings[0].0.len() == 1 {
-                Prefix::Byte(strings[0].0[0])
+        let mut parts = parts.iter().filter(|x| !x.0.is_empty());
+        if let Some(first) = parts.next() {
+            let lit = parts.fold(&first.0[..], |acc, p| common_prefix(acc, &p.0));
+            if lit.len() == 1 {
+                Prefix::Byte(lit[0])
+            } else if lit.len() > 1 {
+                Prefix::Lit(lit.to_vec())
             } else {
-                Prefix::Lit(strings.into_iter().next().unwrap().0)
+                Prefix::Empty
             }
-        } else if strings.iter().map(|x| x.0.len()).min() == Some(1) {
+        } else {
+            Prefix::Empty
+        }
+    }
+
+    /// Converts a set of `PrefixParts` into a `Prefix` that matches any of the strings.
+    ///
+    /// This method is not so picky about only choosing fast `Prefix`es.
+    pub fn for_slow_engine(mut parts: Vec<PrefixPart>) -> Prefix {
+        parts.retain(|x| !x.0.is_empty());
+
+        if parts.is_empty() {
+            Prefix::Empty
+        } else if parts.len() == 1 {
+            if parts[0].0.len() == 1 {
+                Prefix::Byte(parts[0].0[0])
+            } else if parts[0].0.len() > 1 {
+                Prefix::Lit(parts.into_iter().next().unwrap().0)
+            } else {
+                Prefix::Empty
+            }
+        } else if parts.iter().map(|x| x.0.len()).min() == Some(1) {
             let mut bs = vec![false; 256];
-            for (s, _) in strings.into_iter() {
-                bs[s[0] as usize] = true;
+            for part in parts.into_iter() {
+                bs[part.0[0] as usize] = true;
             }
             Prefix::ByteSet(bs)
         } else {
-            let state_map: Vec<_> = strings.iter().map(|x| x.1).collect();
-            let ac = FullAcAutomaton::new(AcAutomaton::new(strings.into_iter().map(|x| x.0)));
+            let state_map: Vec<_> = parts.iter().map(|x| x.1).collect();
+            let ac = FullAcAutomaton::new(AcAutomaton::new(parts.into_iter().map(|x| x.0)));
             Prefix::Ac(ac, state_map)
         }
     }
@@ -241,6 +267,7 @@ impl<'ac, 'i, 'st> PrefixSearcher for AcSearcher<'ac, 'i, 'st> {
 
 #[cfg(test)]
 mod tests {
+    use dfa::PrefixPart;
     use runner::prefix::*;
 
     impl<'a> Iterator for Box<PrefixSearcher + 'a> {
@@ -303,11 +330,18 @@ mod tests {
         assert_eq!(search(bs_pref("aeiou"), ""), vec![]);
     }
 
+    fn pref(strs: Vec<&str>) -> Prefix {
+        Prefix::for_slow_engine(
+            strs.into_iter()
+                .enumerate()
+                .map(|(i, s)| PrefixPart(s.as_bytes().to_vec(), i))
+                .collect())
+    }
+
     #[test]
     fn test_ac_search() {
         fn ac_pref(strs: Vec<&str>) -> Prefix {
-            let len = strs.len();
-            let pref = Prefix::from_strings(strs.into_iter().zip(0..len));
+            let pref = pref(strs);
             assert!(matches!(pref, Prefix::Ac(_, _)));
             pref
         }
@@ -323,13 +357,8 @@ mod tests {
     }
 
     #[test]
-    fn test_prefix_choice() {
+    fn test_prefix_choice_slow() {
         use runner::prefix::Prefix::*;
-
-        fn pref(strs: Vec<&str>) -> Prefix {
-            let len = strs.len();
-            Prefix::from_strings(strs.into_iter().zip(0..len))
-        }
 
         assert!(matches!(pref(vec![]), Empty));
         assert!(matches!(pref(vec![""]), Empty));
@@ -341,6 +370,32 @@ mod tests {
         assert!(matches!(pref(vec!["a", "b", "", "c"]), ByteSet(_)));
         assert!(matches!(pref(vec!["a", "baa", "", "c"]), ByteSet(_)));
         assert!(matches!(pref(vec!["ab", "baa", "", "cb"]), Ac(_, _)));
+    }
+
+    #[test]
+    fn test_prefix_choice_fast() {
+        use runner::prefix::Prefix::*;
+        fn pref_fast(strs: Vec<&str>) -> Prefix {
+            Prefix::for_fast_engine(
+                strs.into_iter()
+                    .enumerate()
+                    .map(|(i, s)| PrefixPart(s.as_bytes().to_vec(), i))
+                    .collect())
+        }
+
+
+        assert!(matches!(pref_fast(vec![]), Empty));
+        assert!(matches!(pref_fast(vec![""]), Empty));
+        assert!(matches!(pref_fast(vec!["a"]), Byte(_)));
+        assert!(matches!(pref_fast(vec!["", "a", ""]), Byte(_)));
+        assert!(matches!(pref_fast(vec!["abc"]), Lit(_)));
+        assert!(matches!(pref_fast(vec!["abc", ""]), Lit(_)));
+        assert!(matches!(pref_fast(vec!["a", "b", "c"]), Empty));
+        assert!(matches!(pref_fast(vec!["a", "b", "", "c"]), Empty));
+        assert!(matches!(pref_fast(vec!["a", "baa", "", "c"]), Empty));
+        assert!(matches!(pref_fast(vec!["ab", "baa", "", "cb"]), Empty));
+        assert!(matches!(pref_fast(vec!["ab", "aaa", "", "acb"]), Byte(_)));
+        assert!(matches!(pref_fast(vec!["ab", "abc", "abd"]), Lit(_)));
     }
 
     // TODO: test skipping

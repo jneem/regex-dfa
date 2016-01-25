@@ -6,20 +6,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+mod trie;
+mod prefix_searcher;
+mod minimizer;
+
+use dfa::minimizer::Minimizer;
+use dfa::prefix_searcher::PrefixSearcher;
 use graph::Graph;
 use look::Look;
-use nfa::{Accept, StateIdx, StateSet};
-use prefix::PrefixSearcher;
-use range_map::{RangeMap, RangeMultiMap, RangeSet};
-use refinery::Partition;
-use runner::prefix::Prefix;
+use nfa::{Accept, StateIdx};
+use range_map::{RangeMap, RangeMultiMap};
 use runner::program::TableInsts;
 use std;
-use std::collections::{HashSet, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
 use std::u32;
+
+pub use dfa::prefix_searcher::PrefixPart;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct State<Ret> {
@@ -132,8 +136,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
     ///
     /// Uses Hopcroft's algorithm.
     fn minimize(&self) -> Dfa<Ret> {
-        let mut min = Minimizer::new(self);
-        min.minimize()
+        Minimizer::minimize(self)
     }
 
     /// Returns the transitions of this automaton, reversed.
@@ -149,40 +152,37 @@ impl<Ret: RetTrait> Dfa<Ret> {
         ret
     }
 
-    fn make_prefix(&self, state_map: &[StateIdx], prune_suffixes: bool) -> Prefix {
-        let mut searcher = PrefixSearcher::new(prune_suffixes);
+    fn make_prefix(&self, prune_suffixes: bool) -> Vec<PrefixPart> {
         // It might seem silly to look for prefixes starting at the anchored state, but it's useful
         // for forward-backward matching. In cases where the regex is honestly anchored, we won't
         // ask to make a prefix anyway.
         if let Some(state) = self.init_state(Look::Boundary) {
-            searcher.search(self, state);
+            PrefixSearcher::extract(self, prune_suffixes, state)
+        } else {
+            Vec::new()
         }
-        searcher.map_states(|x| state_map[x]);
-        Prefix::from_strings(searcher.finished.into_iter().map(|x| (x.0, x.1)))
     }
 
-    /// Creates a prefix that can search quickly for potential match starts.
+    /// Returns a set of strings that match the beginning of this `Dfa`.
     ///
-    /// `state_map` gives a mapping between the `Dfa` states and the states that the prefix
-    /// should report.
-    pub fn prefix(&self, state_map: &[StateIdx]) -> Prefix {
-        self.make_prefix(state_map, false)
+    /// If the set is non-empty, every match of this `Dfa` is guaranteed to start with one of these
+    /// strings.
+    pub fn prefix_strings(&self) -> Vec<PrefixPart> {
+        self.make_prefix(false)
     }
 
-    /// Creates a prefix that can search quickly for potential match starts. Unlike the prefix
-    /// returned by `prefix()`, this prefix doesn't necessarily have the same starting position as
-    /// the whole match.
+    /// Returns a set of strings that match the beginning of this `Dfa`.
     ///
-    /// `state_map` gives a mapping between the `Dfa` states and the states that the prefix
-    /// should report.
-    pub fn pruned_prefix(&self, state_map: &[StateIdx]) -> Prefix {
-        self.make_prefix(state_map, true)
+    /// This is like `prefix_strings`, except that if one prefix is a suffix of another and they
+    /// both end up in the same `Dfa` state then only the shorter one will be included.
+    pub fn pruned_prefix_strings(&self) -> Vec<PrefixPart> {
+        self.make_prefix(true)
     }
 
     /// Compiles this `Dfa` into instructions for execution.
     ///
     /// Returns the new instructions, along with a map from the dfa states to the instructions.
-    pub fn compile<P: CompileTarget<Ret>>(&self) -> (P, Vec<StateIdx>) {
+    pub fn compile<P: CompileTarget<Ret>>(&self) -> P {
         P::from_dfa(self)
     }
 
@@ -316,11 +316,11 @@ impl<Ret: Debug> Debug for Dfa<Ret> {
 }
 
 pub trait CompileTarget<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>);
+    fn from_dfa(dfa: &Dfa<Ret>) -> Self;
 }
 
 impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> (Self, Vec<StateIdx>) {
+    fn from_dfa(dfa: &Dfa<Ret>) -> Self {
         let mut table = vec![u32::MAX; 256 * dfa.num_states()];
         let accept: Vec<Option<Ret>> = dfa.states.iter()
             .map(|st| if st.accept == Accept::Always { st.ret } else { None })
@@ -335,134 +335,11 @@ impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
             }
         }
 
-        let insts = TableInsts {
+        TableInsts {
             accept: accept,
             accept_at_eoi: accept_at_eoi,
             table: table,
             is_anchored: dfa.is_anchored(),
-        };
-
-        (insts, (0..dfa.num_states()).collect())
-    }
-}
-
-struct Minimizer<'a, Ret: 'static> {
-    partition: Partition,
-    distinguishers: HashSet<usize>,
-    dfa: &'a Dfa<Ret>,
-    // The reversed transitions of the dfa.
-    rev: Vec<RangeMultiMap<u8, StateIdx>>,
-}
-
-impl<'a, Ret: RetTrait> Minimizer<'a, Ret> {
-    fn initial_partition(dfa: &'a Dfa<Ret>) -> Vec<Vec<StateIdx>> {
-        let mut part: HashMap<(Accept, Option<&Ret>, RangeSet<u8>), Vec<StateIdx>> = HashMap::new();
-        for (idx, st) in dfa.states.iter().enumerate() {
-            let chars = st.transitions.to_range_set();
-            part.entry((st.accept, dfa.ret(idx), chars)).or_insert(Vec::new()).push(idx);
-        }
-        part.into_iter().map(|x| x.1).collect()
-    }
-
-    // Refine the current partition based on the fact that everything in `splitter` is distinct
-    // from everything not in it.
-    fn refine(&mut self, splitter: &[StateIdx]) {
-        let dists = &mut self.distinguishers;
-
-        self.partition.refine_with_callback(splitter, |p, int_idx, diff_idx| {
-            if dists.contains(&int_idx) || p.part(diff_idx).len() < p.part(int_idx).len() {
-                dists.insert(diff_idx);
-            } else {
-                dists.insert(int_idx);
-            }
-        });
-    }
-
-    fn next_distinguisher(&mut self) -> Option<usize> {
-        let maybe_elt = self.distinguishers.iter().next().cloned();
-        if let Some(elt) = maybe_elt {
-            self.distinguishers.remove(&elt);
-        }
-        maybe_elt
-    }
-
-    fn get_input_sets(&mut self, part_idx: usize) -> Vec<StateSet> {
-        let inputs: Vec<_> = self.partition.part(part_idx)
-                .iter()
-                .flat_map(|s| self.rev[*s].ranges_values().cloned())
-                .collect();
-        if inputs.is_empty() {
-            return Vec::new();
-        }
-
-        let inputs = RangeMultiMap::from_vec(inputs);
-        let mut sets: Vec<StateSet> = inputs.group()
-            .ranges_values()
-            .map(|&(_, ref x)| x.clone())
-            .collect();
-        for set in &mut sets {
-            set.sort();
-        }
-        sets.sort();
-        sets.dedup();
-        sets
-    }
-
-    fn compute_partition(&mut self) {
-        while let Some(dist) = self.next_distinguisher() {
-            let sets = self.get_input_sets(dist);
-
-            for set in &sets {
-                self.refine(set);
-            }
-        }
-    }
-
-    fn minimize(&mut self) -> Dfa<Ret> {
-        self.compute_partition();
-
-        let mut ret = Dfa::new();
-
-        // We need to re-index the states: build a map that maps old indices to
-        // new indices.
-        let mut old_state_to_new = vec![0; self.dfa.num_states()];
-        for part in self.partition.iter() {
-            // This unwrap is safe because we don't allow any empty sets into the partition.
-            let rep_idx = *part.iter().next().unwrap();
-            ret.states.push(self.dfa.states[rep_idx].clone());
-
-            for &state in part.iter() {
-                old_state_to_new[state] = ret.states.len() - 1;
-            }
-        }
-
-        ret.map_states(|s: StateIdx| old_state_to_new[s]);
-        ret.init = self.dfa.init.iter()
-            .map(|x| x.map(|s: StateIdx| old_state_to_new[s]))
-            .collect();
-        ret
-    }
-
-    fn new(dfa: &'a Dfa<Ret>) -> Minimizer<'a, Ret> {
-        let init = Minimizer::initial_partition(dfa);
-        let part = Partition::new(init.into_iter().map(|set| set.into_iter()), dfa.num_states());
-
-        // According to Hopcroft's algorithm, we're allowed to leave out one of the distinguishers
-        // (at least, as long as it isn't a set of accepting states). Choose the one with the
-        // most states to leave out.
-        let mut dists: HashSet<usize> = (0..part.num_parts()).collect();
-        let worst = (0..dists.len())
-            .filter(|i| dfa.states[part.part(*i)[0]].accept == Accept::Never)
-            .max_by_key(|i| part.part(*i).len());
-        if let Some(worst) = worst {
-            dists.remove(&worst);
-        }
-
-        Minimizer {
-            partition: part,
-            distinguishers: dists,
-            dfa: dfa,
-            rev: dfa.reversed_transitions(),
         }
     }
 }
@@ -474,7 +351,6 @@ pub mod tests {
     use look::Look;
     use nfa::{Accept, Nfa, StateIdx};
     use range_map::{Range, RangeMap};
-    use runner::prefix::Prefix;
     use std::usize;
 
     // Creates a non-backtracking dfa from a regex string.
@@ -549,13 +425,8 @@ pub mod tests {
     #[test]
     fn test_anchored_dfa_literal_prefix() {
         let dfa = make_anchored("abc[A-z]");
-        let state_map: Vec<_> = (0..dfa.num_states()).collect();
-        let pref = dfa.pruned_prefix(&state_map);
-        println!("{:?}", pref);
-        match pref {
-            Prefix::Lit(ref v) => assert_eq!(*v, "abc".as_bytes().to_vec()),
-            _ => panic!("expected Lit"),
-        }
+        let pref = dfa.pruned_prefix_strings().into_iter().map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(pref, vec!["abc".as_bytes()]);
     }
 
     #[test]

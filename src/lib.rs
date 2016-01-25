@@ -88,10 +88,8 @@ mod error;
 mod look;
 mod graph;
 mod nfa;
-mod prefix; // TODO: move to dfa
 mod regex;
 mod runner;
-mod trie;
 mod unicode;
 
 pub use error::Error;
