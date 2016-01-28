@@ -23,8 +23,6 @@ pub enum Prefix {
     Empty,
     // Matches a single byte in a particular set.
     ByteSet(Vec<bool>),
-    // Matches one specific byte.
-    Byte(u8),
     // Matches a specific sequence of bytes.
     Lit(Vec<u8>),
     // Matches one of several sequences of bytes. The sequences are contained in the
@@ -74,12 +72,10 @@ impl Prefix {
         let mut parts = parts.iter().filter(|x| !x.0.is_empty());
         if let Some(first) = parts.next() {
             let lit = parts.fold(&first.0[..], |acc, p| common_prefix(acc, &p.0));
-            if lit.len() == 1 {
-                Prefix::Byte(lit[0])
-            } else if lit.len() > 1 {
-                Prefix::Lit(lit.to_vec())
-            } else {
+            if lit.is_empty() {
                 Prefix::Empty
+            } else {
+                Prefix::Lit(lit.to_vec())
             }
         } else {
             Prefix::Empty
@@ -95,13 +91,7 @@ impl Prefix {
         if parts.is_empty() {
             Prefix::Empty
         } else if parts.len() == 1 {
-            if parts[0].0.len() == 1 {
-                Prefix::Byte(parts[0].0[0])
-            } else if parts[0].0.len() > 1 {
-                Prefix::Lit(parts.into_iter().next().unwrap().0)
-            } else {
-                Prefix::Empty
-            }
+            Prefix::Lit(parts.into_iter().next().unwrap().0)
         } else if parts.iter().map(|x| x.0.len()).min() == Some(1) {
             let mut bs = vec![false; 256];
             for part in parts.into_iter() {
@@ -122,8 +112,7 @@ impl Prefix {
         match self {
             &Empty => Box::new(SimpleSearcher::new((), input)),
             &ByteSet(ref bs) => Box::new(SimpleSearcher::new(&bs[..], input)),
-            &Byte(b) => Box::new(SimpleSearcher::new(b, input)),
-            &Lit(ref l) => Box::new(lit_searcher(l, input)),
+            &Lit(ref l) => Box::new(SimpleSearcher::new(&l[..], input)),
             &Ac(ref ac, ref map) => Box::new(AcSearcher::new(ac, map, input)),
         }
     }
@@ -135,8 +124,7 @@ macro_rules! run_with_searcher {
         match $prefix {
             Prefix::Empty => $callback(SimpleSearcher::new((), $input)),
             Prefix::ByteSet(ref bs) => $callback(SimpleSearcher::new(&bs[..], $input)),
-            Prefix::Byte(b) => $callback(SimpleSearcher::new(b, $input)),
-            Prefix::Lit(ref l) => $callback(lit_searcher(l, $input)),
+            Prefix::Lit(ref l) => $callback(SimpleSearcher::new(&l[..], $input)),
             Prefix::Ac(ref ac, ref map) => $callback(AcSearcher::new(ac, map, $input)),
         }
     };
@@ -161,9 +149,20 @@ impl SimpleSkipFn for () {
     fn simple_skip(&self, _: &[u8]) -> Option<usize> { Some(0) }
 }
 
-impl SimpleSkipFn for u8 {
+impl<'a> SimpleSkipFn for &'a [u8] {
     #[inline(always)]
-    fn simple_skip(&self, input: &[u8]) -> Option<usize> { memchr(*self, input) }
+    fn simple_skip(&self, input: &[u8]) -> Option<usize> {
+        // TODO: it might be worth checking if self.len() == 1 and skipping the loop in that case.
+        let mut pos = 0;
+        while let Some(offset) = memchr(self[0], &input[pos..]) {
+            pos += offset;
+            if input[pos..].starts_with(*self) {
+                return Some(pos);
+            }
+            pos += 1;
+        }
+        None
+    }
 }
 
 impl<'a> SimpleSkipFn for TwoWaySearcher<'a> {
@@ -190,15 +189,6 @@ impl<'a, Sk: SkipFn> SimpleSearcher<'a, Sk> {
             input: input,
             pos: 0,
         }
-    }
-}
-
-pub fn lit_searcher<'i, 'lit>(lit: &'lit [u8], input: &'i [u8])
--> SimpleSearcher<'i, TwoWaySearcher<'lit>> {
-    SimpleSearcher {
-        skip_fn: TwoWaySearcher::new(lit),
-        input: input,
-        pos: 0,
     }
 }
 
@@ -300,13 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn test_byte_search() {
-        assert_eq!(search(Prefix::Byte(b'a'), "abracadabra"), results(vec![0, 3, 5, 7, 10]));
-        assert_eq!(search(Prefix::Byte(b'a'), "abracadabr"), results(vec![0, 3, 5, 7]));
-        assert_eq!(search(Prefix::Byte(b'a'), ""), vec![]);
-    }
-
-    #[test]
     fn test_str_search() {
         fn lit_pref(s: &str) -> Prefix {
             Prefix::Lit(s.as_bytes().to_vec())
@@ -362,8 +345,8 @@ mod tests {
 
         assert!(matches!(pref(vec![]), Empty));
         assert!(matches!(pref(vec![""]), Empty));
-        assert!(matches!(pref(vec!["a"]), Byte(_)));
-        assert!(matches!(pref(vec!["", "a", ""]), Byte(_)));
+        assert!(matches!(pref(vec!["a"]), Lit(_)));
+        assert!(matches!(pref(vec!["", "a", ""]), Lit(_)));
         assert!(matches!(pref(vec!["abc"]), Lit(_)));
         assert!(matches!(pref(vec!["abc", ""]), Lit(_)));
         assert!(matches!(pref(vec!["a", "b", "c"]), ByteSet(_)));
@@ -386,15 +369,15 @@ mod tests {
 
         assert!(matches!(pref_fast(vec![]), Empty));
         assert!(matches!(pref_fast(vec![""]), Empty));
-        assert!(matches!(pref_fast(vec!["a"]), Byte(_)));
-        assert!(matches!(pref_fast(vec!["", "a", ""]), Byte(_)));
+        assert!(matches!(pref_fast(vec!["a"]), Lit(_)));
+        assert!(matches!(pref_fast(vec!["", "a", ""]), Lit(_)));
         assert!(matches!(pref_fast(vec!["abc"]), Lit(_)));
         assert!(matches!(pref_fast(vec!["abc", ""]), Lit(_)));
         assert!(matches!(pref_fast(vec!["a", "b", "c"]), Empty));
         assert!(matches!(pref_fast(vec!["a", "b", "", "c"]), Empty));
         assert!(matches!(pref_fast(vec!["a", "baa", "", "c"]), Empty));
         assert!(matches!(pref_fast(vec!["ab", "baa", "", "cb"]), Empty));
-        assert!(matches!(pref_fast(vec!["ab", "aaa", "", "acb"]), Byte(_)));
+        assert!(matches!(pref_fast(vec!["ab", "aaa", "", "acb"]), Lit(_)));
         assert!(matches!(pref_fast(vec!["ab", "abc", "abd"]), Lit(_)));
     }
 
