@@ -145,12 +145,12 @@ impl<Sk: SimpleSkipFn> SkipFn for Sk {
 }
 
 impl SimpleSkipFn for () {
-    #[inline(always)]
+    #[inline]
     fn simple_skip(&self, _: &[u8]) -> Option<usize> { Some(0) }
 }
 
 impl<'a> SimpleSkipFn for &'a [u8] {
-    #[inline(always)]
+    #[inline]
     fn simple_skip(&self, input: &[u8]) -> Option<usize> {
         // TODO: it might be worth checking if self.len() == 1 and skipping the loop in that case.
         let mut pos = 0;
@@ -170,7 +170,7 @@ impl<'a> SimpleSkipFn for TwoWaySearcher<'a> {
 }
 
 impl<'a> SimpleSkipFn for &'a [bool] {
-    #[inline(always)]
+    #[inline]
     fn simple_skip(&self, input: &[u8]) -> Option<usize> {
         input.iter().position(|c| self[*c as usize])
     }

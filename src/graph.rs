@@ -11,7 +11,7 @@ use nfa::{Nfa, NoLooks, StateIdx};
 use num::traits::PrimInt;
 use std::fmt::Debug;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DfsInstruction {
     Continue,
     #[allow(dead_code)]
@@ -77,12 +77,12 @@ pub trait Graph {
                                 .map(|x| x.0)
                                 .collect();
 
-                            match cycle(&cyc) {
-                                DfsInstruction::Stop => { return; },
-                                // Since we turn back on finding a cycle anyway, we treat Continue
-                                // and TurnBack the same.
-                                _ => {},
+                            if cycle(&cyc) == DfsInstruction::Stop {
+                                return;
                             }
+                            // Since we turn back on finding a cycle anyway, we treat Continue
+                            // and TurnBack the same (i.e. we don't need to handle either one
+                            // explicitly).
                         } else if !done[child] {
                             // This is a new state: report it and push it onto the stack.
                             match visit(child) {
