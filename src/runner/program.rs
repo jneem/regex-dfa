@@ -75,24 +75,24 @@ impl<Ret: Copy + Debug> TableInsts<Ret> {
         self.accept.len()
     }
 
-    pub fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    pub fn shortest_match_from(&self, input: &[u8], pos: usize, state: usize)
     -> Result<(usize, Ret), usize> {
+        let mut state = state as u32;
+
         for pos in pos..input.len() {
-            if let Some(ret) = self.accept[state] {
+            if let Some(ret) = self.accept[state as usize] {
                 return Ok((pos, ret));
             }
 
             // We've manually inlined next_state here, for better performance (measurably better
             // than using #[inline(always)]).
-            let next_state = self.table[state * 256 + input[pos] as usize];
-            if next_state != u32::MAX {
-                state = next_state as usize;
-            } else {
+            state = self.table[(state * 256) as usize + input[pos] as usize];
+            if state == u32::MAX {
                 return Err(pos);
             }
         }
 
-        if let Some(ret) = self.accept_at_eoi[state] {
+        if let Some(ret) = self.accept_at_eoi[state as usize] {
             Ok((input.len(), ret))
         } else {
             Err(input.len())
