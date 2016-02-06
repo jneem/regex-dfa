@@ -14,8 +14,10 @@ use dfa::minimizer::Minimizer;
 use dfa::prefix_searcher::PrefixSearcher;
 use graph::Graph;
 use look::Look;
+use itertools::Itertools;
 use nfa::{Accept, StateIdx};
 use range_map::{RangeMap, RangeMultiMap};
+use refinery::Partition;
 use runner::program::TableInsts;
 use std;
 use std::fmt::{Debug, Formatter};
@@ -179,9 +181,41 @@ impl<Ret: RetTrait> Dfa<Ret> {
         self.make_prefix(true)
     }
 
+    // Finds the bytes that are treated equivalently by this Dfa.
+    //
+    // Returns a Vec of length 256 such that vec[i] == vec[j] when i and j are two equivalent
+    // bytes. Also returns the log of the number of classes, rounded up.
+    fn byte_equivalence_classes(&self) -> (Vec<u8>, u32) {
+        let mut part = Partition::new(Some(0..256).into_iter(), 256);
+        let mut buf = Vec::with_capacity(256);
+
+        for st in &self.states {
+            let group = st.transitions.keys_values().group_by_lazy(|x| x.1);
+            for (_, keys_values) in &group {
+                buf.clear();
+                for (key, _) in keys_values {
+                    buf.push(key as usize);
+                }
+                part.refine(&buf);
+            }
+        }
+
+        let mut ret = vec![0; 256];
+        for (i, p) in part.iter().enumerate() {
+            for &x in p {
+                ret[x] = i as u8;
+            }
+        }
+        let size = (part.num_parts() - 1) as u32;
+
+        (ret, 32 - size.leading_zeros())
+    }
+
     /// Compiles this `Dfa` into instructions for execution.
     pub fn compile(&self) -> TableInsts<Ret> {
-        let mut table = vec![u32::MAX; 256 * self.num_states()];
+        let (byte_class, log_num_classes) = self.byte_equivalence_classes();
+
+        let mut table = vec![u32::MAX; self.num_states() << log_num_classes];
         let accept: Vec<Option<Ret>> = self.states.iter()
             .map(|st| if st.accept == Accept::Always { st.ret } else { None })
             .collect();
@@ -191,11 +225,14 @@ impl<Ret: RetTrait> Dfa<Ret> {
 
         for (idx, st) in self.states.iter().enumerate() {
             for (ch, &tgt_state) in st.transitions.keys_values() {
-                table[idx * 256 + ch as usize] = tgt_state as u32;
+                let class = byte_class[ch as usize];
+                table[(idx << log_num_classes) + class as usize] = tgt_state as u32;
             }
         }
 
         TableInsts {
+            log_num_classes: log_num_classes,
+            byte_class: byte_class,
             accept: accept,
             accept_at_eoi: accept_at_eoi,
             table: table,

@@ -14,7 +14,18 @@ pub type TableStateIdx = u32;
 /// A DFA program implemented as a lookup table.
 #[derive(Clone)]
 pub struct TableInsts<Ret> {
-    /// A `256 x num_instructions`-long table.
+    /// The log (rounded up) of the number of different equivalence classes of bytes.
+    // We could save a bit more memory by storing the actual number instead of the log, because
+    // then `table` could have length num_classes x num_instructions. However, then we need to
+    // multiply (instead of just shifting) to look up the next state, and that slows us down by
+    // 10-20%.
+    pub log_num_classes: u32,
+    /// A vec of length 256 mapping from bytes to their class indices.
+    pub byte_class: Vec<u8>,
+    /// A `(1 << log_num_classes) x num_instructions`-long table.
+    ///
+    /// For a given input byte `b` in state `state`, we look up the next state using
+    /// `table[state << log_num_classes + b]`.
     pub table: Vec<TableStateIdx>,
     /// If `accept[st]` is not `None` then `st` is accepting, and `accept[st]` is the data
     /// to return.
@@ -27,14 +38,20 @@ pub struct TableInsts<Ret> {
 
 impl<Ret: Debug> Debug for TableInsts<Ret> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-        try!(f.write_fmt(format_args!("TableInsts ({} instructions):\n",
+        try!(f.write_fmt(format_args!("TableInsts ({} log_classes, {} instructions):\n",
+                                      self.log_num_classes,
                                       self.accept.len())));
+        try!(f.write_str("Byte classes: "));
+        try!(f.debug_map()
+            .entries((0..256).map(|b| (b, self.byte_class[b])))
+            .finish());
 
+        let num_classes = 1 << self.log_num_classes;
         for idx in 0..self.accept.len() {
             try!(f.write_fmt(format_args!("State {}:\n", idx)));
             try!(f.debug_map()
-                .entries((0usize..256)
-                    .map(|c| (c, self.table[idx * 256 + c]))
+                .entries((0usize..num_classes)
+                    .map(|c| (c, self.table[(idx << self.log_num_classes) + c]))
                     .filter(|x| x.1 != u32::MAX))
                 .finish());
             try!(f.write_str("\n"));
@@ -63,7 +80,8 @@ impl<Ret: Copy + Debug> TableInsts<Ret> {
     }
 
     fn next_state(&self, state: usize, input: u8) -> Option<usize> {
-        let next_state = self.table[state * 256 + input as usize];
+        let class = self.byte_class[input as usize];
+        let next_state = self.table[(state << self.log_num_classes) + class as usize];
         if next_state != u32::MAX {
             Some(next_state as usize)
         } else {
@@ -86,7 +104,8 @@ impl<Ret: Copy + Debug> TableInsts<Ret> {
 
             // We've manually inlined next_state here, for better performance (measurably better
             // than using #[inline(always)]).
-            state = self.table[(state * 256) as usize + input[pos] as usize];
+            let class = self.byte_class[input[pos] as usize];
+            state = self.table[((state as usize) << self.log_num_classes) + class as usize];
             if state == u32::MAX {
                 return Err(pos);
             }
