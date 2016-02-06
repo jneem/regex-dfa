@@ -19,6 +19,9 @@ pub struct TableInsts<Ret> {
     // then `table` could have length num_classes x num_instructions. However, then we need to
     // multiply (instead of just shifting) to look up the next state, and that slows us down by
     // 10-20%.
+    //
+    // TODO: we can probably save more memory by splitting classes into ASCII/non-ASCII. Often,
+    // many states share the same non-ASCII transitions, so those tables can be merged.
     pub log_num_classes: u32,
     /// A vec of length 256 mapping from bytes to their class indices.
     pub byte_class: Vec<u8>,
