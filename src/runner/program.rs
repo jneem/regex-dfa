@@ -9,73 +9,6 @@
 use std::fmt::{Debug, Formatter, Error as FmtError};
 use std::u32;
 
-pub trait RegexSearcher {
-    fn shortest_match(&self, haystack: &str) -> Option<(usize, usize)>;
-}
-
-pub trait Instructions: Clone + Debug {
-    type Ret: Clone + Debug;
-
-    /// If `state` is an accepting state, return the associated value.
-    fn check_accept(&self, state: usize) -> Option<Self::Ret>;
-
-    /// If `state` is an accepting state at the end of the input, return the associated value.
-    fn check_accept_at_eoi(&self, state: usize) -> Option<Self::Ret>;
-
-    /// Returns the next state after consuming `input`.
-    fn next_state(&self, state: usize, input: u8) -> Option<usize>;
-
-    /// The number of states in this program.
-    fn num_states(&self) -> usize;
-
-    fn is_anchored(&self) -> bool;
-
-    fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
-    -> Result<(usize, Self::Ret), usize> {
-        for pos in pos..input.len() {
-            if let Some(ret) = self.check_accept(state) {
-                return Ok((pos, ret));
-            } else if let Some(next_state) = self.next_state(state, input[pos]) {
-                state = next_state;
-            } else {
-                return Err(pos);
-            }
-        }
-
-        if let Some(ret) = self.check_accept_at_eoi(state) {
-            Ok((input.len(), ret))
-        } else {
-            Err(input.len())
-        }
-    }
-
-    /// If a match is found, returns the ending position and the returned value.
-    fn longest_backward_match_from(&self, input: &[u8], pos: usize, mut state: usize)
-    -> Option<(usize, Self::Ret)> {
-        let mut ret = None;
-        for pos in (0..pos).rev() {
-            if let Some(next_ret) = self.check_accept(state) {
-                ret = Some((pos + 1, next_ret));
-            }
-            if let Some(next_state) = self.next_state(state, input[pos]) {
-                state = next_state;
-            } else {
-                return ret;
-            }
-        }
-
-        if let Some(end_ret) = self.check_accept_at_eoi(state) {
-            Some((0, end_ret))
-        } else {
-            ret
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.num_states() == 0
-    }
-}
-
 pub type TableStateIdx = u32;
 
 /// A DFA program implemented as a lookup table.
@@ -94,12 +27,13 @@ pub struct TableInsts<Ret> {
 
 impl<Ret: Debug> Debug for TableInsts<Ret> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-        try!(f.write_fmt(format_args!("TableInsts ({} instructions):\n", self.accept.len())));
+        try!(f.write_fmt(format_args!("TableInsts ({} instructions):\n",
+                                      self.accept.len())));
 
         for idx in 0..self.accept.len() {
             try!(f.write_fmt(format_args!("State {}:\n", idx)));
             try!(f.debug_map()
-                .entries((0usize..255)
+                .entries((0usize..256)
                     .map(|c| (c, self.table[idx * 256 + c]))
                     .filter(|x| x.1 != u32::MAX))
                 .finish());
@@ -123,19 +57,8 @@ impl<Ret: Debug> Debug for TableInsts<Ret> {
     }
 }
 
-
-impl<Ret: Copy + Debug> Instructions for TableInsts<Ret> {
-    type Ret = Ret;
-
-    fn check_accept(&self, state: usize) -> Option<Ret> {
-        self.accept[state]
-    }
-
-    fn check_accept_at_eoi(&self, state: usize) -> Option<Ret> {
-        self.accept_at_eoi[state]
-    }
-
-    fn is_anchored(&self) -> bool {
+impl<Ret: Copy + Debug> TableInsts<Ret> {
+    pub fn is_anchored(&self) -> bool {
         self.is_anchored
     }
 
@@ -148,20 +71,19 @@ impl<Ret: Copy + Debug> Instructions for TableInsts<Ret> {
         }
     }
 
-    fn num_states(&self) -> usize {
+    pub fn num_states(&self) -> usize {
         self.accept.len()
     }
 
-    // This is copy & paste from the blanket implementation in Instructions, with check_accept
-    // and next_state manually inlined. For some reason, doing this increases speeds substantially
-    // (but adding #[inline(always)] to check_accept and next_state doesn't).
-    fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
-    -> Result<(usize, Self::Ret), usize> {
+    pub fn shortest_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    -> Result<(usize, Ret), usize> {
         for pos in pos..input.len() {
             if let Some(ret) = self.accept[state] {
                 return Ok((pos, ret));
             }
 
+            // We've manually inlined next_state here, for better performance (measurably better
+            // than using #[inline(always)]).
             let next_state = self.table[state * 256 + input[pos] as usize];
             if next_state != u32::MAX {
                 state = next_state as usize;
@@ -170,11 +92,36 @@ impl<Ret: Copy + Debug> Instructions for TableInsts<Ret> {
             }
         }
 
-        if let Some(ret) = self.check_accept_at_eoi(state) {
+        if let Some(ret) = self.accept_at_eoi[state] {
             Ok((input.len(), ret))
         } else {
             Err(input.len())
         }
+    }
+
+    pub fn longest_backward_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    -> Option<(usize, Ret)> {
+        let mut ret = None;
+        for pos in (0..pos).rev() {
+            if let Some(next_ret) = self.accept[state] {
+                ret = Some((pos + 1, next_ret));
+            }
+            if let Some(next_state) = self.next_state(state, input[pos]) {
+                state = next_state;
+            } else {
+                return ret;
+            }
+        }
+
+        if let Some(end_ret) = self.accept_at_eoi[state] {
+            Some((0, end_ret))
+        } else {
+            ret
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.num_states() == 0
     }
 }
 

@@ -93,6 +93,6 @@ mod runner;
 mod unicode;
 
 pub use error::Error;
-pub use regex::{EngineType, ProgramType, Regex};
+pub use regex::{EngineType, Regex};
 pub type Result<T> = ::std::result::Result<T, Error>;
 

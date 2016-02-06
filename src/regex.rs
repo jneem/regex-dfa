@@ -6,14 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use dfa::CompileTarget;
 use error::Error;
 use graph::Graph;
 use nfa::{Nfa, NoLooks};
 use runner::forward_backward::ForwardBackwardEngine;
 use runner::backtracking::BacktrackingEngine;
 use runner::prefix::Prefix;
-use runner::program::{Instructions, TableInsts};
 use runner::Engine;
 use std;
 use std::fmt::Debug;
@@ -35,21 +33,19 @@ impl<Ret: Debug> Engine<Ret> for EmptyEngine {
 /// An enum listing the different kinds of supported regex engines.
 #[derive(Clone, Copy, Debug)]
 pub enum EngineType {
-    /// The backtracking engine will attempt to match the regex starting from offset zero,
-    /// then it will try again from offset one, and so on. Although it is quite fast in practice,
-    /// it has a poor worst-case behavior. For example, in attempting to match the regex
-    /// `"aaaaaaaaaaab"` against the string `"aaaaaaaaaaaaaaaaaaaaaaaaaaa"`, it will look at
-    /// each character in the input many times.
+    /// The backtracking engine will attempt to match the regex starting from offset zero, then it
+    /// will try again from offset one, and so on. This engine is usually slower than the
+    /// `ForwardBackward` engine, and it also has a poor worst-case behavior. For example, in
+    /// attempting to match the regex `"aaaaaaaaaaab"` against the string
+    /// `"aaaaaaaaaaaaaaaaaaaaaaaaaaa"`, it will look at each character in the input many times.
+    ///
+    /// The two advantages of the `Backtracking` engine are:
+    /// - it's more suitable for checking whether anchored regexes match, and
+    /// - there are cases where the Dfa for the `ForwardBackward` engine has exponential size, but
+    ///   the `Backtracking` one doesn't.
     Backtracking,
     /// The forward-backward engine is guaranteed to look at each input character at most twice.
     ForwardBackward,
-}
-
-/// An enum listing the different ways for representing the regex program.
-#[derive(Clone, Copy, Debug)]
-pub enum ProgramType {
-    /// A `Table` program is the classical table-based implementation of a DFA.
-    Table,
 }
 
 impl Clone for Regex {
@@ -69,23 +65,21 @@ impl Regex {
     /// Creates a new `Regex` from a regular expression string, but only if it doesn't require too
     /// many states.
     pub fn new_bounded(re: &str, max_states: usize) -> ::Result<Regex> {
-        Regex::make_regex(re, max_states, None, None)
+        Regex::make_regex(re, max_states, None)
     }
 
     /// Creates a new `Regex` from a regular expression string, with some additional knobs to
     /// tweak.
     ///
     /// - `engine` - specifies the search algorithm to use while executing the regex.
-    /// - `program` - specifies the representation of the regex program.
-    pub fn new_advanced(re: &str, max_states: usize, engine: EngineType, program: ProgramType)
+    pub fn new_advanced(re: &str, max_states: usize, engine: EngineType)
     -> ::Result<Regex>
     {
-        Regex::make_regex(re, max_states, Some(engine), Some(program))
+        Regex::make_regex(re, max_states, Some(engine))
     }
 
-    fn make_backtracking<I>(nfa: Nfa<u32, NoLooks>, max_states: usize)
-    -> ::Result<BacktrackingEngine<I>>
-    where I: Instructions<Ret=u8> + CompileTarget<u8> {
+    fn make_backtracking(nfa: Nfa<u32, NoLooks>, max_states: usize)
+    -> ::Result<BacktrackingEngine<u8>> {
         if nfa.has_look_behind() {
             return Err(Error::InvalidEngine("look-behind rules out the backtracking engine"));
         }
@@ -94,7 +88,7 @@ impl Regex {
         let dfa = try!(nfa.determinize_shortest(max_states))
             .optimize_for_shortest_match()
             .map_ret(|(_, bytes)| bytes);
-        let prog = dfa.compile::<I>();
+        let prog = dfa.compile();
         let prefix = if dfa.is_anchored() {
             Prefix::Empty
         } else {
@@ -104,10 +98,8 @@ impl Regex {
         Ok(BacktrackingEngine::new(prog, prefix))
     }
 
-    fn make_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize)
-    -> ::Result<ForwardBackwardEngine<FI, BI>> where
-    FI: Instructions<Ret=(usize, u8)> + CompileTarget<(usize, u8)>,
-    BI: Instructions<Ret=u8> + CompileTarget<u8> {
+    fn make_forward_backward(nfa: Nfa<u32, NoLooks>, max_states: usize)
+    -> ::Result<ForwardBackwardEngine<u8>> {
         if nfa.is_anchored() {
             return Err(Error::InvalidEngine("anchors rule out the forward-backward engine"));
         }
@@ -120,13 +112,13 @@ impl Regex {
             .optimize();
         let b_dfa = b_dfa.map_ret(|(_, bytes)| bytes);
 
-        let b_prog = b_dfa.compile::<BI>();
+        let b_prog = b_dfa.compile();
         let f_dfa = f_dfa.map_ret(|(look, bytes)| {
             let b_dfa_state = b_dfa.init[look.as_usize()].expect("BUG: back dfa must have this init");
             (b_dfa_state, bytes)
         });
 
-        let mut f_prog = f_dfa.compile::<FI>();
+        let mut f_prog = f_dfa.compile();
         let prefix = Prefix::for_fast_engine(f_dfa.pruned_prefix_strings());
         match prefix {
             Prefix::Empty => {},
@@ -136,7 +128,7 @@ impl Regex {
                 // the start state, we will just fail to match. Then we get to search for the
                 // prefix before trying to match again.
                 let f_dfa = f_dfa.cut_loop_to_init().optimize_for_shortest_match();
-                f_prog = f_dfa.compile::<FI>();
+                f_prog = f_dfa.compile();
             },
         }
 
@@ -145,17 +137,14 @@ impl Regex {
 
     // Make a forward-backward engine, but if that uses too many states and fallback is true then try
     // making a backtracking engine instead.
-    fn make_boxed_forward_backward<FI, BI>(nfa: Nfa<u32, NoLooks>, max_states: usize, fallback: bool)
-    -> ::Result<Box<Engine<u8>>> where
-    FI: Instructions<Ret=(usize, u8)> + CompileTarget<(usize, u8)> + 'static,
-    BI: Instructions<Ret=u8> + CompileTarget<u8> + 'static,
-    {
-        let fb = Regex::make_forward_backward::<FI, BI>(nfa.clone(), max_states)
+    fn make_boxed_forward_backward(nfa: Nfa<u32, NoLooks>, max_states: usize, fallback: bool)
+    -> ::Result<Box<Engine<u8>>> {
+        let fb = Regex::make_forward_backward(nfa.clone(), max_states)
             .map(|x| Box::new(x) as Box<Engine<u8>>);
         // TODO: we can allow cycles as long as the shortest match happens before the cycle.
         if fallback && !nfa.has_cycles() {
             fb.or_else(|_| {
-                let b = try!(Regex::make_backtracking::<BI>(nfa, max_states));
+                let b = try!(Regex::make_backtracking(nfa, max_states));
                 Ok(Box::new(b) as Box<Engine<u8>>)
             })
         } else {
@@ -165,8 +154,7 @@ impl Regex {
 
     fn make_regex(re: &str,
                   max_states: usize,
-                  maybe_eng: Option<EngineType>,
-                  maybe_prog: Option<ProgramType>)
+                  maybe_eng: Option<EngineType>)
     -> ::Result<Regex> {
         let nfa = try!(Nfa::from_regex(re));
         let nfa = nfa.remove_looks();
@@ -181,24 +169,12 @@ impl Regex {
         } else {
             EngineType::ForwardBackward
         });
-        let prog = maybe_prog.unwrap_or(ProgramType::Table);
 
         let eng: Box<Engine<u8>> = match eng {
-            EngineType::Backtracking => {
-                match prog {
-                    ProgramType::Table =>
-                        Box::new(try!(Regex::make_backtracking::<TableInsts<_>>(nfa, max_states))),
-                }
-            }
-            EngineType::ForwardBackward => {
-                match prog {
-                    ProgramType::Table =>
-                        try!(Regex::make_boxed_forward_backward::<TableInsts<_>, TableInsts<_>>(
-                                nfa,
-                                max_states,
-                                maybe_eng.is_none())),
-                }
-            }
+            EngineType::Backtracking =>
+                Box::new(try!(Regex::make_backtracking(nfa, max_states))),
+            EngineType::ForwardBackward =>
+                try!(Regex::make_boxed_forward_backward(nfa, max_states, maybe_eng.is_none())),
         };
 
         Ok(Regex { engine: eng })
@@ -216,6 +192,8 @@ impl Regex {
     }
 
     pub fn is_match(&self, s: &str) -> bool {
+        // TODO: for the forward-backward engine, this could be faster because we don't need
+        // to run backward.
         self.shortest_match(s).is_some()
     }
 }
@@ -229,8 +207,8 @@ mod tests {
         // This regex takes a huge number of states if you anchor it by adding '.*' in front.
         let re = "a[ab]{100}c";
         assert!(Regex::new_bounded(re, 2000).is_ok());
-        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Table).is_ok());
-        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Table).is_err());
+        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking).is_ok());
+        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward).is_err());
     }
 
     #[test]
@@ -238,10 +216,10 @@ mod tests {
         // This regex has cycles, so it shouldn't automatically fall back to backtracking.
         let re = "a[ab]{100}c+";
         assert!(Regex::new_bounded(re, 2000).is_err());
-        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward, ProgramType::Table).is_err());
+        assert!(Regex::new_advanced(re, 2000, EngineType::ForwardBackward).is_err());
 
         // If they specifically ask for backtracking, then ok.
-        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking, ProgramType::Table).is_ok());
+        assert!(Regex::new_advanced(re, 2000, EngineType::Backtracking).is_ok());
     }
 }
 

@@ -9,20 +9,17 @@
 use std::fmt::Debug;
 use runner::Engine;
 use runner::prefix::{Prefix, AcSearcher, PrefixSearcher, SimpleSearcher};
-use runner::program::Instructions;
+use runner::program::TableInsts;
 
 #[derive(Clone, Debug)]
-pub struct ForwardBackwardEngine<FInsts: Instructions<Ret=(usize, u8)>, BInsts: Instructions> {
-    forward: FInsts,
-    backward: BInsts,
+pub struct ForwardBackwardEngine<Ret> {
+    forward: TableInsts<(usize, u8)>,
+    backward: TableInsts<Ret>,
     prefix: Prefix,
 }
 
-impl<FI, BI> ForwardBackwardEngine<FI, BI> where
-FI: Instructions<Ret=(usize, u8)>,
-BI: Instructions,
-BI::Ret: Debug {
-    pub fn new(forward: FI, prefix: Prefix, backward: BI) -> Self {
+impl<Ret: Copy + Debug> ForwardBackwardEngine<Ret> {
+    pub fn new(forward: TableInsts<(usize, u8)>, prefix: Prefix, backward: TableInsts<Ret>) -> Self {
         ForwardBackwardEngine {
             forward: forward,
             backward: backward,
@@ -31,8 +28,7 @@ BI::Ret: Debug {
     }
 
     fn shortest_match_from_searcher<P: PrefixSearcher>(&self, input: &[u8], mut search: P)
-    //fn shortest_match_from_searcher(&self, input: &[u8], search: &mut PrefixSearcher)
-    -> Option<(usize, usize, BI::Ret)> {
+    -> Option<(usize, usize, Ret)> {
         while let Some(start) = search.search() {
             match self.forward.shortest_match_from(input, start.end_pos, start.end_state) {
                 Ok((end, (rev_state, look_ahead))) => {
@@ -53,22 +49,17 @@ BI::Ret: Debug {
     }
 }
 
-impl<FI, BI> Engine<BI::Ret> for ForwardBackwardEngine<FI, BI> where
-FI: Instructions<Ret=(usize, u8)> + 'static,
-BI: Instructions + 'static,
-BI::Ret: Debug {
-    fn shortest_match(&self, s: &str) -> Option<(usize, usize, BI::Ret)> {
+impl<Ret: Copy + Debug + 'static> Engine<Ret> for ForwardBackwardEngine<Ret> {
+    fn shortest_match(&self, s: &str) -> Option<(usize, usize, Ret)> {
         let input = s.as_bytes();
         if self.forward.is_empty() {
             return None;
         }
 
-        //let mut s = self.prefix.make_searcher(input);
-        //self.shortest_match_from_searcher(input, &mut *s)
         run_with_searcher!(self.prefix, input, |s| self.shortest_match_from_searcher(input, s))
     }
 
-    fn clone_box(&self) -> Box<Engine<BI::Ret>> {
+    fn clone_box(&self) -> Box<Engine<Ret>> {
         Box::new(self.clone())
     }
 }

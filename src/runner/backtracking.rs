@@ -10,16 +10,16 @@ use aho_corasick::Automaton;
 use std::fmt::Debug;
 use runner::Engine;
 use runner::prefix::{Prefix, PrefixSearcher};
-use runner::program::Instructions;
+use runner::program::TableInsts;
 
 #[derive(Clone, Debug)]
-pub struct BacktrackingEngine<Insts: Instructions> {
-    prog: Insts,
+pub struct BacktrackingEngine<Ret> {
+    prog: TableInsts<Ret>,
     prefix: Prefix,
 }
 
-impl<Insts: Instructions> BacktrackingEngine<Insts> {
-    pub fn new(prog: Insts, pref: Prefix) -> BacktrackingEngine<Insts> {
+impl<Ret: Copy + Debug> BacktrackingEngine<Ret> {
+    pub fn new(prog: TableInsts<Ret>, pref: Prefix) -> BacktrackingEngine<Ret> {
         BacktrackingEngine {
             prog: prog,
             prefix: pref,
@@ -27,7 +27,7 @@ impl<Insts: Instructions> BacktrackingEngine<Insts> {
     }
 
     fn shortest_match_from_searcher(&self, input: &[u8], search: &mut PrefixSearcher)
-    -> Option<(usize, usize, Insts::Ret)> {
+    -> Option<(usize, usize, Ret)> {
         while let Some(res) = search.search() {
             if let Ok(end) = self.prog.shortest_match_from(input, res.end_pos, res.end_state) {
                 return Some((res.start_pos, end.0, end.1));
@@ -38,9 +38,8 @@ impl<Insts: Instructions> BacktrackingEngine<Insts> {
     }
 }
 
-impl<I: Instructions + 'static> Engine<I::Ret> for BacktrackingEngine<I>
-where I::Ret: Debug {
-    fn shortest_match(&self, s: &str) -> Option<(usize, usize, I::Ret)> {
+impl<Ret: Copy + Debug + 'static> Engine<Ret> for BacktrackingEngine<Ret> {
+    fn shortest_match(&self, s: &str) -> Option<(usize, usize, Ret)> {
         let input = s.as_bytes();
         if self.prog.is_empty() {
             return None;
@@ -56,7 +55,7 @@ where I::Ret: Debug {
         self.shortest_match_from_searcher(input, &mut *searcher)
     }
 
-    fn clone_box(&self) -> Box<Engine<I::Ret>> {
+    fn clone_box(&self) -> Box<Engine<Ret>> {
         Box::new(self.clone())
     }
 }

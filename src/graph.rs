@@ -14,6 +14,7 @@ use std::fmt::Debug;
 #[derive(Clone, Copy, Debug)]
 pub enum DfsInstruction {
     Continue,
+    #[allow(dead_code)]
     TurnBack,
     Stop,
 }

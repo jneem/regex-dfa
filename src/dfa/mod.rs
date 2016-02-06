@@ -180,11 +180,29 @@ impl<Ret: RetTrait> Dfa<Ret> {
     }
 
     /// Compiles this `Dfa` into instructions for execution.
-    ///
-    /// Returns the new instructions, along with a map from the dfa states to the instructions.
-    pub fn compile<P: CompileTarget<Ret>>(&self) -> P {
-        P::from_dfa(self)
+    pub fn compile(&self) -> TableInsts<Ret> {
+        let mut table = vec![u32::MAX; 256 * self.num_states()];
+        let accept: Vec<Option<Ret>> = self.states.iter()
+            .map(|st| if st.accept == Accept::Always { st.ret } else { None })
+            .collect();
+        let accept_at_eoi: Vec<Option<Ret>> = self.states.iter()
+            .map(|st| if st.accept != Accept::Never { st.ret } else { None })
+            .collect();
+
+        for (idx, st) in self.states.iter().enumerate() {
+            for (ch, &tgt_state) in st.transitions.keys_values() {
+                table[idx * 256 + ch as usize] = tgt_state as u32;
+            }
+        }
+
+        TableInsts {
+            accept: accept,
+            accept_at_eoi: accept_at_eoi,
+            table: table,
+            is_anchored: self.is_anchored(),
+        }
     }
+
 
     // TODO: should trim unreachable here -- match_python_281 is an example where it will help
     pub fn optimize_for_shortest_match(self) -> Dfa<Ret> {
@@ -312,35 +330,6 @@ impl<Ret: Debug> Debug for Dfa<Ret> {
             try!(f.write_fmt(format_args!("\t...({} more states)\n", self.states.len() - 40)));
         }
         Ok(())
-    }
-}
-
-pub trait CompileTarget<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> Self;
-}
-
-impl<Ret: RetTrait> CompileTarget<Ret> for TableInsts<Ret> {
-    fn from_dfa(dfa: &Dfa<Ret>) -> Self {
-        let mut table = vec![u32::MAX; 256 * dfa.num_states()];
-        let accept: Vec<Option<Ret>> = dfa.states.iter()
-            .map(|st| if st.accept == Accept::Always { st.ret } else { None })
-            .collect();
-        let accept_at_eoi: Vec<Option<Ret>> = dfa.states.iter()
-            .map(|st| if st.accept != Accept::Never { st.ret } else { None })
-            .collect();
-
-        for (idx, st) in dfa.states.iter().enumerate() {
-            for (ch, &tgt_state) in st.transitions.keys_values() {
-                table[idx * 256 + ch as usize] = tgt_state as u32;
-            }
-        }
-
-        TableInsts {
-            accept: accept,
-            accept_at_eoi: accept_at_eoi,
-            table: table,
-            is_anchored: dfa.is_anchored(),
-        }
     }
 }
 
