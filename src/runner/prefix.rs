@@ -104,21 +104,12 @@ impl Prefix {
             Prefix::Ac(ac, state_map)
         }
     }
-
-    /// Takes an input string and prepares for quickly finding matches in it.
-    pub fn make_searcher<'a>(&'a self, input: &'a [u8]) -> Box<PrefixSearcher + 'a> {
-        use runner::prefix::Prefix::*;
-
-        match self {
-            &Empty => Box::new(SimpleSearcher::new((), input)),
-            &ByteSet(ref bs) => Box::new(SimpleSearcher::new(&bs[..], input)),
-            &Lit(ref l) => Box::new(SimpleSearcher::new(&l[..], input)),
-            &Ac(ref ac, ref map) => Box::new(AcSearcher::new(ac, map, input)),
-        }
-    }
 }
 
-// TODO: profile to see if this really helps
+/// Runs a callback with the appropriate searcher.
+///
+/// This is a macro rather than a function because we generate searchers of different types, and we
+/// want to specialize the callback for each type.
 macro_rules! run_with_searcher {
     ($prefix:expr, $input:expr, $callback:expr) => {
         match $prefix {

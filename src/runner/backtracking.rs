@@ -9,7 +9,7 @@
 use aho_corasick::Automaton;
 use std::fmt::Debug;
 use runner::Engine;
-use runner::prefix::{Prefix, PrefixSearcher};
+use runner::prefix::{Prefix, AcSearcher, PrefixSearcher, SimpleSearcher};
 use runner::program::TableInsts;
 
 #[derive(Clone, Debug)]
@@ -26,7 +26,7 @@ impl<Ret: Copy + Debug> BacktrackingEngine<Ret> {
         }
     }
 
-    fn shortest_match_from_searcher(&self, input: &[u8], search: &mut PrefixSearcher)
+    fn shortest_match_from_searcher<P: PrefixSearcher>(&self, input: &[u8], mut search: P)
     -> Option<(usize, usize, Ret)> {
         while let Some(res) = search.search() {
             if let Ok(end) = self.prog.shortest_match_from(input, res.end_pos, res.end_state) {
@@ -51,8 +51,7 @@ impl<Ret: Copy + Debug + 'static> Engine<Ret> for BacktrackingEngine<Ret> {
             }
         }
 
-        let mut searcher = self.prefix.make_searcher(input);
-        self.shortest_match_from_searcher(input, &mut *searcher)
+        run_with_searcher!(self.prefix, input, |s| self.shortest_match_from_searcher(input, s))
     }
 
     fn clone_box(&self) -> Box<Engine<Ret>> {
