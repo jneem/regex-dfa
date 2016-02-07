@@ -54,7 +54,7 @@ pub struct NfaBuilder {
 
 impl NfaBuilder {
     /// Returns the number of states.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.states.len()
     }
 
@@ -116,7 +116,7 @@ impl NfaBuilder {
     }
 
     /// Appends a sequence of states that recognizes the concatenation of `exprs`.
-    fn add_concat_exprs(&mut self, exprs: &Vec<Expr>) {
+    fn add_concat_exprs(&mut self, exprs: &[Expr]) {
         if let Some((expr, rest)) = exprs.split_first() {
             self.add_expr(expr);
 
@@ -129,7 +129,7 @@ impl NfaBuilder {
     }
 
     /// Appends a sequence of states that recognizes one of the expressions in `alts`.
-    fn add_alternate_exprs(&mut self, alts: &Vec<Expr>) {
+    fn add_alternate_exprs(&mut self, alts: &[Expr]) {
         // Add the new initial state that feeds into the alternate.
         let init_idx = self.states.len();
         self.states.push(State::new());
@@ -237,37 +237,37 @@ impl NfaBuilder {
     fn add_expr(&mut self, expr: &Expr) {
         use regex_syntax::Expr::*;
 
-        match expr {
-            &Empty => {},
-            &Class(ref c) => self.add_single_transition(class_to_set(c)),
-            &AnyChar => self.add_single_transition(RangeSet::full()),
-            &AnyCharNoNL => {
+        match *expr {
+            Empty => {},
+            Class(ref c) => self.add_single_transition(class_to_set(c)),
+            AnyChar => self.add_single_transition(RangeSet::full()),
+            AnyCharNoNL => {
                 let nls = b"\n\r".into_iter().map(|b| *b as u32);
                 self.add_single_transition(RangeSet::except(nls))
             },
-            &Concat(ref es) => self.add_concat_exprs(es),
-            &Alternate(ref es) => self.add_alternate_exprs(es),
-            &Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
-            &StartLine => self.add_look(Look::NewLine, Look::Full),
-            &StartText => self.add_look(Look::Boundary, Look::Full),
-            &EndLine => self.add_look(Look::Full, Look::NewLine),
-            &EndText => self.add_look(Look::Full, Look::Boundary),
-            &WordBoundary => {
+            Concat(ref es) => self.add_concat_exprs(es),
+            Alternate(ref es) => self.add_alternate_exprs(es),
+            Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+            StartLine => self.add_look(Look::NewLine, Look::Full),
+            StartText => self.add_look(Look::Boundary, Look::Full),
+            EndLine => self.add_look(Look::Full, Look::NewLine),
+            EndText => self.add_look(Look::Full, Look::Boundary),
+            WordBoundary => {
                 self.add_look(Look::WordChar, Look::NotWordChar);
                 self.extra_look(Look::NotWordChar, Look::WordChar);
             },
-            &NotWordBoundary => {
+            NotWordBoundary => {
                 self.add_look(Look::WordChar, Look::WordChar);
                 self.extra_look(Look::NotWordChar, Look::NotWordChar);
             },
 
             // We don't support capture groups, so there is no need to keep track of
             // the group name or number.
-            &Group { ref e, .. } => self.add_expr(e),
+            Group { ref e, .. } => self.add_expr(e),
 
             // We don't support greedy vs. lazy matching, because I don't know
             // if it can be expressed in a DFA.
-            &Repeat { ref e, r, .. } => self.add_repeat(e, r),
+            Repeat { ref e, r, .. } => self.add_repeat(e, r),
         }
     }
 }

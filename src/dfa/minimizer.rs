@@ -21,11 +21,15 @@ pub struct Minimizer {
 }
 
 impl Minimizer {
+    // Partition the states according to
+    // - when they accept,
+    // - what they return if they do sometimes accept, and
+    // - what set of bytes do we expect to see next.
     fn initial_partition<Ret: RetTrait>(dfa: &Dfa<Ret>) -> Vec<Vec<StateIdx>> {
         let mut part: HashMap<(Accept, Option<&Ret>, RangeSet<u8>), Vec<StateIdx>> = HashMap::new();
         for (idx, st) in dfa.states.iter().enumerate() {
             let chars = st.transitions.to_range_set();
-            part.entry((st.accept, dfa.ret(idx), chars)).or_insert(Vec::new()).push(idx);
+            part.entry((st.accept, dfa.ret(idx), chars)).or_insert_with(Vec::new).push(idx);
         }
         part.into_iter().map(|x| x.1).collect()
     }

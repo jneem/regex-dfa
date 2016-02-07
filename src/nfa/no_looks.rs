@@ -68,7 +68,7 @@ impl MergedUtf8Sequences {
             let len = seq.len();
             let h = &seq.as_slice()[..len-1];
             if head.is_empty() {
-                head.extend(h);
+                head.extend_from_slice(h);
             } else if &head[..] != h {
                 panic!("invalid sequences to merge");
             }

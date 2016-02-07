@@ -309,7 +309,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
         for st in &mut self.states {
             st.transitions.map_values(|x| map(*x));
         }
-        let init: Vec<_> = self.init.iter().map(|x| x.map(|y| map(y))).collect();
+        let init: Vec<_> = self.init.iter().map(|x| x.map(&mut map)).collect();
         self.init = init;
     }
 

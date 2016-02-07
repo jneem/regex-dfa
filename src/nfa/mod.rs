@@ -249,7 +249,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     fn initial_states(&self) -> StateSet {
         let mut init_states = Vec::new();
         for s in &self.init {
-            init_states.extend(s);
+            init_states.extend_from_slice(s);
         }
         init_states.sort();
         init_states.dedup();
