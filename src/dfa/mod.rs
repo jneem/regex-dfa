@@ -20,6 +20,7 @@ use range_map::{RangeMap, RangeMultiMap};
 use refinery::Partition;
 use runner::program::TableInsts;
 use std;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
@@ -336,6 +337,28 @@ impl<Ret: RetTrait> Dfa<Ret> {
         // Fix the transitions and initialization to point to the new states. The `unwrap` here is
         // basically the assertion that all reachable states should be mapped to new states.
         self.map_states(|s| state_map[s].unwrap());
+    }
+
+    // Finds all the transitions between states that only match a single byte.
+    fn single_byte_transitions(&self) -> HashMap<(StateIdx, StateIdx), u8> {
+        use std::collections::hash_map::Entry::*;
+
+        let mut ret = HashMap::new();
+        let mut seen = HashSet::new();
+        for (src_idx, st) in self.states.iter().enumerate() {
+            for &(range, tgt_idx) in st.transitions.ranges_values() {
+                if range.start == range.end && !seen.contains(&(src_idx, tgt_idx)) {
+                    match ret.entry((src_idx, tgt_idx)) {
+                        Occupied(e) => {
+                            e.remove();
+                            seen.insert((src_idx, tgt_idx));
+                        },
+                        Vacant(e) => { e.insert(range.start); },
+                    }
+                }
+            }
+        }
+        ret
     }
 }
 
