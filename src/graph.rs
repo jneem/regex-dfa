@@ -85,13 +85,14 @@ pub trait Graph {
                             }
                         } else if !done[child] {
                             // This is a new state: report it and push it onto the stack.
+                            stack.push(child);
                             match visit(&stack[stack_pos[child]..]) {
                                 DfsInstruction::Stop => { return; },
                                 DfsInstruction::TurnBack => {
+                                    stack.pop();
                                     done[child] = true;
                                 },
                                 DfsInstruction::Continue => {
-                                    stack.push(child);
                                     remaining_children_stack.push(self.neighbors(child));
                                     visiting[child] = true;
                                     stack_pos[child] = stack.len() - 1;
