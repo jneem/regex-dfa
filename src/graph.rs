@@ -9,6 +9,7 @@
 use dfa::{Dfa, RetTrait};
 use nfa::{Nfa, NoLooks, StateIdx};
 use num::traits::PrimInt;
+use std::collections::HashSet;
 use std::fmt::Debug;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,12 +35,13 @@ pub trait Graph {
     /// - on `Stop`, the search will terminate early.
     fn dfs<Inits, Visit, Cycle>(&self, init: Inits, mut visit: Visit, mut cycle: Cycle)
     where
-    Visit: FnMut(StateIdx) -> DfsInstruction,
+    Visit: FnMut(&[StateIdx]) -> DfsInstruction,
     Cycle: FnMut(&[StateIdx]) -> DfsInstruction,
     Inits: Iterator<Item=StateIdx>,
     {
         // Pairs of (state, children_left_to_explore).
-        let mut stack: Vec<(StateIdx, Box<Iterator<Item=StateIdx>>)>
+        let mut stack: Vec<StateIdx> = Vec::with_capacity(self.num_states());
+        let mut remaining_children_stack: Vec<Box<Iterator<Item=StateIdx>>>
             = Vec::with_capacity(self.num_states());
         let mut visiting: Vec<bool> = vec![false; self.num_states()];
         let mut done: Vec<bool> = vec![false; self.num_states()];
@@ -51,7 +53,7 @@ pub trait Graph {
 
         for &start_idx in &start_states {
             if !done[start_idx] {
-                match visit(start_idx) {
+                match visit(&[start_idx][..]) {
                     DfsInstruction::Continue => {},
                     DfsInstruction::TurnBack => {
                         done[start_idx] = true;
@@ -61,37 +63,37 @@ pub trait Graph {
                 }
 
                 visiting[start_idx] = true;
-                stack.push((start_idx, self.neighbors(start_idx)));
+                stack.push(start_idx);
+                remaining_children_stack.push(self.neighbors(start_idx));
                 stack_pos[start_idx] = 0;
 
                 while !stack.is_empty() {
-                    let (cur, next_child) = {
-                        let &mut (cur, ref mut children) = stack.last_mut().unwrap();
-                        (cur, children.next())
-                    };
+                    // We keep stack and remaining_children_stack synchronized.
+                    debug_assert!(!remaining_children_stack.is_empty());
+
+                    let cur = *stack.last().unwrap();
+                    let next_child = remaining_children_stack.last_mut().unwrap().next();
 
                     if let Some(child) = next_child {
                         if visiting[child] {
                             // We found a cycle: report it (and maybe terminate early).
-                            let cyc: Vec<_> = stack[stack_pos[child]..].iter()
-                                .map(|x| x.0)
-                                .collect();
-
-                            if cycle(&cyc) == DfsInstruction::Stop {
-                                return;
-                            }
                             // Since we turn back on finding a cycle anyway, we treat Continue
                             // and TurnBack the same (i.e. we don't need to handle either one
                             // explicitly).
+                            if cycle(&stack[stack_pos[child]..]) == DfsInstruction::Stop {
+                                return;
+                            }
                         } else if !done[child] {
                             // This is a new state: report it and push it onto the stack.
-                            match visit(child) {
+                            stack.push(child);
+                            match visit(&stack[stack_pos[child]..]) {
                                 DfsInstruction::Stop => { return; },
                                 DfsInstruction::TurnBack => {
+                                    stack.pop();
                                     done[child] = true;
                                 },
                                 DfsInstruction::Continue => {
-                                    stack.push((child, self.neighbors(child)));
+                                    remaining_children_stack.push(self.neighbors(child));
                                     visiting[child] = true;
                                     stack_pos[child] = stack.len() - 1;
                                 },
@@ -105,9 +107,36 @@ pub trait Graph {
                     visiting[cur] = false;
                     done[cur] = true;
                     stack.pop();
+                    remaining_children_stack.pop();
                 }
             }
         }
+    }
+
+    /// The same as `dfs`, but runs on a graph with cuts in it.
+    ///
+    /// Instead of running on the full graph, runs on the graph where pairs in `cuts` are
+    /// disconnected.
+    fn dfs_with_cut<Inits, Cuts, Visit, Cycle>(
+        &self,
+        init: Inits,
+        cuts: &HashSet<(StateIdx, StateIdx)>,
+        mut visit: Visit,
+        mut cycle: Cycle)
+    where
+    Visit: FnMut(&[StateIdx]) -> DfsInstruction,
+    Cycle: FnMut(&[StateIdx]) -> DfsInstruction,
+    Inits: Iterator<Item=StateIdx>,
+    {
+        let should_cut = |s: &[StateIdx]| {
+            let len = s.len();
+            len >= 2 && cuts.contains(&(s[len-2], s[len-1]))
+        };
+        let my_visit = |s: &[StateIdx]|
+            if should_cut(s) { DfsInstruction::TurnBack } else { visit(s) };
+        let my_cycle = |s: &[StateIdx]|
+            if should_cut(s) { DfsInstruction::TurnBack } else { cycle(s) };
+        self.dfs(init, my_visit, my_cycle);
     }
 
     /// Returns a list of states, visited in depth-first order.
@@ -115,7 +144,8 @@ pub trait Graph {
         use self::DfsInstruction::*;
 
         let mut ret: Vec<StateIdx> = Vec::new();
-        self.dfs(init, |st| { ret.push(st); Continue }, |_| Continue);
+        // The unwrap is ok because dfa guarantees never to pass an empty slice.
+        self.dfs(init, |st| { ret.push(*st.last().unwrap()); Continue }, |_| Continue);
         ret
     }
 
