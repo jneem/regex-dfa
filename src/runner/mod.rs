@@ -5,9 +5,6 @@ pub trait Engine<Ret: Debug>: Debug {
     fn clone_box(&self) -> Box<Engine<Ret>>;
 }
 
-#[macro_use]
-pub mod prefix;
-
-pub mod backtracking;
+pub mod anchored;
 pub mod forward_backward;
 pub mod program;

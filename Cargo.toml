@@ -10,11 +10,9 @@ readme = "README.md"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-aho-corasick = "0.4"
 itertools = "0.4"
 lazy_static = "0.1"
 memchr = "0.1"
-memmem = "0.1"
 num = "0.1"
 range-map = "0.1"
 refinery = "0.1"

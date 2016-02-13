@@ -35,8 +35,6 @@ pub struct TableInsts<Ret> {
     pub accept: Vec<Option<Ret>>,
     /// Same as `accept`, but applies only at the end of the input.
     pub accept_at_eoi: Vec<Option<Ret>>,
-    /// If true, this program should only be used at the start of the input.
-    pub is_anchored: bool,
 }
 
 impl<Ret: Debug> Debug for TableInsts<Ret> {
@@ -78,10 +76,6 @@ impl<Ret: Debug> Debug for TableInsts<Ret> {
 }
 
 impl<Ret: Copy + Debug> TableInsts<Ret> {
-    pub fn is_anchored(&self) -> bool {
-        self.is_anchored
-    }
-
     fn next_state(&self, state: usize, input: u8) -> Option<usize> {
         let class = self.byte_class[input as usize];
         let next_state = self.table[(state << self.log_num_classes) + class as usize];
@@ -100,16 +94,29 @@ impl<Ret: Copy + Debug> TableInsts<Ret> {
     -> Result<(usize, Ret), usize> {
         let mut state = state as u32;
 
+        if state as usize >= self.accept.len() {
+            panic!("BUG");
+        }
         for pos in pos..input.len() {
-            if let Some(ret) = self.accept[state as usize] {
+            // LLVM should be smart enough to elide the bounds check here (because of the check
+            // before the loop and the check at the end of the loop), but it isn't. Going unchecked
+            // here gives about 10% improvement.
+            if let Some(ret) = unsafe { *self.accept.get_unchecked(state as usize) } {
                 return Ok((pos, ret));
             }
 
             // We've manually inlined next_state here, for better performance (measurably better
             // than using #[inline(always)]).
+            // For some reason, these bounds checks (even though LLVM leaves them in) don't seem to
+            // hurt performance.
             let class = self.byte_class[input[pos] as usize];
             state = self.table[((state as usize) << self.log_num_classes) + class as usize];
-            if state == u32::MAX {
+
+            // Since everything in `self.table` is either a valid state or u32::MAX, this is the
+            // same as checking if state == u32::MAX. We write it this way in the hope that some
+            // future rustc/LLVM will be able to elide the bounds check at the top of the loop so
+            // that we can get rid of `unsafe.'
+            if state as usize >= self.accept.len() {
                 return Err(pos);
             }
         }

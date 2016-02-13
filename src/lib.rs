@@ -70,10 +70,8 @@ extern crate matches;
 #[cfg(test)]
 extern crate test;
 
-extern crate aho_corasick;
 extern crate itertools;
 extern crate memchr;
-extern crate memmem;
 extern crate num;
 extern crate range_map;
 extern crate refinery;
@@ -93,6 +91,6 @@ mod runner;
 mod unicode;
 
 pub use error::Error;
-pub use regex::{EngineType, Regex};
+pub use regex::Regex;
 pub type Result<T> = ::std::result::Result<T, Error>;
 

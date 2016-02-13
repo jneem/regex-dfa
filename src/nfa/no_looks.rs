@@ -613,16 +613,6 @@ mod tests {
     use range_map::Range;
     use std::usize;
 
-    #[test]
-    fn has_look_behind() {
-        assert!(!re_nfa("abc").has_look_behind());
-        assert!(!re_nfa(r"a\b").has_look_behind());
-        assert!(!re_nfa(r"^a\b").has_look_behind());
-        assert!(re_nfa(r"\ba").has_look_behind());
-        assert!(re_nfa(r"(?m)^a").has_look_behind());
-        assert!(re_nfa(r"\Ba").has_look_behind());
-    }
-
     fn re_nfa_anchored(re: &str) -> Nfa<u8, NoLooks> {
         re_nfa(re).byte_me(usize::MAX).unwrap().anchor(usize::MAX).unwrap()
     }

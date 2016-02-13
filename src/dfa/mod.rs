@@ -155,31 +155,19 @@ impl<Ret: RetTrait> Dfa<Ret> {
         ret
     }
 
-    fn make_prefix(&self, prune_suffixes: bool) -> Vec<PrefixPart> {
-        // It might seem silly to look for prefixes starting at the anchored state, but it's useful
-        // for forward-backward matching. In cases where the regex is honestly anchored, we won't
-        // ask to make a prefix anyway.
-        if let Some(state) = self.init_state(Look::Boundary) {
-            PrefixSearcher::extract(self, prune_suffixes, state)
-        } else {
-            Vec::new()
-        }
-    }
-
     /// Returns a set of strings that match the beginning of this `Dfa`.
     ///
     /// If the set is non-empty, every match of this `Dfa` is guaranteed to start with one of these
     /// strings.
     pub fn prefix_strings(&self) -> Vec<PrefixPart> {
-        self.make_prefix(false)
-    }
-
-    /// Returns a set of strings that match the beginning of this `Dfa`.
-    ///
-    /// This is like `prefix_strings`, except that if one prefix is a suffix of another and they
-    /// both end up in the same `Dfa` state then only the shorter one will be included.
-    pub fn pruned_prefix_strings(&self) -> Vec<PrefixPart> {
-        self.make_prefix(true)
+        // It might seem silly to look for prefixes starting at the anchored state, but it's useful
+        // for forward-backward matching. In cases where the regex is honestly anchored, we won't
+        // ask to make a prefix anyway.
+        if let Some(state) = self.init_state(Look::Boundary) {
+            PrefixSearcher::extract(self, state)
+        } else {
+            Vec::new()
+        }
     }
 
     // Finds the bytes that are treated equivalently by this Dfa.
@@ -237,7 +225,6 @@ impl<Ret: RetTrait> Dfa<Ret> {
             accept: accept,
             accept_at_eoi: accept_at_eoi,
             table: table,
-            is_anchored: self.is_anchored(),
         }
     }
 
@@ -474,7 +461,7 @@ pub mod tests {
     #[test]
     fn test_anchored_dfa_literal_prefix() {
         let dfa = make_anchored("abc[A-z]");
-        let pref = dfa.pruned_prefix_strings().into_iter().map(|p| p.0).collect::<Vec<_>>();
+        let pref = dfa.prefix_strings().into_iter().map(|p| p.0).collect::<Vec<_>>();
         assert_eq!(pref, vec!["abc".as_bytes()]);
     }
 

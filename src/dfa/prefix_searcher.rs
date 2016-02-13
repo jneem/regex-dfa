@@ -25,7 +25,6 @@ pub struct PrefixSearcher {
     active: VecDeque<PrefixPart>,
     current: PrefixPart,
     suffixes: Trie,
-    prune_suffixes: bool,
     finished: Vec<PrefixPart>,
 
     // The set of prefixes is complete if:
@@ -38,18 +37,17 @@ pub struct PrefixSearcher {
 }
 
 impl PrefixSearcher {
-    pub fn extract<T: RetTrait>(dfa: &Dfa<T>, prune: bool, state: StateIdx) -> Vec<PrefixPart> {
-        let mut searcher = PrefixSearcher::new(prune);
+    pub fn extract<T: RetTrait>(dfa: &Dfa<T>, state: StateIdx) -> Vec<PrefixPart> {
+        let mut searcher = PrefixSearcher::new();
         searcher.search(dfa, state);
         searcher.finished
     }
 
-    fn new(prune: bool) -> PrefixSearcher {
+    fn new() -> PrefixSearcher {
         PrefixSearcher {
             active: VecDeque::new(),
             current: PrefixPart(Vec::new(), 0),
             suffixes: Trie::new(),
-            prune_suffixes: prune,
             finished: Vec::new(),
             complete: true,
             max_prefixes: NUM_PREFIX_LIMIT,
@@ -98,18 +96,15 @@ impl PrefixSearcher {
                 next_prefs.push(PrefixPart(next_pref, *next_state));
             }
 
-            // If we're asked to prune, discard any new prefix that is the suffix of some existing
-            // prefix.
-            if self.prune_suffixes {
-                next_prefs.retain(|pref| {
-                    let rev_bytes = pref.0.iter().cloned().rev();
-                    !self.suffixes
-                        .prefixes(rev_bytes)
-                        .any(|s| s == pref.1)
-                });
-                for pref in &next_prefs {
-                    self.suffixes.insert(pref.0.iter().cloned().rev(), pref.1);
-                }
+            // Discard any new prefix that is the suffix of some existing prefix.
+            next_prefs.retain(|pref| {
+                let rev_bytes = pref.0.iter().cloned().rev();
+                !self.suffixes
+                    .prefixes(rev_bytes)
+                    .any(|s| s == pref.1)
+            });
+            for pref in &next_prefs {
+                self.suffixes.insert(pref.0.iter().cloned().rev(), pref.1);
             }
 
             // Stop searching if we have too many prefixes already, or if we've run into an accept
@@ -136,11 +131,11 @@ mod tests {
     use super::*;
 
     macro_rules! test_prefix {
-        ($name:ident, $pruned:expr, $re_str:expr, $answer:expr, $max_num:expr, $max_len:expr) => {
+        ($name:ident, $re_str:expr, $answer:expr, $max_num:expr, $max_len:expr) => {
             #[test]
             fn $name() {
                 let dfa = dfa::tests::make_dfa($re_str).unwrap();
-                let mut pref = PrefixSearcher::new($pruned);
+                let mut pref = PrefixSearcher::new();
                 pref.max_prefixes = $max_num;
                 pref.max_len = $max_len;
                 pref.search(&dfa, dfa.init_state(Look::Boundary).unwrap());
@@ -155,34 +150,29 @@ mod tests {
         };
     }
 
-    test_prefix!(long, false,
+    test_prefix!(long,
         "[XYZ]ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         vec!["XABCDEFGHIJKLMNOPQRSTUVWXYZ",
            "YABCDEFGHIJKLMNOPQRSTUVWXYZ",
            "ZABCDEFGHIJKLMNOPQRSTUVWXYZ",],
         3, 30);
 
-    test_prefix!(case_insensitive, false,
+    test_prefix!(case_insensitive,
         "(?i)abc[a-z]",
         vec!["ABC", "ABc", "AbC", "Abc", "aBC", "aBc", "abC", "abc"],
         30, 5);
 
-    test_prefix!(byte_set, false,
+    test_prefix!(byte_set,
         "[ac]",
         vec!["a", "c"],
         30, 5);
 
-    test_prefix!(unpruned_repetition, false,
-        "a+bc",
-        vec!["aaaa", "aaab", "aabc", "abc"],
-        10, 10);
-
-    test_prefix!(pruned_repetition, true,
+    test_prefix!(pruned_repetition,
         "a+bc",
         vec!["abc"],
         10, 10);
 
-    test_prefix!(pruned_empty_repetition, true,
+    test_prefix!(pruned_empty_repetition,
         "[a-zA-Z]*bc",
         vec!["bc"],
         10, 10);

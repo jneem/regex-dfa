@@ -290,14 +290,6 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
         RangeMultiMap::from_vec(trans).group()
     }
 
-    /// Returns true if this Nfa can determine its initial state without looking at previous
-    /// bytes of the input.
-    pub fn has_look_behind(&self) -> bool {
-        [Look::WordChar, Look::NotWordChar, Look::NewLine].iter().any(
-            |&look| !self.init[look.as_usize()].is_empty()
-        )
-    }
-
     /// Returns true if this Nfa only matches things at the beginning of the input.
     pub fn is_anchored(&self) -> bool {
         !self.init[Look::Boundary.as_usize()].is_empty()
