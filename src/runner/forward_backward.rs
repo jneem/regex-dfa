@@ -7,6 +7,7 @@
 // except according to those terms.
 
 use std::fmt::Debug;
+//use dfa::{Dfa, PrefixPart, RetTrait};
 use dfa::PrefixPart;
 use itertools::Itertools;
 use memchr::memchr;
@@ -29,16 +30,16 @@ impl<Ret: Copy + Debug> ForwardBackwardEngine<Ret> {
         }
     }
 
-    fn shortest_match_with_searcher<SearchFn>(&self, input: &[u8], search: SearchFn)
+    fn find_with_searcher<SearchFn>(&self, input: &[u8], search: SearchFn)
     -> Option<(usize, usize, Ret)>
     where SearchFn: Fn(&[u8], usize) -> Option<usize> {
         let mut pos = 0;
         while let Some(start) = search(input, pos) {
-            match self.forward.shortest_match_from(input, start, 0) {
+            match self.forward.find_from(input, start, 0) {
                 Ok((end, (rev_state, look_ahead))) => {
                     let rev_pos = end.saturating_sub(look_ahead as usize);
                     let (start_pos, ret) = self.backward
-                        .longest_backward_match_from(input, rev_pos, rev_state)
+                        .longest_backward_find_from(input, rev_pos, rev_state)
                         .expect("BUG: matched forward but failed to match backward");
                     return Some((start_pos, rev_pos, ret));
 
@@ -55,18 +56,18 @@ impl<Ret: Copy + Debug> ForwardBackwardEngine<Ret> {
 }
 
 impl<Ret: Copy + Debug + 'static> Engine<Ret> for ForwardBackwardEngine<Ret> {
-    fn shortest_match(&self, s: &str) -> Option<(usize, usize, Ret)> {
+    fn find(&self, s: &str) -> Option<(usize, usize, Ret)> {
         let input = s.as_bytes();
         if self.forward.is_empty() {
             return None;
         }
 
         match self.prefix {
-            Prefix::Empty => self.shortest_match_with_searcher(
+            Prefix::Empty => self.find_with_searcher(
                 input,
                 |s, pos| if pos <= s.len() { Some(pos) } else { None }
             ),
-            Prefix::ByteSet { ref bytes, offset } => self.shortest_match_with_searcher(
+            Prefix::ByteSet { ref bytes, offset } => self.find_with_searcher(
                 input,
                 |s, pos| if pos + offset <= s.len() {
                         s[(pos + offset)..].iter().position(|c| bytes[*c as usize]).map(|x| x + pos)
@@ -74,7 +75,7 @@ impl<Ret: Copy + Debug + 'static> Engine<Ret> for ForwardBackwardEngine<Ret> {
                         None
                     }
             ),
-            Prefix::Byte { byte, offset } => self.shortest_match_with_searcher(
+            Prefix::Byte { byte, offset } => self.find_with_searcher(
                 input,
                 |s, pos| if pos + offset <= s.len() {
                     memchr(byte, &input[(pos + offset)..]).map(|x| x + pos)
@@ -82,6 +83,7 @@ impl<Ret: Copy + Debug + 'static> Engine<Ret> for ForwardBackwardEngine<Ret> {
                     None
                 }
             ),
+            //Prefix::ByteBackwards { .. } => unimplemented!(),
         }
     }
 
@@ -103,6 +105,8 @@ pub enum Prefix {
     ByteSet { bytes: Vec<bool>, offset: usize },
     // Matches a specific byte and then rewinds some number of bytes.
     Byte { byte: u8, offset: usize },
+    // Matches a specific byte and then runs a DFA backwards.
+    //ByteBackwards { byte: u8, rev: Dfa<()> },
 }
 
 // How big we allow the byte sets to be. In order for byte sets to be a performance win, finding a
@@ -158,6 +162,25 @@ impl Prefix {
 
         None
     }
+
+    /*
+    pub fn from_dfa<Ret: RetTrait>(dfa: &Dfa<Ret>) -> Prefix {
+        let parts = dfa.prefix_strings();
+        let first_try = Prefix::from_parts(parts);
+
+        /*
+        match first_try {
+            Prefix::Byte {..} => first_try,
+            _ => {
+                let crit_strings = dfa.critical_strings();
+                unimplemented!();
+                first_try
+            },
+        }
+        */
+        unimplemented!();
+    }
+    */
 
     /// Converts a set of `PrefixParts` into a `Prefix` that matches any of the strings.
     pub fn from_parts(mut parts: Vec<PrefixPart>) -> Prefix {

@@ -15,48 +15,47 @@ This crate provides tools for converting regular expressions into deterministic 
 ```rust
 use regex_dfa::Regex;
 let re = Regex::new(r"\d{4}-\d{2}-\d{2}").unwrap();
-assert_eq!(re.shortest_match("My birthday is 1986-08-22!"), Some((15, 25)));
+assert_eq!(re.find("My birthday is 1986-08-22!"), Some((15, 25)));
 ```
 
-# Caveats
+The most useful function in this crate is `Regex::find`, which looks for the first substring of the
+given string that match the language of the DFA.
 
-The most useful function in this crate is `Regex::shortest_match`, which looks for substrings of
-the given string that match the language of the DFA. The first index of the return value is fairly
-self-explanatory but the second index should be used with caution because it is only a bound on the
-ending index you will get from running a standard regex engine. This is because a regex specifies
-not only a language, but also a preferred execution order (for example, by specifying lazy or
-greedy repetition operators). This information is lost when moving to a DFA, so we cannot
-necessarily find the exact same match that a standard regex engine will. Having said that, see the
-next example.
+# Comparison to the `regex` crate
 
-# Example: scanning with `regex_dfa` and then matching with `regex`
+Compared to rust's standard `regex` crate, the main feature of `regex_dfa` is that `regex_dfa`
+*eagerly* compiles a regular expression into a DFA, whereas `regex` does so lazily. There are
+advantages and disadvantages to the eager approach. To begin with, doing all the compilation
+up-front means that there is less to do at match time. If we get around to writing a compiler
+plugin for compiling the regular expression at compile time, this would be an even bigger win. 
+Another advantage is that since we don't care so much about compilation speed, we have more
+opportunities to look for optimizations.
 
-Probably the most useful way to use this crate is as a preprocessor for a real regex engine. The
-idea is to use `regex_dfa` for finding the start of a match, and then to use another engine for
-doing the rest (e.g. replacing text, finding capture groups, etc.).
+The main disadvantage to eager compilation is memory usage. Even fairly simple regular expressions
+may take several tens of kilobytes to represent as a DFA. More complicated ones (especially regular
+expressions that use unicode word boundaries or character classes) may require much more. This
+disadvantage is specific to eager compilation, since lazy DFA compilation only needs to create DFA
+states for those characters that are actually seen (i.e., probably a tiny fraction of the entire
+unicode character class). For this reason, `regex_dfa` allows you to restrict the amount of memory
+it uses: simply use the method `Regex::new_bounded`, which will fail and report an error if it
+would otherwise need to use too much memory.
 
-```rust
-# extern crate regex;
-# extern crate regex_dfa;
+# Roadmap
 
-use regex::Regex;
-use regex_dfa::{Regex as RegexDfa};
+There are two substantial features that need to be added before this crate can be considered
+feature-complete.
 
-# fn main() {
-let digits_dfa = RegexDfa::new("[0-9]+").unwrap();
-let digits = Regex::new("^[0-9]+").unwrap(); // Note the '^'!
+## SIMD optimizations
 
-let find_digits = |s: &str| {
-    // First, quickly find the beginning of a match.
-    if let Some((start, _)) = digits_dfa.shortest_match(s) {
-        // Now use the real regex engine to do the rest.
-        digits.find(&s[start..]).map(|(x, y)| (x + start, y + start))
-    } else {
-        None
-    }
-};
-# }
-```
+There are some nice tricks available for using SIMD instructions to quickly scan over uninteresting
+parts of the input. The `regex` crate is capable (with a nightly compiler) of doing some of these
+already, and we should imitate it.
+
+## Compiler plugin
+
+Since the main advantage of this crate is that it can do work ahead of time, it would make total
+sense to do it all at the program's compile time. This feature will probably wait until the rust's
+compiler plugin story stabilizes a bit.
 */
 
 #![cfg_attr(test, feature(test))]
@@ -66,6 +65,9 @@ extern crate quickcheck;
 #[cfg(test)]
 #[macro_use]
 extern crate matches;
+
+#[cfg(test)]
+extern crate rand;
 
 #[cfg(test)]
 extern crate test;

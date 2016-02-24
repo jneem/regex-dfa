@@ -8,17 +8,50 @@
 
 use look::Look;
 use nfa::{Accept, HasLooks, LookPair, Nfa, NoLooks, StateIdx};
-use nfa::builder::NfaBuilder;
 use std::cmp::max;
 use std::collections::HashSet;
-use std::mem::swap;
-use regex_syntax;
+use std::ops::Deref;
+use range_map::{Range, RangeSet};
+use regex_syntax::{CharClass, ClassRange, Expr, Repeater};
+
+// Converts a `CharClass` into a `RangeSet`
+fn class_to_set(cc: &CharClass) -> RangeSet<u32> {
+    cc.iter().map(|r| Range::new(r.start as u32, r.end as u32)).collect()
+}
 
 impl Nfa<u32, HasLooks> {
+    /// Asserts that the invariants that are supposed to hold do.
+    fn check_invariants(&self) {
+        // The init state is implicitly the first one, so there are no explicit init states.
+        debug_assert!(self.init.is_empty());
+
+        // The final state is accepting, and no others are.
+        debug_assert!(self.states.last().unwrap().accept == Accept::Always);
+        debug_assert!(self.states.iter().rev().skip(1).all(|s| s.accept == Accept::Never));
+
+        // No state has both a look transition and a consuming transition.
+        debug_assert!(self.states.iter().all(|s| s.looking.is_empty() || s.consuming.is_empty()));
+
+        // All targets of a consuming transition are just the next state.
+        debug_assert!(self.states.iter()
+                        .enumerate()
+                        .all(|(idx, s)| s.consuming.ranges_values().all(|&(_, val)| val == idx + 1)));
+    }
+
     /// Creates a new Nfa from a regex string.
     pub fn from_regex(re: &str) -> ::Result<Nfa<u32, HasLooks>> {
-        let expr = try!(regex_syntax::Expr::parse(re));
-        Ok(NfaBuilder::from_expr(&expr).to_automaton())
+        let expr = try!(Expr::parse(re));
+        let mut ret = Nfa::new();
+
+        ret.add_state(Accept::Never);
+        ret.add_expr(&expr);
+        ret.add_eps(0, 1);
+
+        let len = ret.num_states();
+        ret.states[len - 1].accept = Accept::Always;
+
+        ret.check_invariants();
+        Ok(ret)
     }
 
     /// Adds a non-input consuming transition between states `source` and `target`.
@@ -40,30 +73,52 @@ impl Nfa<u32, HasLooks> {
             return Nfa::with_capacity(0);
         }
 
-        let all_closures: Vec<_> = (0..self.states.len()).map(|s| self.closure(s)).collect();
+        // For every state with out transitions, add transitions from it to everything in the closure
+        // of the target. Note that (according to `check_invariants`) the target state is always
+        // the next state.
+        let old_len = self.num_states();
         let mut new_states: Vec<(StateIdx, Look, StateIdx)> = Vec::new();
-        for (state_idx, looks) in all_closures.iter().enumerate() {
-            for &look in looks {
-                if let Some(new_state) = self.add_state_and_out_trans(state_idx, look) {
-                    new_states.push((state_idx, look.behind, new_state));
+        for src_idx in 0..self.states.len() {
+            if !self.states[src_idx].consuming.is_empty() {
+                let consuming = self.states[src_idx].consuming.clone();
+                for look in self.closure(src_idx + 1) {
+                    // Add transitions into the look target.
+                    let new_idx = self.add_look_state(look);
+                    let filtered_consuming = consuming.intersection(look.behind.as_set());
+                    for &(range, _) in filtered_consuming.ranges_values() {
+                        self.add_transition(src_idx, new_idx, range);
+                    }
+                    // If the look target is actually a new state, hold off on adding transitions
+                    // out of it, because we need to make sure that all the transitions from
+                    // look.target_state have been added first.
+                    if new_idx >= old_len {
+                        new_states.push((new_idx, look.ahead, look.target_state));
+                    }
                 }
             }
-            self.states[state_idx].looking.clear();
         }
 
-        let rev = self.reversed_transitions();
-        for (old_state, look, new_state) in new_states {
-            for &(range, src) in rev[old_state].intersection(look.as_set()).ranges_values() {
-                self.add_transition(src, new_state, range);
+        // Add the new initial states: everything that was immediately reachable from state 0 is now
+        // an initial state.
+        for look in self.closure(0) {
+            let new_idx = self.add_look_state(look);
+            self.init.push((look.behind, new_idx));
+            if new_idx >= old_len {
+                new_states.push((new_idx, look.ahead, look.target_state));
             }
         }
 
-        // We push 0 here because it used to be the implicit start state.
-        self.init_mut(Look::Full).push(0);
-        self.init_mut(Look::Boundary).push(0);
-        for vec in &mut self.init {
-            vec.sort();
-            vec.dedup();
+        // Now add transitions out of the new states.
+        for (src_idx, look, tgt_idx) in new_states {
+            let out_consuming = self.states[tgt_idx].consuming.intersection(look.as_set());
+            for &(range, tgt) in out_consuming.ranges_values() {
+                self.states[src_idx].consuming.insert(range, tgt);
+            }
+        }
+
+        // Get rid of all looking transitions.
+        for st in &mut self.states {
+            st.looking.clear();
         }
 
         let mut ret: Nfa<u32, NoLooks> = self.transmuted();
@@ -71,95 +126,293 @@ impl Nfa<u32, HasLooks> {
         ret
     }
 
-    // Adds a new state for a LookPair and creates all the transitions out of it.
+    // Adds a new state for a LookPair, if necessary. It is necessary to add a new state if and
+    // only if the LookPair needs to look ahead.
     //
-    // Returns the index of the new state (which may not actually be new, for example if look is
-    // just a pair of Fulls).
-    fn add_state_and_out_trans(&mut self, source_state: StateIdx, look: LookPair)
-    -> Option<StateIdx> {
-        let target_state = look.target_state;
-        let out_consuming = self.states[target_state].consuming.intersection(look.ahead.as_set());
-
-        // If there is some non-trivial look-behind, we need to create a new state to handle it.
-        // Otherwise, we can just add out transitions to source_state.
-        let new_state = {
-            if look.behind.is_full() {
-                source_state
-            } else {
-                self.add_state(Accept::Never)
-            }
-        };
-
-        let out_filtered = out_consuming.intersection(look.ahead.as_set());
-        for &(range, target) in out_filtered.ranges_values() {
-            self.add_transition(new_state, target, range);
-        }
-
-        // Set the accept status of the new state. If the look-ahead is full, just copy the accept
-        // status of the target state.
+    // Returns the index of the new state.
+    fn add_look_state(&mut self, look: LookPair) -> StateIdx {
         if look.ahead.is_full() {
-            self.states[new_state].accept =
-                max(self.states[new_state].accept, self.states[target_state].accept);
+            look.target_state
         } else {
+            let tgt_idx = look.target_state;
+            let new_idx = self.add_state(Accept::Never);
+
             // If the target states accepts at end of input and the look allows eoi, then the new
             // state must also accept at eoi.
-            if self.states[target_state].accept != Accept::Never && look.ahead.allows_eoi() {
-                self.states[new_state].accept = Accept::AtEoi;
-                self.states[new_state].accept_look = Look::Boundary;
+            if self.states[tgt_idx].accept != Accept::Never && look.ahead.allows_eoi() {
+                self.states[new_idx].accept = Accept::AtEoi;
+                self.states[new_idx].accept_look = Look::Boundary;
             }
 
             // If the target state of the look is accepting, add a new look-ahead accepting state.
-            if self.states[target_state].accept == Accept::Always
+            if self.states[tgt_idx].accept == Accept::Always
                     && !look.ahead.as_set().is_empty() {
-                let acc_state = self.add_look_ahead_state(look.ahead, 1, new_state);
+                let acc_idx = self.add_look_ahead_state(look.ahead, 1, new_idx);
                 for range in look.ahead.as_set().ranges() {
-                    self.add_transition(new_state, acc_state, range);
+                    self.add_transition(new_idx, acc_idx, range);
                 }
             }
+            new_idx
         }
-
-        // Make the new state an initial state, if necessary. Note that we don't need to do this if
-        // the look-behind was trivial, since in that case state zero will have the necessary
-        // consuming transitions.
-        if source_state == 0 && !look.behind.is_full() {
-            if look.behind != Look::Boundary {
-                self.init[look.behind.as_usize()].push(new_state);
-            }
-            if look.behind.allows_eoi() {
-                self.init[Look::Boundary.as_usize()].push(new_state);
-            }
-        }
-
-        if look.behind.is_full() { None } else { Some(new_state) }
     }
 
     // Finds (transitively) the set of all non-consuming transitions that can be made starting
     // from `state`.
+    //
+    // The search is done depth-first so that priority is preserved.
     fn closure(&self, state: StateIdx) -> Vec<LookPair> {
-        let mut ret: HashSet<LookPair> = self.states[state].looking.iter().cloned().collect();
-        let mut new_looks = ret.clone();
-        let mut next_looks = HashSet::new();
+        let mut stack: Vec<LookPair> = Vec::new();
+        let mut seen: HashSet<LookPair> = HashSet::new();
+        let mut ret: Vec<LookPair> = Vec::new();
+        let mut next_looks: Vec<LookPair> = Vec::new();
 
-        while !new_looks.is_empty() {
-            for last_look in &new_looks {
-                for next_look in &self.states[last_look.target_state].looking {
-                    let int = next_look.intersection(last_look);
-                    if !int.is_empty() && !ret.contains(&int) {
-                        next_looks.insert(int);
-                        ret.insert(int);
-                    }
+        stack.extend(self.states[state].looking.iter().cloned().rev());
+        while let Some(last_look) = stack.pop() {
+            ret.push(last_look);
+            next_looks.clear();
+
+            for next_look in &self.states[last_look.target_state].looking {
+                let int = next_look.intersection(&last_look);
+                if !int.is_empty() && !seen.contains(&int) {
+                    seen.insert(int);
+                    next_looks.push(int);
                 }
             }
 
-            swap(&mut next_looks, &mut new_looks);
-            next_looks.clear();
+            stack.extend(next_looks.drain(..).rev());
         }
 
-        // Sorting isn't strictly necessary, but it makes this method deterministic which is useful
-        // for testing.
-        let mut ret: Vec<_> = ret.into_iter().collect();
-        ret.sort();
         ret
+    }
+
+    /// Adds an eps transition between the given states.
+    fn add_eps(&mut self, from: StateIdx, to: StateIdx) {
+        self.add_look(from, to, Look::Full, Look::Full);
+    }
+
+    /// Appends a single state that transitions to the next state on observing one of the chars in
+    /// the given range.
+    fn add_state_with_chars(&mut self, chars: &RangeSet<u32>) {
+        let idx = self.num_states();
+        self.add_state(Accept::Never);
+        for range in chars.ranges() {
+            self.add_transition(idx, idx + 1, range);
+        }
+    }
+
+    /// Appends two states, with a given transition between them.
+    fn add_single_transition(&mut self, chars: &RangeSet<u32>) {
+        self.add_state_with_chars(chars);
+        self.add_state(Accept::Never);
+    }
+
+    /// Appends a sequence of states that recognizes a literal.
+    fn add_literal<C, I>(&mut self, chars: I, case_insensitive: bool)
+        where C: Deref<Target=char>,
+              I: Iterator<Item=C>
+    {
+        for ch in chars {
+            let ranges = if case_insensitive {
+                let cc = CharClass::new(vec![ClassRange { start: *ch, end: *ch }]);
+                class_to_set(&cc.case_fold())
+            } else {
+                RangeSet::single(*ch as u32)
+            };
+            self.add_state_with_chars(&ranges);
+        }
+        self.add_state(Accept::Never);
+    }
+
+    /// Appends a sequence of states that recognizes the concatenation of `exprs`.
+    fn add_concat_exprs(&mut self, exprs: &[Expr]) {
+        if let Some((expr, rest)) = exprs.split_first() {
+            self.add_expr(expr);
+
+            for expr in rest {
+                let cur_len = self.num_states();
+                self.add_eps(cur_len - 1, cur_len);
+                self.add_expr(expr);
+            }
+        } else {
+            self.add_state(Accept::Never);
+        }
+    }
+
+    /// Appends a sequence of states that recognizes one of the expressions in `alts`.
+    ///
+    /// The earlier expressions in `alts` get higher priority when matching.
+    fn add_alternate_exprs(&mut self, alts: &[Expr]) {
+        // Add the new initial state that feeds into the alternate.
+        let init_idx = self.num_states();
+        self.add_state(Accept::Never);
+
+        let mut expr_end_indices = Vec::<StateIdx>::with_capacity(alts.len());
+        for expr in alts {
+            let expr_init_idx = self.states.len();
+            self.add_eps(init_idx, expr_init_idx);
+            self.add_expr(expr);
+            expr_end_indices.push(self.states.len() - 1);
+        }
+
+        // Make the final state of each alternative point to our new final state.
+        self.add_state(Accept::Never);
+        let final_idx = self.states.len() - 1;
+        for idx in expr_end_indices {
+            self.add_eps(idx, final_idx);
+        }
+    }
+
+    /// Appends new states, representing multiple copies of `expr`.
+    fn add_repeat(&mut self, expr: &Expr, rep: Repeater, greedy: bool) {
+        match rep {
+            Repeater::ZeroOrOne => {
+                self.add_repeat_up_to(expr, 1, greedy);
+            },
+            Repeater::ZeroOrMore => {
+                self.add_repeat_zero_or_more(expr, greedy);
+            },
+            Repeater::OneOrMore => {
+                self.add_repeat_min_max(expr, 1, None, greedy);
+            },
+            Repeater::Range{ min, max } => {
+                self.add_repeat_min_max(expr, min, max, greedy);
+            }
+        }
+    }
+
+    /// Repeats `expr` a fixed number of times (which must be positive).
+    fn add_repeat_exact(&mut self, expr: &Expr, n: u32) {
+        assert!(n > 0);
+        self.add_expr(expr);
+        for _ in 1..n {
+            let idx = self.states.len();
+            self.add_expr(expr);
+            self.add_eps(idx - 1, idx);
+        }
+    }
+
+    /// Repeats `expr` between zero and `n` times (`n` must be positive).
+    fn add_repeat_up_to(&mut self, expr: &Expr, n: u32, greedy: bool) {
+        assert!(n > 0);
+
+        self.add_state(Accept::Never);
+        let mut init_indices = Vec::<StateIdx>::with_capacity(n as usize);
+        for _ in 0..n {
+            init_indices.push(self.states.len() as StateIdx);
+            self.add_expr(expr);
+        }
+        let final_idx = self.states.len() - 1;
+        for idx in init_indices {
+            self.add_alt_eps(idx - 1, idx, final_idx, greedy);
+        }
+    }
+
+    /// Adds an eps transition from `from` to both `to1` and `to2`. If `greedy` is true, `to1` is
+    /// preferred, and otherwise `to2` is preferred.
+    fn add_alt_eps(&mut self, from: usize, to1: usize, to2: usize, greedy: bool) {
+        if greedy {
+            self.add_eps(from, to1);
+            self.add_eps(from, to2);
+        } else {
+            self.add_eps(from, to2);
+            self.add_eps(from, to1);
+        }
+    }
+
+    /// Appends new states, representing multiple copies of `expr`.
+    ///
+    /// The new states represent a language that accepts at least `min` and at most `maybe_max`
+    /// copies of `expr`. (If `maybe_max` is `None`, there is no upper bound.)
+    fn add_repeat_min_max(&mut self, expr: &Expr, min: u32, maybe_max: Option<u32>, greedy: bool) {
+        if min == 0 && maybe_max == Some(0) {
+            // We add a state anyway, in order to maintain the convention that every expr should
+            // add at least one state (otherwise keeping track of indices becomes much more
+            // tedious).
+            self.add_state(Accept::Never);
+            return;
+        }
+
+        if min > 0 {
+            self.add_repeat_exact(expr, min);
+
+            // If anything else comes after this, we need to connect the two parts.
+            if maybe_max != Some(min) {
+                let len = self.num_states();
+                self.add_eps(len - 1, len);
+            }
+        }
+
+        if let Some(max) = maybe_max {
+            if max > min {
+                self.add_repeat_up_to(expr, max - min, greedy);
+            }
+        } else {
+            self.add_repeat_zero_or_more(expr, greedy);
+        }
+    }
+
+    /// Repeats the given expression zero or more times.
+    fn add_repeat_zero_or_more(&mut self, expr: &Expr, greedy: bool) {
+        let start_idx = self.num_states();
+        self.add_state(Accept::Never);
+        self.add_expr(expr);
+        self.add_state(Accept::Never);
+        let end_idx = self.num_states() - 1;
+
+        self.add_alt_eps(start_idx, start_idx + 1, end_idx, greedy);
+        self.add_alt_eps(end_idx - 1, start_idx + 1, end_idx, greedy);
+    }
+
+    /// Adds two new states, with a look connecting them.
+    fn add_look_pair(&mut self, behind: Look, ahead: Look) {
+        let idx = self.add_state(Accept::Never);
+        self.add_look(idx, idx + 1, behind, ahead);
+        self.add_state(Accept::Never);
+    }
+
+    /// Adds an extra predicate between the last two states (there must be at least two states).
+    fn extra_look(&mut self, behind: Look, ahead: Look) {
+        let len = self.states.len();
+        self.add_look(len - 2, len - 1, behind, ahead);
+    }
+
+    /// Appends a bunch of new states, representing `expr`.
+    ///
+    /// This maintains the invariant that the last state is always empty (i.e. it doesn't have any
+    /// transitions leading out of it). It is also guaranteed to add at least one new state.
+    fn add_expr(&mut self, expr: &Expr) {
+        use regex_syntax::Expr::*;
+
+        match *expr {
+            Empty => { self.add_state(Accept::Never); },
+            Class(ref c) => self.add_single_transition(&class_to_set(c)),
+            AnyChar => self.add_single_transition(&RangeSet::full()),
+            AnyCharNoNL => {
+                let nls = b"\n\r".into_iter().map(|b| *b as u32);
+                self.add_single_transition(&RangeSet::except(nls))
+            },
+            Concat(ref es) => self.add_concat_exprs(es),
+            Alternate(ref es) => self.add_alternate_exprs(es),
+            Literal { ref chars, casei } => self.add_literal(chars.iter(), casei),
+            StartLine => self.add_look_pair(Look::NewLine, Look::Full),
+            StartText => self.add_look_pair(Look::Boundary, Look::Full),
+            EndLine => self.add_look_pair(Look::Full, Look::NewLine),
+            EndText => self.add_look_pair(Look::Full, Look::Boundary),
+            WordBoundary => {
+                self.add_look_pair(Look::WordChar, Look::NotWordChar);
+                self.extra_look(Look::NotWordChar, Look::WordChar);
+            },
+            NotWordBoundary => {
+                self.add_look_pair(Look::WordChar, Look::WordChar);
+                self.extra_look(Look::NotWordChar, Look::NotWordChar);
+            },
+            Repeat { ref e, r, greedy } => self.add_repeat(e, r, greedy),
+
+            // We don't support capture groups, so there is no need to keep track of
+            // the group name or number.
+            Group { ref e, .. } => self.add_expr(e),
+
+        }
     }
 }
 
@@ -176,8 +429,7 @@ mod tests {
         let mut ret: Nfa<u32, NoLooks> = trans_nfa(size, transitions);
 
         ret.states[size-1].accept = Accept::Always;
-        ret.init_mut(Look::Full).push(0);
-        ret.init_mut(Look::Boundary).push(0);
+        ret.init.push((Look::Full, 0));
         ret
      }
 
@@ -192,10 +444,41 @@ mod tests {
     #[test]
     fn alternate() {
         let nfa = re_nfa("a|b");
-        let mut target = trans_nfa_extra(3, &[(0, 1, 'a'), (0, 2, 'b')]);
-        target.states[1].accept = Accept::Always;
+        let mut target = trans_nfa_extra(3, &[(0, 2, 'a'), (1, 2, 'b')]);
+        target.init.push((Look::Full, 1));
 
         assert_eq!(nfa, target);
+    }
+
+    // TODO: once remove_looks supports laziness, test it.
+
+    #[test]
+    fn plus() {
+        let nfa = re_nfa("a+");
+        // It's possible to generate a smaller NFA for '+', but we don't currently do it.
+        let target = trans_nfa_extra(3, &[(0, 1, 'a'), (0, 2, 'a'), (1, 1, 'a'), (1, 2, 'a')]);
+
+        assert_eq!(nfa, target);
+    }
+
+    #[test]
+    fn star() {
+        let nfa = re_nfa("a*");
+        // It's possible to generate a smaller NFA for '*', but we don't currently do it.
+        let mut target = trans_nfa_extra(2, &[(0, 0, 'a'), (0, 1, 'a')]);
+        target.init.push((Look::Full, 1));
+
+        assert_eq!(nfa, target);
+    }
+
+    #[test]
+    fn rep_fixed() {
+        assert_eq!(re_nfa("a{3}"), re_nfa("aaa"));
+    }
+
+    #[test]
+    fn rep_range() {
+        assert_eq!(re_nfa("a{2,4}"), re_nfa("aaa{0,2}"));
     }
 
     #[test]
@@ -209,9 +492,9 @@ mod tests {
     #[test]
     fn anchored_start() {
         let nfa = re_nfa("^a");
-        let mut target = trans_nfa(2, &[(1, 0, 'a')]);
-        target.init_mut(Look::Boundary).push(1);
-        target.states[0].accept = Accept::Always;
+        let mut target = trans_nfa(2, &[(0, 1, 'a')]);
+        target.init.push((Look::Boundary, 0));
+        target.states[1].accept = Accept::Always;
 
         assert_eq!(nfa, target);
     }
@@ -231,8 +514,7 @@ mod tests {
     fn word_boundary_start() {
         let nfa = re_nfa(r"\ba");
         let mut target = trans_nfa(2, &[(1, 0, 'a')]);
-        target.init_mut(Look::NotWordChar).push(1);
-        target.init_mut(Look::Boundary).push(1);
+        target.init.push((Look::NotWordChar, 1));
         target.states[0].accept = Accept::Always;
 
         assert_eq!(nfa, target);
@@ -259,19 +541,17 @@ mod tests {
     #[test]
     fn word_boundary_ambiguous() {
         let nfa = re_nfa(r"\b(a| )");
-        let mut target = trans_nfa(4, &[(2, 1, ' '), (3, 0, 'a')]);
+        let mut target = trans_nfa(3, &[(1, 0, ' '), (2, 0, 'a')]);
         target.states[0].accept = Accept::Always;
-        target.states[1].accept = Accept::Always;
-        target.init_mut(Look::Boundary).push(3);
-        target.init_mut(Look::WordChar).push(2);
-        target.init_mut(Look::NotWordChar).push(3);
+        target.init.push((Look::WordChar, 1));
+        target.init.push((Look::NotWordChar, 2));
 
         assert_eq!(nfa, target);
     }
 
     #[test]
     fn empty() {
-        assert_eq!(re_nfa(""), trans_nfa(0, &[]));
+        assert_eq!(re_nfa(""), trans_nfa_extra(1, &[]));
     }
 }
 

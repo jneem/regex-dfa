@@ -6,14 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use itertools::Itertools;
 use look::Look;
 use num::traits::PrimInt;
-use range_map::{Range, RangeMap, RangeMultiMap};
+use range_map::{Range, RangeMultiMap};
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 
-mod builder;
 mod has_looks;
 mod no_looks;
 
@@ -94,6 +92,18 @@ struct State<Tok> {
 /// `Tok` is the type of symbol that the automaton consumes. For most operations, only `u8` and
 /// `u32` are supported.
 ///
+/// Match priority
+/// ==============
+///
+/// The whole point of a *non-deterministic* finite automaton is that it can match an input in
+/// multiple ways. This implementation supports match priorities, meaning that in the event of
+/// multiple matches, there is exactly one that is preferred to all the others. In this
+/// implementation, the transitions out of each state are ordered and we prefer a match that makes
+/// an earlier transition over one that makes a later one.
+///
+/// The `Variant` parameter
+/// =======================
+///
 /// There are basically two versions of this struct with different representations and invariants,
 /// but they share enough code in common that it made more sense to write one struct and use a type
 /// parameter to determine which version it is. This is the meaning of the `Variant` type
@@ -105,11 +115,12 @@ struct State<Tok> {
 /// `Nfa<_, HasLooks>` are in `has_looks.rs`.
 ///
 /// If `Variant == NoLooks` then the states' `looking` fields are unused. Initial states are
-/// explicitly given in `init` and in the states' `accept.*` fields.
+/// explicitly given in `init` and in the states' `accept.*` fields. Methods specific to
+/// `Nfa<_, NoLooks>` are in `no_looks.rs`.
 ///
 /// The typical life-cycle of an `Nfa` is as follows:
 ///
-/// - First, create an `Nfa<u32, HasLooks>` using `builder::NfaBuilder`.
+/// - First, create an `Nfa<u32, HasLooks>` using `from_regex`.
 /// - Call `nfa.remove_looks()` to turn the `Nfa<u32, HasLooks>` to an `Nfa<u32, NoLooks>`.
 /// - Call `nfa.byte_me()` to turn the `Nfa<u32, NoLooks>` into an `Nfa<u8, NoLooks>`.
 /// - Call one of the `nfa.determinize_*()` methods to make a `Dfa`.
@@ -120,17 +131,13 @@ struct State<Tok> {
 pub struct Nfa<Tok, Variant> {
     states: Vec<State<Tok>>,
     // The various possible sets of states that the automaton can start in, depending on what the
-    // most recent `char` of input was. This should have length `Look::num()`, and it is indexed by
-    // the different types of looks.
+    // most recent `char` of input was.
     //
-    // - The `Look::Empty` entry should not be used.
-    // - The `Look::Boundary` entry is used when starting from the beginning of the input.
-    //
-    // When starting in the middle of the input, look at the previous char and the next char. For
-    // every different variant of `Look` that matches that pair of chars, start at all the states
-    // in the corresponding entry of `init`. (In particular, we always start at every state in
-    // `init[Look::Full.as_usize()]`.)
-    init: Vec<StateSet>,
+    // We decide the initial state by looking at the previous char of input. For every element of
+    // `self.init` whose first entry matches that char, we start in the corresponding NFA state.
+    // Note that these states are ordered: states that appear earlier are given higher priority for
+    // matching.
+    init: Vec<(Look, StateIdx)>,
     phantom: PhantomData<Variant>,
 }
 
@@ -145,11 +152,15 @@ impl Lookability for HasLooks {}
 impl Lookability for NoLooks {}
 
 impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
+    pub fn new() -> Nfa<Tok, L> {
+        Nfa::with_capacity(0)
+    }
+
     /// Creates a new `Nfa` that can `add_state()` `n` times without re-allocating.
     pub fn with_capacity(n: usize) -> Nfa<Tok, L> {
         Nfa {
             states: Vec::with_capacity(n),
-            init: vec![StateSet::new(); Look::num()],
+            init: Vec::new(),
             phantom: PhantomData,
         }
     }
@@ -159,6 +170,8 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
     /// If I have a transition from state `i` to state `j` that consumes token `c`, then
     /// `ret[j]` will contain a mapping from `c` to `i`, where `ret` is the value returned by this
     /// method.
+    ///
+    /// Note that information about match priorities is lost.
     pub fn reversed_transitions(&self) -> Vec<RangeMultiMap<Tok, StateIdx>> {
         let mut ret = vec![RangeMultiMap::new(); self.states.len()];
 
@@ -238,35 +251,9 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
             st.accept_state = map(st.accept_state).expect("bug in map_states");
         }
 
-        for vec in &mut self.init {
-            *vec = vec.iter().filter_map(|x| map(*x)).collect();
-            vec.sort();
-            vec.dedup();
-        }
-    }
-
-    // Returns all possible initial states.
-    fn initial_states(&self) -> StateSet {
-        let mut init_states = Vec::new();
-        for s in &self.init {
-            init_states.extend_from_slice(s);
-        }
-        init_states.sort();
-        init_states.dedup();
-        init_states
-    }
-
-    // Returns all possible final states.
-    fn final_states(&self) -> StateSet {
-        let mut final_states = StateSet::new();
-        for (idx, s) in self.states.iter().enumerate() {
-            if s.accept != Accept::Never {
-                final_states.push(idx);
-            }
-        }
-        final_states.sort();
-        final_states.dedup();
-        final_states
+        self.init = self.init.iter()
+            .filter_map(|pair| map(pair.1).map(|idx| (pair.0, idx)))
+            .collect();
     }
 
     // Changes the `Lookability` marker without allocating anything.
@@ -278,22 +265,9 @@ impl<Tok: Debug + PrimInt, L: Lookability> Nfa<Tok, L> {
         }
     }
 
-    fn init_mut(&mut self, look: Look) -> &mut StateSet {
-        &mut self.init[look.as_usize()]
-    }
-
-    // Finds the transitions out of the given set of states, as a RangeMap.
-    fn transition_map(&self, states: &StateSet) -> RangeMap<Tok, StateSet> {
-        let trans = states.into_iter()
-            .flat_map(|s| self.states[*s].consuming.ranges_values().cloned())
-            .collect();
-        RangeMultiMap::from_vec(trans).group()
-    }
-
     /// Returns true if this Nfa only matches things at the beginning of the input.
     pub fn is_anchored(&self) -> bool {
-        !self.init[Look::Boundary.as_usize()].is_empty()
-            && self.init.iter().filter(|x| !x.is_empty()).count() == 1
+        self.init.iter().all(|pair| pair.0 == Look::Boundary)
     }
 
     /// Returns true if this Nfa never matches anything.
@@ -317,12 +291,12 @@ impl<Tok: Debug + PrimInt, L: Lookability> Debug for Nfa<Tok, L> {
             }
             if !st.consuming.is_empty() {
                 try!(f.write_str("\t\tConsuming:\n"));
-                // Cap it at 5 transitions, since it gets unreadable otherwise.
-                for &(range, target) in st.consuming.ranges_values().take(5) {
+                // Cap it at 10 transitions, since it gets unreadable otherwise.
+                for &(range, target) in st.consuming.ranges_values().take(10) {
                     try!(f.write_fmt(format_args!("\t\t\t{:?} -- {:?} => {}\n",
                                                   range.start, range.end, target)));
                 }
-                if st.consuming.num_ranges() > 5 {
+                if st.consuming.num_ranges() > 10 {
                     try!(f.write_str("\t\t\t...\n"));
                 }
             }
@@ -350,7 +324,12 @@ pub mod tests {
 
     // Creates an Nfa from a regular expression string.
     pub fn re_nfa(re: &str) -> Nfa<u32, NoLooks> {
-        Nfa::from_regex(re).unwrap().remove_looks()
+        let nfa = Nfa::from_regex(re).unwrap();
+        println!("before remove looks: {:?}", nfa);
+        let nfa = nfa.remove_looks();
+        println!("after remove looks: {:?}", nfa);
+        nfa
+        //Nfa::from_regex(re).unwrap().remove_looks()
     }
 
     // Creates an Nfa with the given transitions.

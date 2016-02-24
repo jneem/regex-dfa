@@ -7,7 +7,6 @@
 // except according to those terms.
 
 use dfa::{Dfa, RetTrait};
-use graph::Graph;
 use nfa::{Accept, StateIdx, StateSet};
 use range_map::{RangeMultiMap, RangeSet};
 use refinery::Partition;

@@ -24,11 +24,11 @@ impl<Ret: Copy + Debug> AnchoredEngine<Ret> {
 }
 
 impl<Ret: Copy + Debug + 'static> Engine<Ret> for AnchoredEngine<Ret> {
-    fn shortest_match(&self, s: &str) -> Option<(usize, usize, Ret)> {
+    fn find(&self, s: &str) -> Option<(usize, usize, Ret)> {
         let input = s.as_bytes();
         if self.prog.is_empty() {
             None
-        } else if let Ok(end) = self.prog.shortest_match_from(input, 0, 0) {
+        } else if let Ok(end) = self.prog.find_from(input, 0, 0) {
             Some((0, end.0, end.1))
         } else {
             None

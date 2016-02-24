@@ -21,12 +21,10 @@ macro_rules! mat(
             let text = $text;
             let expected: Vec<Option<_>> = vec!($($loc)+);
             let r = Regex::new($re).unwrap();
-            let pos = r.shortest_match(text).map(|x| x.0);
+            let pos = r.find(text);
 
             // We don't support capture groups, so just check the whole match.
-            // Also, we don't guarantee to get the end of the match correct.
-            let expected = expected[0].map(|x: (usize, usize)| x.0);
-            if expected != pos {
+            if expected[0] != pos {
                 panic!("For RE '{}' against '{:?}', expected '{:?}' but got '{:?}'",
                        $re, text, expected, pos);
             }
@@ -41,7 +39,7 @@ macro_rules! no_mat(
             let text = $text;
             let r = Regex::new($re).unwrap();
             println!("{:?}", r);
-            let result = r.shortest_match(text);
+            let result = r.find(text);
             if result.is_some() {
                 panic!("For RE '{}' against '{:?}', expected None but got '{:?}'",
                        $re, text, result);

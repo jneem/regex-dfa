@@ -12,8 +12,9 @@ use itertools::Itertools;
 use look::Look;
 use nfa::{Accept, Nfa, NoLooks, State, StateIdx, StateSet};
 use num::traits::PrimInt;
-use range_map::{Range, RangeMultiMap};
-use std::{char, usize};
+use range_map::{Range, RangeMap, RangeMultiMap};
+use std::{char, u8, usize};
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -112,14 +113,15 @@ fn make_char_dfa(look: Look) -> Dfa<(Look, u8)> {
     let mut nfa: Nfa<u32, NoLooks> = Nfa::with_capacity(2);
     nfa.add_state(Accept::Never);
     nfa.add_look_ahead_state(look, 1, 0);
-    nfa.init[Look::Full.as_usize()].push(0);
-    nfa.init[Look::Boundary.as_usize()].push(0);
+    // TODO: shouldn't adding both Full and Boundary be redundant?
+    nfa.init.push((Look::Full, 0));
+    nfa.init.push((Look::Boundary, 0));
     nfa.states[0].consuming
         = RangeMultiMap::from_vec(look.as_set().ranges().map(|x| (x, 1)).collect());
 
     // These unwraps are OK because the only failures are caused by having too many states.
     nfa.byte_me(usize::MAX).unwrap()
-        .determinize_shortest(usize::MAX).unwrap()
+        .determinize(usize::MAX).unwrap()
         .optimize()
 }
 
@@ -127,8 +129,8 @@ fn make_char_dfa(look: Look) -> Dfa<(Look, u8)> {
 fn make_rev_char_dfa(look: Look) -> Dfa<(Look, u8)> {
     let mut nfa: Nfa<u8, NoLooks> = Nfa::with_capacity(0); // TODO: better capacity
     nfa.add_state(Accept::Never);
-    nfa.init[Look::Full.as_usize()].push(0);
-    nfa.init[Look::Boundary.as_usize()].push(0);
+    nfa.init.push((Look::Full, 0));
+    nfa.init.push((Look::Boundary, 0));
 
     // This is more-or-less C&P from add_utf8_sequence.
     for seq in MergedUtf8Sequences::from_ranges(look.as_set().ranges()) {
@@ -151,7 +153,7 @@ fn make_rev_char_dfa(look: Look) -> Dfa<(Look, u8)> {
     }
 
     // This unwrap is OK because the only failures are caused by having too many states.
-    nfa.determinize_shortest(usize::MAX).unwrap()
+    nfa.determinize(usize::MAX).unwrap()
         .optimize()
 }
 
@@ -203,15 +205,17 @@ impl<Tok: Debug + PrimInt> Nfa<Tok, NoLooks> {
     // Returns the set of all states that can be reached from an initial state and that can reach
     // some accepting state.
     fn reachable_states(&self) -> HashSet<StateIdx> {
-        let init_states = self.initial_states();
-        let final_states = self.final_states();
+        let init_states = self.init.iter().map(|pair| pair.1);
+        let final_states = self.states.iter().enumerate()
+            .filter(|&(_, state)| state.accept != Accept::Never)
+            .map(|(idx, _)| idx);
 
-        let forward = self.reachable_from(init_states.into_iter());
-        let backward = self.reversed_simple().reachable_from(final_states.into_iter());
+        let forward = self.reachable_from(init_states);
+        let backward = self.reversed_simple().reachable_from(final_states);
         forward.intersection(&backward).cloned().collect()
     }
 
-    /// Optimizes this Nfa by removing all states that cannot be reached from an initial state,
+    /// Optimizes this Nfa by removing all states that cannot be reached from an initial state
     /// and all states that cannot lead to an accepting state.
     pub fn trim_unreachable(&mut self) {
         let reachable = self.reachable_states();
@@ -259,9 +263,7 @@ impl Nfa<u32, NoLooks> {
             // Group transitions by the target state, and add them in batches. Most of the time, we
             // can merge a bunch of Utf8Sequences before adding them, which saves a bunch of
             // states.
-            let mut trans = state.consuming.into_vec();
-            trans.sort_by(|x, y| x.1.cmp(&y.1));
-            for (tgt, transitions) in trans.into_iter().group_by(|x| x.1) {
+            for (tgt, transitions) in state.consuming.ranges_values().group_by(|x| x.1) {
                 try!(ret.add_utf8_sequences(i, transitions.into_iter().map(|x| x.0), tgt, max_states));
             }
         }
@@ -271,11 +273,8 @@ impl Nfa<u32, NoLooks> {
 
 impl Nfa<u8, NoLooks> {
     /// Converts this `Nfa` into a `Dfa`.
-    ///
-    /// Whenever this `Nfa` matches some text, the `Dfa` also will. But if this `Nfa` has multiple
-    /// possible endpoints for a match then the returned `Dfa` will only match the shortest one.
-    pub fn determinize_shortest(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
-        Determinizer::determinize(self, max_states, true, self.init.clone())
+    pub fn determinize(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
+        Determinizer::determinize(self, max_states, MatchChoice::TransitionOrder, self.init.clone())
     }
 
     /// Converts this `Nfa` into a `Dfa`.
@@ -284,58 +283,72 @@ impl Nfa<u8, NoLooks> {
     /// possible endpoints for a match then the returned `Dfa` is only guaranteed to match the
     /// longest one.
     pub fn determinize_longest(&self, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
-        Determinizer::determinize(self, max_states, false, self.init.clone())
+        Determinizer::determinize(self, max_states, MatchChoice::LongestMatch, self.init.clone())
     }
 
     /// Returns the reversal of this `Nfa`.
     ///
     /// If `self` matches some string of bytes, then the return value of this method will match
     /// the same strings of bytes reversed.
+    ///
+    /// Note that this loses information about match priorities.
     pub fn reverse(&self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
         let mut ret = self.reversed_simple();
 
         // Turn our initial states into ret's accepting states.
-        for &i in &self.init[Look::Boundary.as_usize()] {
-            ret.states[i].accept = Accept::AtEoi;
-            ret.states[i].accept_look = Look::Boundary;
-        }
-        for &i in &self.init[Look::Full.as_usize()] {
-            ret.states[i].accept = Accept::Always;
-            ret.states[i].accept_look = Look::Full;
-        }
-        for &look in &[Look::WordChar, Look::NotWordChar] {
-            for &src in &self.init[look.as_usize()] {
-                // It would make more sense to put this outside the loop, but having it inside
-                // prevents a deadlock: constructing REV_*_DFA ends up calling reverse(), but
-                // with no look-ahead so it never gets inside this loop.
-                let dfa: &Dfa<_> = if look == Look::WordChar {
-                    &REV_WORD_CHAR_DFA
-                } else {
-                    &REV_NOT_WORD_CHAR_DFA
-                };
-                let accept_state = ret.add_look_ahead_state(look, 1, src);
-                try!(ret.add_min_utf8_sequences(src, dfa, accept_state, max_states));
+        for &(look, i) in &self.init {
+            match look {
+                Look::Full => {
+                    ret.states[i].accept = Accept::Always;
+                    ret.states[i].accept_look = Look::Full;
+                },
+                Look::Boundary => {
+                    ret.states[i].accept = max(ret.states[i].accept, Accept::AtEoi);
+                    ret.states[i].accept_look = max(ret.states[i].accept_look, Look::Boundary);
+                },
+                Look::NewLine => {
+                    let accept_state = ret.add_look_ahead_state(Look::NewLine, 1, i);
+                    ret.add_transition(i, accept_state, Range::new(b'\n', b'\n'));
+                    ret.states[i].accept = max(ret.states[i].accept, Accept::AtEoi);
+                    ret.states[i].accept_look = max(ret.states[i].accept_look, Look::Boundary);
+                },
+                Look::WordChar | Look::NotWordChar => {
+                    // It would make more sense to put this outside the loop, but having it inside
+                    // prevents a deadlock: constructing REV_*_DFA ends up calling reverse(), but
+                    // with no look-ahead so it never gets inside this loop.
+                    let dfa: &Dfa<_> = if look == Look::WordChar {
+                        &REV_WORD_CHAR_DFA
+                    } else {
+                        ret.states[i].accept = max(ret.states[i].accept, Accept::AtEoi);
+                        ret.states[i].accept_look = max(ret.states[i].accept_look, Look::Boundary);
+                        &REV_NOT_WORD_CHAR_DFA
+                    };
+                    let accept_state = ret.add_look_ahead_state(look, 1, i);
+                    try!(ret.add_min_utf8_sequences(i, dfa, accept_state, max_states));
+                },
+                Look::Empty => {
+                    panic!("Empty cannot be an init look");
+                },
             }
-        }
-        for &src in &self.init[Look::NewLine.as_usize()] {
-            let accept_state = ret.add_look_ahead_state(Look::NewLine, 1, src);
-            ret.add_transition(src, accept_state, Range::new(b'\n', b'\n'));
         }
 
         // Turn our accepting states into ret's initial states.
-        let mut init = vec![Vec::new(); Look::num()];
+        ret.init.clear();
         for st in &self.states {
             if st.accept != Accept::Never {
-                init[st.accept_look.as_usize()].push(st.accept_state);
+                ret.init.push((st.accept_look, st.accept_state));
             }
         }
-
-        for vec in &mut init {
-            vec.sort();
-            vec.dedup();
-        }
-        ret.init = init;
         Ok(ret)
+    }
+
+    /// Can we accept immediately if the beginning of the input matches `look`?
+    fn init_accept(&self, look: Look) -> Accept {
+        let set = self.init.iter()
+            .filter(|pair| look <= pair.0)
+            .map(|pair| pair.1)
+            .collect::<Vec<_>>();
+        self.accept_union(&set)
     }
 
     /// This essentially modifies `self` by adding a `^.*` at the beginning.
@@ -343,53 +356,71 @@ impl Nfa<u8, NoLooks> {
     /// The result is actually a little bit different, because `.` matches a whole code point,
     /// whereas the `^.*` that we add works at the byte level.
     pub fn anchor(mut self, max_states: usize) -> ::Result<Nfa<u8, NoLooks>> {
-        let loop_accept = self.accept_union(&self.init[Look::Full.as_usize()]);
+        let loop_accept = self.init_accept(Look::Full);
         let loop_state = self.add_state(loop_accept);
-        // If there are some states that only start at the beginning of the input, we need
-        // an extra state for that.
-        let init_state =
-            if self.init[Look::Boundary.as_usize()] == self.init[Look::Full.as_usize()] {
-                loop_state
-            } else {
-                let init_accept = self.accept_union(&self.init[Look::Boundary.as_usize()]);
-                self.add_state(init_accept)
-            };
-
-        self.add_transition(init_state, loop_state, Range::full());
-        self.add_transition(loop_state, loop_state, Range::full());
+        let init_accept = self.init_accept(Look::Boundary);
+        let init_state = self.add_state(init_accept);
 
         // Swap out init so that we can iterate over it while modifying `self`.
-        let mut init = vec![StateSet::new(); Look::num()];
+        let mut init = Vec::new();
         swap(&mut init, &mut self.init);
 
-        for &st_idx in &init[Look::Boundary.as_usize()] {
-            for &(range, target) in self.states[st_idx].consuming.clone().ranges_values() {
-                self.add_transition(init_state, target, range);
-            }
-        }
-        for &st_idx in &init[Look::Full.as_usize()] {
-            for &(range, target) in self.states[st_idx].consuming.clone().ranges_values() {
-                self.add_transition(loop_state, target, range);
-            }
-        }
-        for &look in &[Look::WordChar, Look::NotWordChar] {
-            let dfa: &Dfa<_> =
-                if look == Look::WordChar { &WORD_CHAR_DFA } else { &NOT_WORD_CHAR_DFA };
-            for &target in &init[look.as_usize()] {
-                try!(self.add_min_utf8_sequences(loop_state, dfa, target, max_states));
-                if init_state != loop_state {
-                    try!(self.add_min_utf8_sequences(init_state, dfa, target, max_states));
+        for &(look, st_idx) in &init {
+            if look.allows_eoi() {
+                // TODO: shouldn't need to clone here.
+                for &(range, target) in self.states[st_idx].consuming.clone().ranges_values() {
+                    self.add_transition(init_state, target, range);
                 }
             }
-        }
-        for &target in &init[Look::NewLine.as_usize()] {
-            self.add_transition(loop_state, target, Range::new(b'\n', b'\n'));
-            if init_state != loop_state {
-                self.add_transition(init_state, target, Range::new(b'\n', b'\n'));
+
+            match look {
+                Look::Boundary => {},
+                Look::Full => {
+                    for &(range, target) in self.states[st_idx].consuming.clone().ranges_values() {
+                        self.add_transition(loop_state, target, range);
+                    }
+                },
+                Look::NewLine => {
+                    self.add_transition(init_state, st_idx, Range::new(b'\n', b'\n'));
+                    self.add_transition(loop_state, st_idx, Range::new(b'\n', b'\n'));
+                },
+                Look::WordChar | Look::NotWordChar => {
+                    let dfa: &Dfa<_> =
+                        if look == Look::WordChar { &WORD_CHAR_DFA } else { &NOT_WORD_CHAR_DFA };
+
+                    try!(self.add_min_utf8_sequences(loop_state, dfa, st_idx, max_states));
+                    try!(self.add_min_utf8_sequences(init_state, dfa, st_idx, max_states));
+                },
+                Look::Empty => {
+                    panic!("Cannot start with an empty look");
+                },
+            }
+
+            // Once we've found an init state that accepts immediately, don't look for any others
+            // (since any matches that we find starting from them are lower priority that the one
+            // we've found already). This check is *almost* unnecessary, since similar pruning
+            // happens when we turn the NFA into a DFA. The important case that needs to be handled
+            // here is the case that a high-priority init state has no transitions out of it. Such
+            // a state will be completely removed by this function, and so we need to acknowledge
+            // its existence here.
+            if self.states[st_idx].accept == Accept::Always {
+                break;
             }
         }
 
-        self.init[Look::Boundary.as_usize()].push(init_state);
+        // Wire up the initial and loop states, but only if they aren't accepting. That's because
+        // if they are accepting then the accept should take priority over the transition (since
+        // making the transition means that we are searching for a match that starts later).
+        if init_accept != Accept::Always {
+            self.add_transition(init_state, loop_state, Range::full());
+        }
+        if loop_accept != Accept::Always {
+            self.add_transition(loop_state, loop_state, Range::full());
+        }
+
+        // The new Nfa is only allowed to start at the beginning of the input, and only at the new
+        // initial state.
+        self.init.push((Look::Boundary, init_state));
         self.trim_unreachable();
         Ok(self)
     }
@@ -485,6 +516,41 @@ impl Nfa<u8, NoLooks> {
         }
         Ok(())
     }
+
+    // Finds the transitions out of the given set of states, as a RangeMap.
+    fn transition_map(&self, states: &[StateIdx]) -> RangeMap<u8, Vec<usize>> {
+        let mut transitions = states.into_iter()
+            .flat_map(|s| self.states[*s].consuming.ranges_values().cloned())
+            .collect::<RangeMultiMap<u8, StateIdx>>()
+            .group();
+
+        // `scratch` is large enough to be indexed by anything in `elts`. It is full of `false`.
+        fn uniquify(elts: &mut Vec<StateIdx>, scratch: &mut Vec<bool>) {
+            elts.retain(|&e| {
+                let ret = !scratch[e];
+                scratch[e] = true;
+                ret
+            });
+
+            // Clean up scratch, so that it is full of `false` again.
+            for e in elts {
+                scratch[*e] = false;
+            }
+        }
+
+        let mut scratch = vec![false; self.num_states()];
+        for pair in transitions.as_mut_slice() {
+            uniquify(&mut pair.1, &mut scratch);
+        }
+
+        transitions
+    }
+}
+
+#[derive(PartialEq)]
+enum MatchChoice {
+    TransitionOrder,
+    LongestMatch,
 }
 
 // This contains all the intermediate data structures that we need when turning an `Nfa` into a
@@ -495,7 +561,7 @@ struct Determinizer<'a> {
     state_map: HashMap<StateSet, StateIdx>,
     active_states: Vec<StateSet>,
     max_states: usize,
-    shortest_match: bool,
+    match_choice: MatchChoice,
 }
 
 impl<'a> Determinizer<'a> {
@@ -506,55 +572,95 @@ impl<'a> Determinizer<'a> {
     // will be turned into the initial states of the dfa.
     fn determinize(nfa: &Nfa<u8, NoLooks>,
                    max_states: usize,
-                   shortest_match: bool,
-                   init: Vec<StateSet>) -> ::Result<Dfa<(Look, u8)>> {
-        let mut det = Determinizer::new(nfa, max_states, shortest_match);
+                   match_choice: MatchChoice,
+                   init: Vec<(Look, StateIdx)>) -> ::Result<Dfa<(Look, u8)>> {
+        let mut det = Determinizer::new(nfa, max_states, match_choice);
         try!(det.run(init));
         Ok(det.dfa)
     }
 
     fn new(nfa: &'a Nfa<u8, NoLooks>,
            max_states: usize,
-           shortest_match: bool) -> Determinizer<'a> {
+           match_choice: MatchChoice) -> Determinizer<'a> {
         Determinizer {
             nfa: nfa,
             dfa: Dfa::new(),
             state_map: HashMap::new(),
             active_states: Vec::new(),
             max_states: max_states,
-            shortest_match: shortest_match,
+            match_choice: match_choice,
         }
     }
 
-    fn accept(&self, s: &StateSet) -> (Accept, Look, u8) {
-        let bytes_agos = s.iter()
-            .filter(|i| self.nfa.states[**i].accept != Accept::Never)
-            .map(|i| self.nfa.states[*i].accept_tokens);
-        let bytes_ago = if self.shortest_match {
-            bytes_agos.max().unwrap_or(0)
+    // Checks whether we should accept in the given set of states.
+    //
+    // Returns a tuple: the first element says when we accept, the second says what look-ahead (if
+    // any) led to us accepting, and the third says how many bytes of look-ahead we needed before
+    // knowing that we can accept.
+    //
+    // There is one annoying corner case: there could be two states in the set `s` with different
+    // values of `accept_tokens`, where the higher priority state says `Accept::AtEoi` and the
+    // lower priority state says `Accept::Always`. In this case, we return `(AtEoi, look, bytes)`
+    // where `look` and `bytes` come from the lower priority state. This doesn't lose any
+    // information, since if a state says `Accept::AtEoi` then its `accept_look` and
+    // `accept_tokens` are guaranteed to be `Boundary` and `0`.
+    fn accept(&self, s: &[StateIdx]) -> (Accept, Look, u8) {
+        let mut accept_states = s.iter().cloned()
+            .filter(|i| self.nfa.states[*i].accept != Accept::Never);
+        let mut accept_always_states = s.iter().cloned()
+            .filter(|i| self.nfa.states[*i].accept == Accept::Always);
+
+        let (first_accept, other_accept) = if self.match_choice == MatchChoice::TransitionOrder {
+            (accept_states.next(), accept_always_states.next())
         } else {
-            bytes_agos.min().unwrap_or(0)
-        };
-        let union = self.nfa.accept_union(s);
-        let look = if union == Accept::AtEoi {
-            Look::Boundary
-        } else {
-            s.iter()
-                .map(|i| self.nfa.states[*i].accept_look)
-                // Filter out Boundary, because (unlike NewLine and (Not)?WordBoundary) it doesn't
-                // actually represent looking ahead any positive number of bytes.
-                .filter(|l| *l != Look::Boundary)
-                .fold(Look::Full, |x, y| x.intersection(&y))
+            (accept_states.min_by_key(|i| self.nfa.states[*i].accept_tokens),
+                accept_always_states.min_by_key(|i| self.nfa.states[*i].accept_tokens))
         };
 
-        (union, look, bytes_ago)
+        // Returns the intersection of state.accept_look over all states in s that accept
+        // unconditionally and have the given number of look-ahead bytes.
+        let look_intersection = |toks: u8| {
+            s.iter().cloned()
+                .filter(|i| self.nfa.states[*i].accept == Accept::Always)
+                .filter(|i| self.nfa.states[*i].accept_tokens == toks)
+                .fold(Look::Full, |x, y| x.intersection(&self.nfa.states[y].accept_look))
+        };
+
+        if let Some(first_accept) = first_accept {
+            let st = &self.nfa.states[first_accept];
+
+            if st.accept == Accept::AtEoi {
+                // Check if there is a lower-priority Accept::Always.
+                if let Some(other_accept) = other_accept {
+                    let other_st = &self.nfa.states[other_accept];
+                    if other_st.accept_tokens > 0 {
+                        let look = look_intersection(other_st.accept_tokens);
+                        return (Accept::AtEoi, look, other_st.accept_tokens);
+                    }
+                }
+                (Accept::AtEoi, Look::Boundary, 0)
+            } else {
+                (Accept::Always, look_intersection(st.accept_tokens), st.accept_tokens)
+            }
+        } else {
+            // There are no accepting states.
+            (Accept::Never, Look::Empty, 0)
+        }
     }
 
     // Tries to add a new state to the Dfa.
     //
     // If the state already exists, returns the index of the old one. If there are too many states,
     // returns an error.
-    fn add_state(&mut self, s: StateSet) -> ::Result<StateIdx> {
+    fn add_state(&mut self, mut s: StateSet) -> ::Result<StateIdx> {
+        // When we choose our matches by transition order, discard any states that have lower
+        // priority than the best match we've found.
+        if self.match_choice == MatchChoice::TransitionOrder {
+            if let Some(accept_idx) = s.iter().position(|&i| self.nfa.states[i].accept == Accept::Always) {
+                s.truncate(accept_idx + 1);
+            }
+        }
+
         if self.state_map.contains_key(&s) {
             Ok(*self.state_map.get(&s).unwrap())
         } else if self.dfa.num_states() >= self.max_states {
@@ -564,11 +670,7 @@ impl<'a> Determinizer<'a> {
             let ret = if acc != Accept::Never { Some ((look, bytes_ago)) } else { None };
             let new_state = self.dfa.add_state(acc, ret);
 
-            // If we're doing shortest matches then we can stop exploring on hitting an accepting
-            // state.
-            if !self.shortest_match || acc != Accept::Always {
-                self.active_states.push(s.clone());
-            }
+            self.active_states.push(s.clone());
             self.state_map.insert(s, new_state);
             Ok(new_state)
         }
@@ -576,15 +678,19 @@ impl<'a> Determinizer<'a> {
 
     // Creates a deterministic automaton representing the same language as our `nfa`.
     // Puts the new Dfa in self.dfa.
-    fn run(&mut self, init: Vec<StateSet>) -> ::Result<()> {
+    fn run(&mut self, init: Vec<(Look, StateIdx)>) -> ::Result<()> {
         if self.nfa.states.is_empty() {
             return Ok(());
         }
 
-        for (idx, init_state) in init.into_iter().enumerate() {
-            if !init_state.is_empty() {
-                let new_state = try!(self.add_state(init_state));
-                self.dfa.init[idx] = Some(new_state);
+        for &look in Look::all() {
+            let init_states: StateSet = init.iter().cloned()
+                .filter(|&(x, _)| look == x)
+                .map(|(_, y)| y)
+                .collect();
+            if !init_states.is_empty() {
+                let new_state_idx = try!(self.add_state(init_states));
+                self.dfa.init[look.as_usize()] = Some(new_state_idx);
             }
         }
 
@@ -608,6 +714,7 @@ impl<'a> Determinizer<'a> {
 #[cfg(test)]
 mod tests {
     use look::Look;
+    use dfa::Dfa;
     use nfa::{Accept, Nfa, NoLooks};
     use nfa::tests::{re_nfa, trans_nfa, trans_range_nfa};
     use range_map::Range;
@@ -617,46 +724,53 @@ mod tests {
         re_nfa(re).byte_me(usize::MAX).unwrap().anchor(usize::MAX).unwrap()
     }
 
+    fn re_dfa(re: &str) -> Dfa<(Look, u8)> {
+        re_nfa(re).byte_me(usize::MAX).unwrap().determinize(usize::MAX).unwrap()
+    }
+
     #[test]
     fn anchor_simple() {
         let nfa = re_nfa_anchored("a");
-        let mut target = trans_range_nfa(2, &[(1, 1, Range::full()),
-                                              (1, 1, Range::full()),
+        let mut target = trans_range_nfa(3, &[(2, 0, Range::new(b'a', b'a')),
+                                              (2, 1, Range::full()),
                                               (1, 0, Range::new(b'a', b'a')),
-                                              (1, 0, Range::new(b'a', b'a'))]);
-        target.init_mut(Look::Boundary).push(1);
+                                              (1, 1, Range::full())]);
+        target.init.push((Look::Boundary, 2));
         target.states[0].accept = Accept::Always;
 
         assert_eq!(nfa, target);
     }
 
     #[test]
-    fn anchor_wb() {
-        let nfa = re_nfa_anchored(r"\ba");
-        let mut target = trans_nfa(4, &[(3, 0, 'a'),
-                                        (1, 0, 'a')]);
-        target.init_mut(Look::Boundary).push(3);
-        target.states[0].accept = Accept::Always;
-        for range in Look::NotWordChar.as_set().ranges() {
-            target.add_transition(2, 1, range);
-            target.add_transition(3, 1, range);
-        }
+    fn anchor_nl() {
+        let nfa = re_nfa_anchored(r"(?m)^a");
+        let mut target = trans_nfa(4, &[(3, 1, 'a'),
+                                        (0, 1, 'a'),
+                                        (2, 0, '\n'),
+                                        (3, 0, '\n')]);
+        target.init.push((Look::Boundary, 3));
+        target.states[1].accept = Accept::Always;
+
         let mut target = target.byte_me(usize::MAX).unwrap();
         target.states[2].consuming.insert(Range::full(), 2);
         target.states[3].consuming.insert(Range::full(), 2);
 
-        assert_eq!(nfa.determinize_shortest(usize::MAX).unwrap().optimize(),
-            target.determinize_shortest(usize::MAX).unwrap().optimize());
+        assert_eq!(nfa, target);
     }
 
     #[test]
     fn anchor_already_anchored() {
         let nfa = re_nfa_anchored("^a");
         let mut target = trans_nfa(2, &[(1, 0, 'a')]);
-        target.init_mut(Look::Boundary).push(1);
+        target.init.push((Look::Boundary, 1));
         target.states[0].accept = Accept::Always;
 
         assert_eq!(nfa, target);
+    }
+
+    #[test]
+    fn determinize_pruning() {
+        assert_eq!(re_dfa("a|aa"), re_dfa("a"));
     }
 
     macro_rules! check_rev_inits {
@@ -664,12 +778,13 @@ mod tests {
             #[test]
             fn $name() {
                 let rev = re_nfa($re).byte_me(usize::MAX).unwrap().reverse(usize::MAX).unwrap();
-                for look in Look::all() {
-                    println!("{:?}: {:?}", look, rev.init[look.as_usize()]);
-                    if $inits.contains(look) {
-                        assert!(!rev.init[look.as_usize()].is_empty());
+                println!("{:?}", rev.init);
+                for &look in Look::all() {
+                    println!("checking look {:?}", look);
+                    if $inits.contains(&look) {
+                        assert!(rev.init.iter().any(|pair| pair.0 == look));
                     } else {
-                        assert!(rev.init[look.as_usize()].is_empty());
+                        assert!(!rev.init.iter().any(|pair| pair.0 == look));
                     }
                 }
             }

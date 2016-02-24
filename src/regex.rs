@@ -24,7 +24,7 @@ pub struct Regex {
 struct EmptyEngine;
 
 impl<Ret: Debug> Engine<Ret> for EmptyEngine {
-    fn shortest_match(&self, _: &str) -> Option<(usize, usize, Ret)> { None }
+    fn find(&self, _: &str) -> Option<(usize, usize, Ret)> { None }
     fn clone_box(&self) -> Box<Engine<Ret>> { Box::new(EmptyEngine) }
 }
 
@@ -62,8 +62,8 @@ impl Regex {
     fn make_anchored(nfa: Nfa<u32, NoLooks>, max_states: usize)
     -> ::Result<AnchoredEngine<u8>> {
         let nfa = try!(nfa.byte_me(max_states));
-        let dfa = try!(nfa.determinize_shortest(max_states))
-            .optimize_for_shortest_match()
+        let dfa = try!(nfa.determinize(max_states))
+            .optimize()
             .map_ret(|(_, bytes)| bytes);
         let prog = dfa.compile();
 
@@ -79,9 +79,8 @@ impl Regex {
         let f_nfa = try!(try!(nfa.clone().byte_me(max_states)).anchor(max_states));
         let b_nfa = try!(try!(nfa.byte_me(max_states)).reverse(max_states));
 
-        let f_dfa = try!(f_nfa.determinize_shortest(max_states)).optimize_for_shortest_match();
-        let b_dfa = try!(b_nfa.determinize_longest(max_states))
-            .optimize();
+        let f_dfa = try!(f_nfa.determinize(max_states)).optimize();
+        let b_dfa = try!(b_nfa.determinize_longest(max_states)).optimize();
         let b_dfa = b_dfa.map_ret(|(_, bytes)| bytes);
 
         let b_prog = b_dfa.compile();
@@ -99,7 +98,7 @@ impl Regex {
                 // transitions that return to the start state. That way, instead of returning to
                 // the start state, we will just fail to match. Then we get to search for the
                 // prefix before trying to match again.
-                let f_dfa = f_dfa.cut_loop_to_init().optimize_for_shortest_match();
+                let f_dfa = f_dfa.cut_loop_to_init().optimize();
                 f_prog = f_dfa.compile();
             },
         }
@@ -107,11 +106,10 @@ impl Regex {
         Ok(ForwardBackwardEngine::new(f_prog, prefix, b_prog))
     }
 
-    /// Returns the index range of the first shortest match, if there is a match. The indices
-    /// returned are byte indices of the string. The first index is inclusive; the second is
-    /// exclusive, and a little more subtle -- see the crate documentation.
-    pub fn shortest_match(&self, s: &str) -> Option<(usize, usize)> {
-        if let Some((start, end, look_behind)) = self.engine.shortest_match(s) {
+    /// Returns the index range of the first match, if there is a match. The indices returned are
+    /// byte indices of the string. The first index is inclusive; the second is exclusive.
+    pub fn find(&self, s: &str) -> Option<(usize, usize)> {
+        if let Some((start, end, look_behind)) = self.engine.find(s) {
             Some((start + look_behind as usize, end))
         } else {
             None
@@ -121,7 +119,7 @@ impl Regex {
     pub fn is_match(&self, s: &str) -> bool {
         // TODO: for the forward-backward engine, this could be faster because we don't need
         // to run backward.
-        self.shortest_match(s).is_some()
+        self.find(s).is_some()
     }
 }
 

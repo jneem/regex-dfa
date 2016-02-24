@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 pub trait Engine<Ret: Debug>: Debug {
-    fn shortest_match(&self, s: &str) -> Option<(usize, usize, Ret)>;
+    fn find(&self, s: &str) -> Option<(usize, usize, Ret)>;
     fn clone_box(&self) -> Box<Engine<Ret>>;
 }
 

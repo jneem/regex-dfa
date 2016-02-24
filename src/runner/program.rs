@@ -90,19 +90,17 @@ impl<Ret: Copy + Debug> TableInsts<Ret> {
         self.accept.len()
     }
 
-    pub fn shortest_match_from(&self, input: &[u8], pos: usize, state: usize)
+    pub fn find_from(&self, input: &[u8], pos: usize, state: usize)
     -> Result<(usize, Ret), usize> {
         let mut state = state as u32;
+        let mut ret = Err(input.len());
 
         if state as usize >= self.accept.len() {
             panic!("BUG");
         }
         for pos in pos..input.len() {
-            // LLVM should be smart enough to elide the bounds check here (because of the check
-            // before the loop and the check at the end of the loop), but it isn't. Going unchecked
-            // here gives about 10% improvement.
-            if let Some(ret) = unsafe { *self.accept.get_unchecked(state as usize) } {
-                return Ok((pos, ret));
+            if let Some(accept_ret) = self.accept[state as usize] {
+                ret = Ok((pos, accept_ret));
             }
 
             // We've manually inlined next_state here, for better performance (measurably better
@@ -113,22 +111,27 @@ impl<Ret: Copy + Debug> TableInsts<Ret> {
             state = self.table[((state as usize) << self.log_num_classes) + class as usize];
 
             // Since everything in `self.table` is either a valid state or u32::MAX, this is the
-            // same as checking if state == u32::MAX. We write it this way in the hope that some
-            // future rustc/LLVM will be able to elide the bounds check at the top of the loop so
-            // that we can get rid of `unsafe.'
+            // same as checking if state == u32::MAX. We write it this way in the hope that
+            // rustc/LLVM will be able to elide the bounds check at the top of the loop.
             if state as usize >= self.accept.len() {
-                return Err(pos);
+                if ret.is_err() {
+                    return Err(pos);
+                }
+                break;
             }
         }
 
-        if let Some(ret) = self.accept_at_eoi[state as usize] {
-            Ok((input.len(), ret))
-        } else {
-            Err(input.len())
+        // If we made it to the end of the input, prefer a return value that is specific to EOI
+        // over one that can occur anywhere.
+        if (state as usize) < self.accept.len() {
+            if let Some(accept_ret) = self.accept_at_eoi[state as usize] {
+                return Ok((input.len(), accept_ret))
+            }
         }
+        ret
     }
 
-    pub fn longest_backward_match_from(&self, input: &[u8], pos: usize, mut state: usize)
+    pub fn longest_backward_find_from(&self, input: &[u8], pos: usize, mut state: usize)
     -> Option<(usize, Ret)> {
         let mut ret = None;
         for pos in (0..pos).rev() {

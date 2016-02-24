@@ -199,14 +199,14 @@ mod tests {
 
         cyc!("abcde", false);
         cyc!("ab*d", true);
-        cyc!("ab*", false);
-        cyc!("ab*$", true);
-        cyc!("ab+", false);
-        cyc!("ab+$", true);
-        cyc!("(ab*|cde)", false);
-        cyc!("(ab*|cde)f", true);
-        cyc!("(abc)*", false);
-        cyc!("(abc)*def", true);
+        cyc!("ab*", true);
+        cyc!("ab*?", false);
+        cyc!("ab+", true);
+        cyc!("ab+?", false);
+        cyc!("(ab*?|cde)", false);
+        cyc!("(ab*?|cde)f", true);
+        cyc!("(abc)*?", false);
+        cyc!("(abc)*?def", true);
     }
 }
 

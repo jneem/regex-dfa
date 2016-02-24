@@ -20,7 +20,6 @@ use range_map::{RangeMap, RangeMultiMap};
 use refinery::Partition;
 use runner::program::TableInsts;
 use std;
-use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::mem;
@@ -48,7 +47,7 @@ impl<Ret> State<Ret> {
 pub trait RetTrait: Clone + Copy + Debug + Eq + Hash {}
 impl<T: Clone + Copy + Debug + Eq + Hash> RetTrait for T {}
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Dfa<Ret: 'static> {
     states: Vec<State<Ret>>,
 
@@ -170,6 +169,12 @@ impl<Ret: RetTrait> Dfa<Ret> {
         }
     }
 
+    /*
+    pub fn critical_strings(&self) -> Vec<(Vec<u8>, StateIdx)> {
+        unimplemented!();
+    }
+    */
+
     // Finds the bytes that are treated equivalently by this Dfa.
     //
     // Returns a Vec of length 256 such that vec[i] == vec[j] when i and j are two equivalent
@@ -228,26 +233,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
         }
     }
 
-
-    // TODO: should trim unreachable here -- match_python_281 is an example where it will help
-    pub fn optimize_for_shortest_match(self) -> Dfa<Ret> {
-        // Repeatedly `minimize` and `optimize_once_for_shortest_match` until we reach a fixed
-        // point.
-        let mut ret = self.minimize();
-        loop {
-            if !ret.optimize_once_for_shortest_match() {
-                break;
-            }
-            let last_len = ret.num_states();
-            ret = ret.minimize();
-            if ret.num_states() == last_len {
-                break;
-            }
-        }
-        ret.sort_states();
-        ret
-    }
-
+    /// Finds an equivalent DFA with the minimal number of states.
     pub fn optimize(self) -> Dfa<Ret> {
         let mut ret = self.minimize();
         ret.sort_states();
@@ -279,18 +265,6 @@ impl<Ret: RetTrait> Dfa<Ret> {
             st.transitions.retain_values(|x| *x != init);
         }
         self
-    }
-
-    /// Deletes any transitions after a match. Returns true if anything changed.
-    fn optimize_once_for_shortest_match(&mut self) -> bool {
-        let mut changed = false;
-        for st in &mut self.states {
-            if st.accept == Accept::Always {
-                changed |= !st.transitions.is_empty();
-                st.transitions = RangeMap::new();
-            }
-        }
-        changed
     }
 
     fn map_states<F: FnMut(StateIdx) -> StateIdx>(&mut self, mut map: F) {
@@ -326,6 +300,7 @@ impl<Ret: RetTrait> Dfa<Ret> {
         self.map_states(|s| state_map[s].unwrap());
     }
 
+    /*
     // Finds all the transitions between states that only match a single byte.
     fn single_byte_transitions(&self) -> HashMap<(StateIdx, StateIdx), u8> {
         use std::collections::hash_map::Entry::*;
@@ -347,6 +322,69 @@ impl<Ret: RetTrait> Dfa<Ret> {
         }
         ret
     }
+
+    // Finds all the single-byte transitions that must be traversed in order to get to an accepting
+    // state.
+    fn mandatory_single_byte_transitions(&self, max_steps: usize) -> Vec<(StateIdx, StateIdx, u8)> {
+        let map = self.single_byte_transitions();
+        let interesting_bytes: HashSet<u8> = map.values().cloned().collect();
+
+        // In order to get from the initial state to state i, we need to see all the bytes in
+        // mandatory_bytes[i] at least once. (At least, that's the goal of mandatory_bytes; we
+        // start out with too many elements in it and gradually remove them.)
+        let mut mandatory_bytes = vec![interesting_bytes.clone(); self.num_states()];
+        mandatory_bytes[0] = HashSet::new();
+
+        let mut visited = HashSet::<StateIdx>::new();
+        let mut active = HashSet::<StateIdx>::new();
+        let mut next = HashSet::<StateIdx>::new();
+        next.insert(0);
+        let mut steps_left = max_steps;
+
+        fn intersect(a: &mut HashSet<u8>, b: &HashSet<u8>) -> bool {
+            let old_size = a.len();
+            *a = a.intersection(b).cloned().collect();
+            a.len() < old_size
+        }
+
+        while steps_left > 0 {
+            steps_left -= 1;
+            mem::swap(&mut active, &mut next);
+            next.clear();
+
+            for &src in &active {
+                // If we found an accepting state, keep it in the active set but don't go any
+                // further.
+                if self.accept(src) != &Accept::Never {
+                    next.insert(src);
+                    continue;
+                }
+
+                visited.insert(src);
+                for tgt in self.transitions(src).ranges_values().map(|x| x.1).dedup() {
+                    let mut bytes = mandatory_bytes[src].clone();
+                    if let Some(b) = map.get(&(src, tgt)) {
+                        bytes.insert(*b);
+                    }
+                    if intersect(&mut mandatory_bytes[tgt], &bytes) || !visited.contains(&tgt) {
+                        next.insert(tgt);
+                    }
+                }
+            }
+        }
+
+        let critical_bytes = next.into_iter()
+            .fold(interesting_bytes,
+                  |x, state| x.intersection(&mandatory_bytes[state]).cloned().collect());
+
+        let mut ret: Vec<_> = map.into_iter()
+            .filter(|&(pair, byte)| critical_bytes.contains(&byte) && visited.contains(&pair.0))
+            .map(|(pair, byte)| (pair.0, pair.1, byte))
+            .collect();
+        ret.sort();
+        ret
+    }
+    */
 }
 
 impl<Ret: Debug> Debug for Dfa<Ret> {
@@ -393,10 +431,12 @@ pub mod tests {
     pub fn make_dfa_bounded(re: &str, max_states: usize) -> ::Result<Dfa<(Look, u8)>> {
         let nfa = try!(Nfa::from_regex(re));
         let nfa = nfa.remove_looks();
+        println!("after remove_looks: {:?}", nfa);
         let nfa = try!(nfa.byte_me(max_states));
+        println!("after byte: {:?}", nfa);
 
-        let dfa = try!(nfa.determinize_shortest(max_states));
-        Ok(dfa.optimize_for_shortest_match())
+        let dfa = try!(nfa.determinize(max_states));
+        Ok(dfa.optimize())
     }
 
     pub fn make_dfa(re: &str) -> ::Result<Dfa<(Look, u8)>> {
@@ -409,10 +449,10 @@ pub mod tests {
             .byte_me(usize::MAX).unwrap()
             .anchor(usize::MAX).unwrap();
 
-        nfa.determinize_shortest(usize::MAX).unwrap()
-            .optimize_for_shortest_match()
+        nfa.determinize(usize::MAX).unwrap()
+            .optimize()
             .cut_loop_to_init()
-            .optimize_for_shortest_match()
+            .optimize()
     }
 
     pub fn trans_dfa_anchored(size: usize, trans: &[(StateIdx, StateIdx, Range<u8>)])
@@ -467,8 +507,8 @@ pub mod tests {
 
     #[test]
     fn test_minimize() {
-        let auto = make_dfa("a*b*").unwrap();
-        // 1, because optimizing for shortest match means we match empty strings.
+        let auto = make_dfa("a*?b*?").unwrap();
+        // 1, because our highest-priority match is an empty string.
         assert_eq!(auto.states.len(), 1);
 
         let auto = make_dfa(r"^a").unwrap();
@@ -510,7 +550,7 @@ pub mod tests {
     }
 
     #[test]
-    fn optimize_for_shortest_match() {
+    fn match_priority() {
         macro_rules! eq {
             ($re1:expr, $re2:expr) => {
                 {
@@ -521,9 +561,38 @@ pub mod tests {
             };
         }
         eq!("(a|aa)", "a");
-        //eq!("a*", ""); // TODO: figure out how empty regexes should behave
-        eq!("abcb*", "abc");
+        eq!("abcd*?", "abc");
+        //eq!("a*?", ""); // TODO: figure out how empty regexes should behave
     }
 
     // TODO: add a test checking that minimize() doesn't clobber return values.
+
+    /*
+    #[test]
+    fn critical_transitions() {
+        fn crit(max_steps: usize, re: &str, answer: &[(StateIdx, StateIdx, u8)]) {
+            let dfa = make_dfa(re).unwrap();
+            println!("{:?}", dfa);
+            assert_eq!(&dfa.mandatory_single_byte_transitions(max_steps)[..], answer);
+        }
+
+        fn crit_anchored(max_steps: usize, re: &str, answer: &[(StateIdx, StateIdx, u8)]) {
+            let dfa = make_anchored(re);
+            println!("{:?}", dfa);
+            assert_eq!(&dfa.mandatory_single_byte_transitions(max_steps)[..], answer);
+        }
+
+        crit(10, "a", &[(0, 1, b'a')]);
+        crit(10, "aaa", &[(0, 1, b'a'), (1, 2, b'a'), (2, 3, b'a')]);
+        crit(2, "aaa", &[(0, 1, b'a'), (1, 2, b'a')]);
+        crit(10, "a*|ab", &[]);
+        crit(10, "a+|ab", &[(0, 1, b'a')]);
+        crit(10, "brown|fox", &[(2, 3, b'o'), (6, 7, b'o')]);
+        crit(10, "quick|brown", &[]);
+        crit(10, "zzzzzzzzzz|abracadabraz", &[]);
+        crit(10, "eeeeeeeeez|abracadabz", &[(9, 10, b'z')]);
+        crit(10, ".*x", &[(0, 1, b'x')]);
+        crit_anchored(10, "\\bx", &[(0, 260, b'x')]);
+    }
+    */
 }
