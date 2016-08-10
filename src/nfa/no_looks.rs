@@ -11,7 +11,7 @@ use error::Error;
 use itertools::Itertools;
 use look::Look;
 use nfa::{Accept, Nfa, NoLooks, State, StateIdx, StateSet};
-use num::traits::PrimInt;
+use num_traits::PrimInt;
 use range_map::{Range, RangeMap, RangeMultiMap};
 use std::{char, u8, usize};
 use std::cmp::max;

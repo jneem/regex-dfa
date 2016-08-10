@@ -74,7 +74,7 @@ extern crate test;
 
 extern crate itertools;
 extern crate memchr;
-extern crate num;
+extern crate num_traits;
 extern crate range_map;
 extern crate refinery;
 extern crate regex_syntax;

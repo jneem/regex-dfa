@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use look::Look;
-use num::traits::PrimInt;
+use num_traits::PrimInt;
 use range_map::{Range, RangeMultiMap};
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
@@ -318,7 +318,7 @@ impl<Tok: Debug + PrimInt, L: Lookability> Debug for Nfa<Tok, L> {
 #[cfg(test)]
 pub mod tests {
     use nfa::{Accept, NoLooks, Nfa, StateIdx};
-    use num::traits::PrimInt;
+    use num_traits::PrimInt;
     use range_map::Range;
     use std::fmt::Debug;
 

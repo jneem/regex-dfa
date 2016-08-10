@@ -8,7 +8,7 @@
 
 use dfa::{Dfa, RetTrait};
 use nfa::{Nfa, NoLooks, StateIdx};
-use num::traits::PrimInt;
+use num_traits::PrimInt;
 use std::collections::HashSet;
 use std::fmt::Debug;
 
