@@ -17,19 +17,23 @@
 //! non-consuming transitions are deleted. Here it is in ASCII art, where a non-consuming
 //! transition transition is denoted by an epsilon (ε):
 //!
-//!                   ε           b
-//!         a     /-------> 3 -------> 4
-//!     1 -----> 2    ε
-//!               \-------> 5
+//! ```text
+//!               ε           b
+//!     a     /-------> 3 -------> 4
+//! 1 -----> 2    ε
+//!           \-------> 5
+//! ```
 //!
 //! becomes
 //!
-//!               a               b
-//!       /---------------> 3 -------> 4
-//!      /  a
-//!     1 -----> 2
-//!      \        a
-//!       \---------------> 5
+//! ```text
+//!           a               b
+//!   /---------------> 3 -------> 4
+//!  /  a
+//! 1 -----> 2
+//!  \        a
+//!   \---------------> 5
+//! ```
 //!
 //! The situation becomes (just a little) tricker when the non-consuming transitions are allowed to
 //! have predicates that look forward or back by one token. We need to support this sort of
@@ -46,10 +50,12 @@
 //! eps-closure, we also need to keep track of the predicates on the non-consuming transitions that
 //! we passed through. For example, if we have a configuration like
 //!
-//!                       (P2, Q2)
-//!        (P1, Q1)    /------------> 3
-//!     1 ----------> 2   (P3, Q3)
-//!                    \------------> 4
+//! ```text
+//!                   (P2, Q2)
+//!    (P1, Q1)    /------------> 3
+//! 1 ----------> 2   (P3, Q3)
+//!                \------------> 4
+//! ```
 //!
 //! then states 2, 3, and 4 all belong to the eps-closure of 1. In order to get from 1 to 3, we
 //! need to pass through the predicate `(P1 ∩ P2, Q1 ∩ Q2)`; in order to get from 1 to 4, we need
@@ -62,18 +68,22 @@
 //! consumed token belongs to `P`*. Then we delete all the non-consuming transitions. Going back to
 //! the first example, suppose that `P1` contains `a` but `P2` does not. Then
 //!
-//!                   (P1, Q1)           b
-//!         a     /--------------> 3 -------> 4
-//!     1 -----> 2    (P2, Q2)
-//!               \--------------> 5
+//! ```text
+//!               (P1, Q1)           b
+//!     a     /--------------> 3 -------> 4
+//! 1 -----> 2    (P2, Q2)
+//!           \--------------> 5
+//! ```
 //!
 //! becomes
 //!
-//!               a               b
-//!       /---------------> 3 -------> 4
-//!      /  a
-//!     1 -----> 2
-//!                         5
+//! ```text
+//!           a               b
+//!   /---------------> 3 -------> 4
+//!  /  a
+//! 1 -----> 2
+//!                     5
+//! ```
 //!
 //! There is actually one more complication that we won't discuss in detail here: the procedure
 //! above doesn't account properly for the eps-closure of the initial state, since it only does
@@ -89,19 +99,23 @@
 //! token that was consumed in going from `s` to `t` belongs to `P`. In ASCII art, if `P` contains
 //! `a` but not `b`, and if `Q` contains `c` but not `d` then
 //!
-//!         a          (P, Q)           c
-//!     1 -----> 2 -------------> 3 --------> 4
-//!         b   ^                  \    d
-//!     5 -----/                    \-------> 5
+//! ```text
+//!     a          (P, Q)           c
+//! 1 -----> 2 -------------> 3 --------> 4
+//!     b   ^                  \    d
+//! 5 -----/                    \-------> 5
+//! ```
 //!
 //! becomes
 //!
-//!                  a                  c
-//!        /--------------------> 3' -----\
-//!       / a                           c  \
-//!     1 -----> 2                3 --------> 4
-//!         b   ^                  \    d
-//!     5 -----/                    \-------> 5
+//! ```text
+//!              a                  c
+//!    /--------------------> 3' -----\
+//!   / a                           c  \
+//! 1 -----> 2                3 --------> 4
+//!     b   ^                  \    d
+//! 5 -----/                    \-------> 5
+//! ```
 //!
 //! There are a couple of caveats to this transformation also. The first is that we process *all*
 //! of the look-behind (i.e. `P`) predicates before we process any of the look-ahead (i.e. `Q`)
