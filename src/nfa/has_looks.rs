@@ -6,6 +6,116 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! This module contains two main pieces of functionality: building an NFA from a regular
+//! expression and processing an NFA to remove all non-consuming transitions. The first of these is
+//! carried out by the `from_regex` function and it is fairly straightforward. The second is
+//! possibly more unusual, and so we describe it here in some detail.
+//!
+//! For your standard classroom NFA, it's trivial to remove non-consuming transitions: for every
+//! consuming transition with source state `s` and target state `t`, take the eps-closure of `t`
+//! and then add a transition from `s` to everything in that eps-closure. Finally, all
+//! non-consuming transitions are deleted. Here it is in ASCII art, where a non-consuming
+//! transition transition is denoted by an epsilon (ε):
+//!
+//!                   ε           b
+//!         a     /-------> 3 -------> 4
+//!     1 -----> 2    ε
+//!               \-------> 5
+//!
+//! becomes
+//!
+//!               a               b
+//!       /---------------> 3 -------> 4
+//!      /  a
+//!     1 -----> 2
+//!      \        a
+//!       \---------------> 5
+//!
+//! The situation becomes (just a little) tricker when the non-consuming transitions are allowed to
+//! have predicates that look forward or back by one token. We need to support this sort of
+//! transition if we want to support word boundaries (and the fact that doing so is a bit tricky is
+//! probably the main reason that the standard `regex` crate doesn't support DFA simulation if the
+//! regex contains word boundaries). So now we allow our non-consuming transitions to be of the
+//! form `(P, Q)`, where `P` and `Q` are sets of tokens. You can pass through such a non-consuming
+//! transition if and only if the previous token belonged to `P` and the next token belongs to `Q`.
+//! (The code for this is in `nfa::LookPair`, which is a teeny bit more complicated because it also
+//! allows checking for the edge (beginning for `P`, end for `Q`) of the input.)
+//!
+//! If `Q` is the set of all tokens, then supporting these kinds of non-consuming transitions is
+//! almost the same as the previous case. The first difference is that when we take the
+//! eps-closure, we also need to keep track of the predicates on the non-consuming transitions that
+//! we passed through. For example, if we have a configuration like
+//!
+//!                       (P2, Q2)
+//!        (P1, Q1)    /------------> 3
+//!     1 ----------> 2   (P3, Q3)
+//!                    \------------> 4
+//!
+//! then states 2, 3, and 4 all belong to the eps-closure of 1. In order to get from 1 to 3, we
+//! need to pass through the predicate `(P1 ∩ P2, Q1 ∩ Q2)`; in order to get from 1 to 4, we need
+//! to pass through the predicate `(P1 ∩ P3, Q1 ∩ Q3)`.
+//!
+//! Assuming for now that all of the `Q` predicates are the set of all possible tokens, we remove
+//! the non-consuming transitions as follows: take every consuming transition with source state `s`
+//! and target state `t`. Then for every `u` in the eps-closure of `t` with predicate `(P, Q)`
+//! leading from `t` to `u`, we add a consuming transition from `s` to `u` *if and only if the
+//! consumed token belongs to `P`*. Then we delete all the non-consuming transitions. Going back to
+//! the first example, suppose that `P1` contains `a` but `P2` does not. Then
+//!
+//!                   (P1, Q1)           b
+//!         a     /--------------> 3 -------> 4
+//!     1 -----> 2    (P2, Q2)
+//!               \--------------> 5
+//!
+//! becomes
+//!
+//!               a               b
+//!       /---------------> 3 -------> 4
+//!      /  a
+//!     1 -----> 2
+//!                         5
+//!
+//! There is actually one more complication that we won't discuss in detail here: the procedure
+//! above doesn't account properly for the eps-closure of the initial state, since it only does
+//! things to the eps-closure of a state that follows a transition. In order to handle the
+//! eps-closure of the initial state, we actually introduce a collection of initial states, some of
+//! which are only active if the previous character of the input satisfied some predicate.
+//!
+//! Finally, in the case that the `Q` predicates are not the set of all possible tokens, we need to
+//! add extra states. For every consuming transition from `s` to `t` and every `u` in the
+//! eps-closure of `t` with predicate `(P, Q)` leading from `t` to `u`, we add a new state `u'`.
+//! The consuming transitions leading out from `u'` are those consuming transitions leading out
+//! from `u` whose tokens belong to `Q`. Then we add a consuming transition from `s` to `u'` if the
+//! token that was consumed in going from `s` to `t` belongs to `P`. In ASCII art, if `P` contains
+//! `a` but not `b`, and if `Q` contains `c` but not `d` then
+//!
+//!         a          (P, Q)           c
+//!     1 -----> 2 -------------> 3 --------> 4
+//!         b   ^                  \    d
+//!     5 -----/                    \-------> 5
+//!
+//! becomes
+//!
+//!                  a                  c
+//!        /--------------------> 3' -----\
+//!       / a                           c  \
+//!     1 -----> 2                3 --------> 4
+//!         b   ^                  \    d
+//!     5 -----/                    \-------> 5
+//!
+//! There are a couple of caveats to this transformation also. The first is that we process *all*
+//! of the look-behind (i.e. `P`) predicates before we process any of the look-ahead (i.e. `Q`)
+//! predicates. The reason for this can be seen in the example above: if state 4 had any
+//! non-consuming transitions leading out of it, then in processing that non-consuming transition
+//! we might need to add more consuming transitions leading out of 3. That would in turn affect the
+//! consuming transitions that we add to 3'. Therefore, we need to add the extra transitions coming
+//! out of 3 (which are due to a look-behind predicate) before we add the transitions coming
+//! out of 3' (which are due to a look-ahead predicate).
+//!
+//! The second caveat to the transformation above comes in the handling of accepting states. When a
+//! non-consuming transition leads to an accepting state, it means that the source of that
+//! transition should become a conditionally accepting state.
+
 use look::Look;
 use nfa::{Accept, HasLooks, LookPair, Nfa, NoLooks, StateIdx};
 use std::cmp::max;
@@ -156,10 +266,10 @@ impl Nfa<u32, HasLooks> {
         }
     }
 
-    // Finds (transitively) the set of all non-consuming transitions that can be made starting
-    // from `state`.
-    //
-    // The search is done depth-first so that priority is preserved.
+    /// Finds (transitively) the set of all non-consuming transitions that can be made starting
+    /// from `state`.
+    ///
+    /// The search is done depth-first so that priority is preserved.
     fn closure(&self, state: StateIdx) -> Vec<LookPair> {
         let mut stack: Vec<LookPair> = Vec::new();
         let mut seen: HashSet<LookPair> = HashSet::new();
