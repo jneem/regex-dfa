@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `Partition` struct in crate `refinery`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, Partition">
+
+    <title>refinery::Partition - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'><a href='index.html'>refinery</a></p><script>window.sidebarCurrent = {name: 'Partition', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content struct">
+<h1 class='fqn'><span class='in-band'>Struct <a href='index.html'>refinery</a>::<wbr><a class='struct' href=''>Partition</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a id='src-16' class='srclink' href='../src/refinery/lib.rs.html#65-84' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct Partition {
+    // some fields omitted
+}</pre><div class='docblock'><p>A partition of a set of <code>usize</code>s. See the crate documentation for more information.</p>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><span class='in-band'><code>impl <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a></code></span><span class='out-of-band'><div class='ghost'></div><a id='src-41' class='srclink' href='../src/refinery/lib.rs.html#93-231' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.new' class='method'><code>fn <a href='#method.new' class='fnname'>new</a>&lt;I,&nbsp;J&gt;(sets: I, size: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a>) -&gt; <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a> <span class='where'>where I: <a class='trait' href='https://doc.rust-lang.org/nightly/core/iter/iterator/trait.Iterator.html' title='core::iter::iterator::Iterator'>Iterator</a>&lt;Item=J&gt;, J: <a class='trait' href='https://doc.rust-lang.org/nightly/core/iter/iterator/trait.Iterator.html' title='core::iter::iterator::Iterator'>Iterator</a>&lt;Item=<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a>&gt;</span></code></h4>
+<div class='docblock'><p>Constructs a new <code>Partition</code>.</p>
+
+<p><code>sets</code> is an iterator over the sets of the partition. The sets must be non-overlapping, and
+they must all be subsets of the half-open range <code>[0, size)</code>.</p>
+
+<h1 id='panics' class='section-header'><a href='#panics'>Panics</a></h1>
+<ul>
+<li>if any sets overlap</li>
+<li>if any sets contain an element larger than or equal to <code>size</code>.</li>
+</ul>
+</div><h4 id='method.simple' class='method'><code>fn <a href='#method.simple' class='fnname'>simple</a>(size: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a>) -&gt; <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a></code></h4>
+<div class='docblock'><p>Constructs a new <code>Partition</code> containing only one set (the half-open range <code>[0, size)</code>).</p>
+</div><h4 id='method.iter' class='method'><code>fn <a href='#method.iter' class='fnname'>iter</a>&lt;'a&gt;(&amp;'a self) -&gt; <a class='struct' href='../refinery/struct.PartitionIter.html' title='refinery::PartitionIter'>PartitionIter</a>&lt;'a&gt;</code></h4>
+<div class='docblock'><p>Iterates over the sets in this partition, each of which is realized by a <code>&amp;[usize]</code>.</p>
+</div><h4 id='method.refine' class='method'><code>fn <a href='#method.refine' class='fnname'>refine</a>(&amp;mut self, refiner: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>&amp;[</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>]</a>)</code></h4>
+<div class='docblock'><p>Refines the partition with the given set.</p>
+
+<p>Every set <code>s</code> in the partition is replaced by <code>s.intersection(refiner)</code> and
+<code>s.difference(refiner)</code>.</p>
+
+<p>This function runs in time that is O(n log n) in the size of <code>refiner</code>.</p>
+
+<h1 id='panics-1' class='section-header'><a href='#panics-1'>Panics</a></h1>
+<ul>
+<li>if <code>refiner</code> contains any elements that are not in the partition</li>
+</ul>
+</div><h4 id='method.part' class='method'><code>fn <a href='#method.part' class='fnname'>part</a>(&amp;self, part_idx: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a>) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>&amp;[</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>]</a></code></h4>
+<div class='docblock'><p>Returns one part of this partition.</p>
+</div><h4 id='method.num_parts' class='method'><code>fn <a href='#method.num_parts' class='fnname'>num_parts</a>(&amp;self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a></code></h4>
+<div class='docblock'><p>The number of parts in this partition.</p>
+</div><h4 id='method.refine_with_callback' class='method'><code>fn <a href='#method.refine_with_callback' class='fnname'>refine_with_callback</a>&lt;F&gt;(&amp;mut self, refiner: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>&amp;[</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>]</a>, split_callback: F) <span class='where'>where F: <a class='trait' href='https://doc.rust-lang.org/nightly/core/ops/trait.FnMut.html' title='core::ops::FnMut'>FnMut</a>(&amp;<a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a>, <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a>, <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a>)</span></code></h4>
+<div class='docblock'><p>Refines the partition with the given set.</p>
+
+<p>Every set <code>s</code> in the partition is replaced by <code>s.intersection(refiner)</code> and
+<code>s.difference(refiner)</code>. Every time we make such a non-trivial (meaning that both the
+intersection and the difference are non-empty) replacement, we call the supplied callback
+function with arguments <code>self</code>, <code>original_set_idx</code> and <code>difference_idx</code>.</p>
+
+<p>This function runs in time that is O(n log n) in the size of <code>refiner</code>.</p>
+
+<h1 id='panics-2' class='section-header'><a href='#panics-2'>Panics</a></h1>
+<ul>
+<li>if <code>refiner</code> contains any elements that are not in the partition</li>
+</ul>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><span class='in-band'><code>impl <a class='trait' href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html' title='core::clone::Clone'>Clone</a> for <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a></code></span><span class='out-of-band'><div class='ghost'></div><a id='src-7' class='srclink' href='../src/refinery/lib.rs.html#64' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.clone' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone' class='fnname'>clone</a>(&amp;self) -&gt; <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a></code></h4>
+<div class='docblock'><p>Returns a copy of the value. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">Read more</a></p>
+</div><h4 id='method.clone_from' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from' class='fnname'>clone_from</a>(&amp;mut self, source: &amp;Self)</code><div class='since' title='Stable since Rust version 1.0.0'>1.0.0</div></h4>
+<div class='docblock'><p>Performs copy-assignment from <code>source</code>. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from">Read more</a></p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl <a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a> for <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a></code></span><span class='out-of-band'><div class='ghost'></div><a id='src-100' class='srclink' href='../src/refinery/lib.rs.html#242-249' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.fmt' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html#tymethod.fmt' class='fnname'>fmt</a>(&amp;self, fmt: &amp;mut <a class='struct' href='https://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html' title='core::fmt::Formatter'>Formatter</a>) -&gt; <a class='enum' href='https://doc.rust-lang.org/nightly/core/result/enum.Result.html' title='core::result::Result'>Result</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>,&nbsp;<a class='struct' href='https://doc.rust-lang.org/nightly/core/fmt/struct.Error.html' title='core::fmt::Error'>Error</a>&gt;</code></h4>
+<div class='docblock'><p>Formats the value using the given formatter.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;'a&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.IntoIterator.html' title='core::iter::traits::IntoIterator'>IntoIterator</a> for &amp;'a <a class='struct' href='../refinery/struct.Partition.html' title='refinery::Partition'>Partition</a></code></span><span class='out-of-band'><div class='ghost'></div><a id='src-114' class='srclink' href='../src/refinery/lib.rs.html#264-270' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='associatedtype.Item' class='type'><code>type <a href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.IntoIterator.html#associatedtype.Item' class='type'>Item</a> = <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>&amp;'a [</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>]</a></code></h4>
+<div class='docblock'><p>The type of the elements being iterated over.</p>
+</div><h4 id='associatedtype.IntoIter' class='type'><code>type <a href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.IntoIterator.html#associatedtype.IntoIter' class='type'>IntoIter</a> = <a class='struct' href='../refinery/struct.PartitionIter.html' title='refinery::PartitionIter'>PartitionIter</a>&lt;'a&gt;</code></h4>
+<div class='docblock'><p>Which kind of iterator are we turning this into?</p>
+</div><h4 id='method.into_iter' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.IntoIterator.html#tymethod.into_iter' class='fnname'>into_iter</a>(self) -&gt; Self::IntoIter</code></h4>
+<div class='docblock'><p>Creates an iterator from a value. <a href="https://doc.rust-lang.org/nightly/core/iter/traits/trait.IntoIterator.html#tymethod.into_iter">Read more</a></p>
+</div></div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "refinery";
+        window.playgroundUrl = "";
+    </script>
+    <script src="../jquery.js"></script>
+    <script src="../main.js"></script>
+    
+    <script defer src="../search-index.js"></script>
+</body>
+</html>

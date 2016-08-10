@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["Partition","A partition of a set of `usize`s. See the crate documentation for more information."],["PartitionIter","An iterator over the sets in a `Partition`."]]});

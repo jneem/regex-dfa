@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `RangeMap` struct in crate `range_map`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, RangeMap">
+
+    <title>range_map::RangeMap - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'><a href='index.html'>range_map</a></p><script>window.sidebarCurrent = {name: 'RangeMap', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content struct">
+<h1 class='fqn'><span class='in-band'>Struct <a href='index.html'>range_map</a>::<wbr><a class='struct' href=''>RangeMap</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a id='src-178' class='srclink' href='../src/range_map/lib.rs.html#107-109' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct RangeMap&lt;T,&nbsp;V&gt; {
+    // some fields omitted
+}</pre><div class='docblock'><p>A set of characters. Optionally, each character in the set may be associated with some data.</p>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a> + <a class='trait' href='../num_traits/int/trait.PrimInt.html' title='num_traits::int::PrimInt'>PrimInt</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html' title='core::clone::Clone'>Clone</a> + <a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a> + <a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html' title='core::cmp::Eq'>Eq</a>&gt; <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-213' class='srclink' href='../src/range_map/lib.rs.html#147-323' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.new' class='method'><code>fn <a href='#method.new' class='fnname'>new</a>() -&gt; <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></h4>
+<div class='docblock'><p>Creates a new empty <code>RangeMap</code>.</p>
+</div><h4 id='method.from_sorted_vec' class='method'><code>fn <a href='#method.from_sorted_vec' class='fnname'>from_sorted_vec</a>(vec: <a class='struct' href='https://doc.rust-lang.org/nightly/collections/vec/struct.Vec.html' title='collections::vec::Vec'>Vec</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='struct' href='../range_map/struct.Range.html' title='range_map::Range'>Range</a>&lt;T&gt;, V<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a>&gt;) -&gt; <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></h4>
+<div class='docblock'><p>Creates a <code>RangeMap</code> from a <code>Vec</code>, which must contain ranges in ascending order. If any
+ranges overlap, they must map to the same value.</p>
+
+<p>Panics if the ranges are not sorted, or if they overlap without mapping to the same value.</p>
+</div><h4 id='method.num_ranges' class='method'><code>fn <a href='#method.num_ranges' class='fnname'>num_ranges</a>(&amp;self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a></code></h4>
+<div class='docblock'><p>Returns the number of mapped ranges.</p>
+
+<p>Note that this is not usually the same as the number of mapped values.</p>
+</div><h4 id='method.is_empty' class='method'><code>fn <a href='#method.is_empty' class='fnname'>is_empty</a>(&amp;self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a></code></h4>
+<div class='docblock'><p>Tests whether this map is empty.</p>
+</div><h4 id='method.is_full' class='method'><code>fn <a href='#method.is_full' class='fnname'>is_full</a>(&amp;self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a></code></h4>
+<div class='docblock'><p>Tests whether this <code>CharMap</code> maps every value.</p>
+</div><h4 id='method.ranges_values' class='method'><code>fn <a href='#method.ranges_values' class='fnname'>ranges_values</a>&lt;'a&gt;(&amp;'a self) -&gt; <a class='struct' href='https://doc.rust-lang.org/nightly/core/slice/struct.Iter.html' title='core::slice::Iter'>Iter</a>&lt;'a,&nbsp;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='struct' href='../range_map/struct.Range.html' title='range_map::Range'>Range</a>&lt;T&gt;, V<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a>&gt;</code></h4>
+<div class='docblock'><p>Iterates over all the mapped ranges and values.</p>
+</div><h4 id='method.keys_values' class='method'><code>fn <a href='#method.keys_values' class='fnname'>keys_values</a>&lt;'a&gt;(&amp;'a self) -&gt; <a class='struct' href='../range_map/struct.PairIter.html' title='range_map::PairIter'>PairIter</a>&lt;'a,&nbsp;T,&nbsp;V&gt;</code></h4>
+<div class='docblock'><p>Iterates over all mappings.</p>
+</div><h4 id='method.get' class='method'><code>fn <a href='#method.get' class='fnname'>get</a>(&amp;self, x: T) -&gt; <a class='enum' href='https://doc.rust-lang.org/nightly/core/option/enum.Option.html' title='core::option::Option'>Option</a>&lt;&amp;V&gt;</code></h4>
+<div class='docblock'><p>Finds the value that <code>x</code> maps to, if it exists.</p>
+
+<p>Runs in <code>O(log n)</code> time, where <code>n</code> is the number of mapped ranges.</p>
+</div><h4 id='method.intersection' class='method'><code>fn <a href='#method.intersection' class='fnname'>intersection</a>(&amp;self, other: &amp;<a class='struct' href='../range_map/struct.RangeSet.html' title='range_map::RangeSet'>RangeSet</a>&lt;T&gt;) -&gt; <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></h4>
+<div class='docblock'><p>Returns those mappings whose keys belong to the given set.</p>
+</div><h4 id='method.num_keys' class='method'><code>fn <a href='#method.num_keys' class='fnname'>num_keys</a>(&amp;self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.usize.html'>usize</a></code></h4>
+<div class='docblock'><p>Counts the number of mapped keys.</p>
+
+<p>This saturates at <code>usize::MAX</code>.</p>
+</div><h4 id='method.to_range_set' class='method'><code>fn <a href='#method.to_range_set' class='fnname'>to_range_set</a>(&amp;self) -&gt; <a class='struct' href='../range_map/struct.RangeSet.html' title='range_map::RangeSet'>RangeSet</a>&lt;T&gt;</code></h4>
+<div class='docblock'><p>Returns the set of mapped chars, forgetting what they are mapped to.</p>
+</div><h4 id='method.map_values' class='method'><code>fn <a href='#method.map_values' class='fnname'>map_values</a>&lt;F&gt;(&amp;mut self, f: F) <span class='where'>where F: <a class='trait' href='https://doc.rust-lang.org/nightly/core/ops/trait.FnMut.html' title='core::ops::FnMut'>FnMut</a>(&amp;V) -&gt; V</span></code></h4>
+<div class='docblock'><p>Modifies the values in place.</p>
+</div><h4 id='method.retain_values' class='method'><code>fn <a href='#method.retain_values' class='fnname'>retain_values</a>&lt;F&gt;(&amp;mut self, f: F) <span class='where'>where F: <a class='trait' href='https://doc.rust-lang.org/nightly/core/ops/trait.FnMut.html' title='core::ops::FnMut'>FnMut</a>(&amp;V) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a></span></code></h4>
+<div class='docblock'><p>Modifies this map to contain only those mappings with values <code>v</code> satisfying <code>f(v)</code>.</p>
+</div><h4 id='method.as_mut_slice' class='method'><code>fn <a href='#method.as_mut_slice' class='fnname'>as_mut_slice</a>(&amp;mut self) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>&amp;mut [</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='struct' href='../range_map/struct.Range.html' title='range_map::Range'>Range</a>&lt;T&gt;, V<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a><a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>]</a></code></h4>
+<div class='docblock'><p>Returns a mutable view into this map.</p>
+
+<p>The ranges should not be modified, since that might violate our invariants.</p>
+
+<p>This method will eventually be removed, probably once anonymous return values allow is to
+write a values_mut() iterator more easily.</p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html' title='core::cmp::PartialEq'>PartialEq</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html' title='core::cmp::PartialEq'>PartialEq</a>&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html' title='core::cmp::PartialEq'>PartialEq</a> for <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-145' class='srclink' href='../src/range_map/lib.rs.html#106' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.eq' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html#tymethod.eq' class='fnname'>eq</a>(&amp;self, __arg_0: &amp;<a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a></code></h4>
+<div class='docblock'><p>This method tests for <code>self</code> and <code>other</code> values to be equal, and is used by <code>==</code>. <a href="https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html#tymethod.eq">Read more</a></p>
+</div><h4 id='method.ne' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html#method.ne' class='fnname'>ne</a>(&amp;self, __arg_0: &amp;<a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;) -&gt; <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.bool.html'>bool</a></code></h4>
+<div class='docblock'><p>This method tests for <code>!=</code>.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/hash/trait.Hash.html' title='core::hash::Hash'>Hash</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/hash/trait.Hash.html' title='core::hash::Hash'>Hash</a>&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/hash/trait.Hash.html' title='core::hash::Hash'>Hash</a> for <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-158' class='srclink' href='../src/range_map/lib.rs.html#106' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.hash' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/hash/trait.Hash.html#tymethod.hash' class='fnname'>hash</a>&lt;__HTV:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html' title='core::hash::Hasher'>Hasher</a>&gt;(&amp;self, __arg_0: &amp;mut __HTV)</code></h4>
+<div class='docblock'><p>Feeds this value into the state given, updating the hasher as necessary.</p>
+</div><h4 id='method.hash_slice' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/hash/trait.Hash.html#method.hash_slice' class='fnname'>hash_slice</a>&lt;H&gt;(data: <a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.slice.html'>&amp;[Self]</a>, state: &amp;mut H) <span class='where'>where H: <a class='trait' href='https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html' title='core::hash::Hasher'>Hasher</a></span></code><div class='since' title='Stable since Rust version 1.3.0'>1.3.0</div></h4>
+<div class='docblock'><p>Feeds a slice of this type into the state provided.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html' title='core::cmp::Eq'>Eq</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html' title='core::cmp::Eq'>Eq</a>&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html' title='core::cmp::Eq'>Eq</a> for <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-166' class='srclink' href='../src/range_map/lib.rs.html#106' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'></div><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html' title='core::clone::Clone'>Clone</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html' title='core::clone::Clone'>Clone</a>&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html' title='core::clone::Clone'>Clone</a> for <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-172' class='srclink' href='../src/range_map/lib.rs.html#106' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.clone' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone' class='fnname'>clone</a>(&amp;self) -&gt; <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></h4>
+<div class='docblock'><p>Returns a copy of the value. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">Read more</a></p>
+</div><h4 id='method.clone_from' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from' class='fnname'>clone_from</a>(&amp;mut self, source: &amp;Self)</code><div class='since' title='Stable since Rust version 1.0.0'>1.0.0</div></h4>
+<div class='docblock'><p>Performs copy-assignment from <code>source</code>. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from">Read more</a></p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a>&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a> for <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-182' class='srclink' href='../src/range_map/lib.rs.html#111-131' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.fmt' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html#tymethod.fmt' class='fnname'>fmt</a>(&amp;self, f: &amp;mut <a class='struct' href='https://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html' title='core::fmt::Formatter'>Formatter</a>) -&gt; <a class='enum' href='https://doc.rust-lang.org/nightly/core/result/enum.Result.html' title='core::result::Result'>Result</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>()</a>,&nbsp;<a class='struct' href='https://doc.rust-lang.org/nightly/core/fmt/struct.Error.html' title='core::fmt::Error'>Error</a>&gt;</code></h4>
+<div class='docblock'><p>Formats the value using the given formatter.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;T:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a> + <a class='trait' href='../num_traits/int/trait.PrimInt.html' title='num_traits::int::PrimInt'>PrimInt</a>,&nbsp;V:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html' title='core::clone::Clone'>Clone</a> + <a class='trait' href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html' title='core::fmt::Debug'>Debug</a> + <a class='trait' href='https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html' title='core::cmp::Eq'>Eq</a>&gt; <a class='trait' href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.FromIterator.html' title='core::iter::traits::FromIterator'>FromIterator</a>&lt;<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='struct' href='../range_map/struct.Range.html' title='range_map::Range'>Range</a>&lt;T&gt;, V<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a>&gt; for <a class='struct' href='../range_map/struct.RangeMap.html' title='range_map::RangeMap'>RangeMap</a>&lt;T,&nbsp;V&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a id='src-203' class='srclink' href='../src/range_map/lib.rs.html#133-145' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from_iter' class='method'><code>fn <a href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.FromIterator.html#tymethod.from_iter' class='fnname'>from_iter</a>&lt;I:&nbsp;<a class='trait' href='https://doc.rust-lang.org/nightly/core/iter/traits/trait.IntoIterator.html' title='core::iter::traits::IntoIterator'>IntoIterator</a>&lt;Item=<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>(</a><a class='struct' href='../range_map/struct.Range.html' title='range_map::Range'>Range</a>&lt;T&gt;, V<a class='primitive' href='https://doc.rust-lang.org/nightly/std/primitive.tuple.html'>)</a>&gt;&gt;(iter: I) -&gt; Self</code></h4>
+<div class='docblock'><p>Builds a <code>RangeMap</code> from an iterator over pairs. If any ranges overlap, they must map to
+the same value.</p>
+
+<h1 id='panics' class='section-header'><a href='#panics'>Panics</a></h1>
+<ul>
+<li>if there are ranges that overlap and do not map to the same value.</li>
+</ul>
+</div></div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "range_map";
+        window.playgroundUrl = "";
+    </script>
+    <script src="../jquery.js"></script>
+    <script src="../main.js"></script>
+    
+    <script defer src="../search-index.js"></script>
+</body>
+</html>

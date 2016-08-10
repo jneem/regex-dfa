@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `regex_dfa` crate.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, regex_dfa">
+
+    <title>regex_dfa - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'></p><script>window.sidebarCurrent = {name: 'regex_dfa', ty: 'mod', relpath: '../'};</script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content mod">
+<h1 class='fqn'><span class='in-band'>Crate <a class='mod' href=''>regex_dfa</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a id='src-0' class='srclink' href='../src/regex_dfa/src/lib.rs.html#9-97' title='goto source code'>[src]</a></span></h1>
+<div class='docblock'><p>This crate provides tools for converting regular expressions into deterministic finite automata
+(DFAs). The most interesting type is <code>Regex</code>, which is a virtual machine for executing a DFA.</p>
+
+<h1 id='example-creating-and-running-a-regex' class='section-header'><a href='#example-creating-and-running-a-regex'>Example: creating and running a <code>Regex</code></a></h1>
+<pre class='rust rust-example-rendered'>
+<span class='kw'>use</span> <span class='ident'>regex_dfa</span>::<span class='ident'>Regex</span>;
+<span class='kw'>let</span> <span class='ident'>re</span> <span class='op'>=</span> <span class='ident'>Regex</span>::<span class='ident'>new</span>(<span class='string'>r&quot;\d{4}-\d{2}-\d{2}&quot;</span>).<span class='ident'>unwrap</span>();
+<span class='macro'>assert_eq</span><span class='macro'>!</span>(<span class='ident'>re</span>.<span class='ident'>find</span>(<span class='string'>&quot;My birthday is 1986-08-22!&quot;</span>), <span class='prelude-val'>Some</span>((<span class='number'>15</span>, <span class='number'>25</span>)));</pre>
+
+<p>The most useful function in this crate is <code>Regex::find</code>, which looks for the first substring of the
+given string that match the language of the DFA.</p>
+
+<h1 id='comparison-to-the-regex-crate' class='section-header'><a href='#comparison-to-the-regex-crate'>Comparison to the <code>regex</code> crate</a></h1>
+<p>Compared to rust&#39;s standard <code>regex</code> crate, the main feature of <code>regex_dfa</code> is that <code>regex_dfa</code>
+<em>eagerly</em> compiles a regular expression into a DFA, whereas <code>regex</code> does so lazily. There are
+advantages and disadvantages to the eager approach. To begin with, doing all the compilation
+up-front means that there is less to do at match time. If we get around to writing a compiler
+plugin for compiling the regular expression at compile time, this would be an even bigger win. 
+Another advantage is that since we don&#39;t care so much about compilation speed, we have more
+opportunities to look for optimizations.</p>
+
+<p>The main disadvantage to eager compilation is memory usage. Even fairly simple regular expressions
+may take several tens of kilobytes to represent as a DFA. More complicated ones (especially regular
+expressions that use unicode word boundaries or character classes) may require much more. This
+disadvantage is specific to eager compilation, since lazy DFA compilation only needs to create DFA
+states for those characters that are actually seen (i.e., probably a tiny fraction of the entire
+unicode character class). For this reason, <code>regex_dfa</code> allows you to restrict the amount of memory
+it uses: simply use the method <code>Regex::new_bounded</code>, which will fail and report an error if it
+would otherwise need to use too much memory.</p>
+
+<h1 id='roadmap' class='section-header'><a href='#roadmap'>Roadmap</a></h1>
+<p>There are two substantial features that need to be added before this crate can be considered
+feature-complete.</p>
+
+<h2 id='simd-optimizations' class='section-header'><a href='#simd-optimizations'>SIMD optimizations</a></h2>
+<p>There are some nice tricks available for using SIMD instructions to quickly scan over uninteresting
+parts of the input. The <code>regex</code> crate is capable (with a nightly compiler) of doing some of these
+already, and we should imitate it.</p>
+
+<h2 id='compiler-plugin' class='section-header'><a href='#compiler-plugin'>Compiler plugin</a></h2>
+<p>Since the main advantage of this crate is that it can do work ahead of time, it would make total
+sense to do it all at the program&#39;s compile time. This feature will probably wait until the rust&#39;s
+compiler plugin story stabilizes a bit.</p>
+</div><h2 id='structs' class='section-header'><a href="#structs">Structs</a></h2>
+<table>
+                       <tr class=' module-item'>
+                           <td><a class='struct' href='struct.Regex.html'
+                                  title='regex_dfa::Regex'>Regex</a></td>
+                           <td class='docblock short'>
+                                
+                           </td>
+                       </tr></table><h2 id='enums' class='section-header'><a href="#enums">Enums</a></h2>
+<table>
+                       <tr class=' module-item'>
+                           <td><a class='enum' href='enum.Error.html'
+                                  title='regex_dfa::Error'>Error</a></td>
+                           <td class='docblock short'>
+                                
+                           </td>
+                       </tr></table><h2 id='types' class='section-header'><a href="#types">Type Definitions</a></h2>
+<table>
+                       <tr class=' module-item'>
+                           <td><a class='type' href='type.Result.html'
+                                  title='regex_dfa::Result'>Result</a></td>
+                           <td class='docblock short'>
+                                
+                           </td>
+                       </tr></table></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "regex_dfa";
+        window.playgroundUrl = "";
+    </script>
+    <script src="../jquery.js"></script>
+    <script src="../main.js"></script>
+    
+    <script defer src="../search-index.js"></script>
+</body>
+</html>
